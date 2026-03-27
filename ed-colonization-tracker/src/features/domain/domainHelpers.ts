@@ -1,0 +1,504 @@
+import type { JournalScannedBody, JournalExplorationSystem } from '@/services/journalReader';
+import type { KnownStation, KnownSystem } from '@/store/types';
+import { getStationTypeInfo } from '@/data/stationTypes';
+
+// ─── Classification functions ────────────────────────────────────────
+
+export function classifyStar(subType: string): string {
+  // Handle raw journal format like "B_BlueWhiteSuperGiant" — normalize underscores + camelCase
+  const normalized = subType.replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2');
+  const s = normalized.toLowerCase();
+  if (s.includes('black hole')) return 'Black Hole';
+  if (s.includes('neutron')) return 'Neutron Star';
+  if (s.includes('wolf') || s.includes('rayet')) return 'Wolf-Rayet';
+  if (s.includes('white dwarf')) return 'White Dwarf';
+  if (s.includes('carbon') || s.includes('c star')) return 'Carbon Star';
+  if (/^o\b/.test(s) || s.includes('o (') || s.includes('o blue')) return 'O-class';
+  if (/^b\b/.test(s) || s.includes('b (') || s.includes('blue-white') || s.includes('blue white')) return 'B-class';
+  if (/^a\b/.test(s) || s.includes('a (') || s.startsWith('a blue')) return 'A-class';
+  if (/^f\b/.test(s) || s.includes('f (')) return 'F-class';
+  if (/^g\b/.test(s) || s.includes('g (')) return 'G-class';
+  if (/^k\b/.test(s) || s.includes('k (')) return 'K-class';
+  if (/^m\b/.test(s) || s.includes('m (') || s.includes('red dwarf')) return 'M-class';
+  if (s.includes('brown dwarf') || s.includes('t tauri') || /^[lty]\b/.test(s)) return 'Brown Dwarf';
+  if (s.includes('super giant') || s.includes('supergiant') || s.includes('giant')) return 'B-class'; // fallback for unmatched giant types
+  return normalized || 'Unknown';
+}
+
+export function classifyAtmo(atmo: string): string {
+  const a = formatAtmoRaw(atmo).toLowerCase();
+  if (a.includes('oxygen')) return 'Oxygen';
+  if (a.includes('nitrogen')) return 'Nitrogen';
+  if (a.includes('ammonia')) return 'Ammonia';
+  if (a.includes('carbon dioxide')) return 'Carbon Dioxide';
+  if (a.includes('sulphur') || a.includes('sulfur')) return 'Sulphur Dioxide';
+  if (a.includes('water')) return 'Water';
+  if (a.includes('methane')) return 'Methane';
+  if (a.includes('argon')) return 'Argon';
+  if (a.includes('helium')) return 'Helium';
+  if (a.includes('neon')) return 'Neon';
+  return atmo || 'Unknown';
+}
+
+export function classifyPlanet(body: JournalScannedBody): {
+  type: string;
+  isLandable: boolean;
+  hasAtmo: boolean;
+  hasRings: boolean;
+  atmoType: string;
+} {
+  const sub = (body.subType || '').toLowerCase();
+  const isLandable = !!body.isLandable;
+  // Guard against empty string, "None", "No atmosphere", and null/undefined
+  const rawAtmo = body.atmosphereType?.trim() || '';
+  const isRealAtmo = rawAtmo !== '' && rawAtmo.toLowerCase() !== 'none' && rawAtmo.toLowerCase() !== 'no atmosphere';
+  const hasAtmo = isRealAtmo;
+  const hasRings = !!(body.rings && body.rings.length > 0);
+  const atmoType = isRealAtmo ? classifyAtmo(rawAtmo) : '';
+
+  let type: string;
+  if (sub.includes('earth')) type = 'Earth-like World';
+  else if (sub.includes('water world')) type = 'Water World';
+  else if (sub.includes('ammonia')) type = 'Ammonia World';
+  else if (sub.includes('gas giant')) type = 'Gas Giant';
+  else if (isLandable && hasRings && hasAtmo) type = 'Ringed Atmospheric';
+  else if (isLandable && hasRings) type = 'Ringed Landable';
+  else if (isLandable && hasAtmo) type = 'Atmospheric Landable';
+  else if (isLandable) type = 'Landable';
+  else if (sub.includes('icy')) type = 'Icy Body';
+  else if (sub.includes('rocky')) type = 'Rocky Body';
+  else if (sub.includes('metal')) type = 'High Metal Content';
+  else type = sub || 'Unknown';
+
+  return { type, isLandable, hasAtmo, hasRings, atmoType };
+}
+
+// ─── Formatting utilities ────────────────────────────────────────────
+
+export function formatAtmoRaw(raw: string): string {
+  return raw.replace(/([a-z])([A-Z])/g, '$1 $2');
+}
+
+export function formatDistance(ls: number): string {
+  if (ls < 1000) return `${ls.toFixed(0)} ls`;
+  return `${(ls / 1000).toFixed(1)}K ls`;
+}
+
+export function formatGravity(mps2: number): string {
+  return (mps2 / 9.81).toFixed(2) + 'g';
+}
+
+export function properCase(s: string): string {
+  return s.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+export function atmoStyle(type: string): { icon: string; color: string } {
+  switch (type) {
+    case 'Oxygen': return { icon: '\u{1F7E2}', color: 'text-green-400' };
+    case 'Nitrogen': return { icon: '\u{1F535}', color: 'text-blue-400' };
+    case 'Ammonia': return { icon: '\u{1F7E1}', color: 'text-yellow-400' };
+    case 'Carbon Dioxide': return { icon: '\u{1F7E0}', color: 'text-orange-400' };
+    case 'Sulphur Dioxide': return { icon: '\u{1F7E4}', color: 'text-amber-600' };
+    case 'Water': return { icon: '\u{1F4A7}', color: 'text-cyan-400' };
+    case 'Methane': return { icon: '\u{1F7E3}', color: 'text-purple-400' };
+    case 'Argon': return { icon: '\u26AA', color: 'text-gray-400' };
+    case 'Helium': return { icon: '\u26AA', color: 'text-pink-300' };
+    case 'Neon': return { icon: '\u{1F534}', color: 'text-red-400' };
+    case 'None': return { icon: '\u2014', color: 'text-muted-foreground/50' };
+    default: return { icon: '\u2753', color: 'text-muted-foreground' };
+  }
+}
+
+// ─── Sort orders ─────────────────────────────────────────────────────
+
+export const STAR_SORT_ORDER: Record<string, number> = {
+  'Black Hole': 0,
+  'Neutron Star': 1,
+  'Wolf-Rayet': 2,
+  'Carbon Star': 3,
+  'O-class': 4,
+  'B-class': 5,
+  'White Dwarf': 6,
+  'A-class': 7,
+  'F-class': 8,
+  'G-class': 9,
+  'K-class': 10,
+  'M-class': 11,
+  'Brown Dwarf': 12,
+  Unknown: 999,
+};
+
+export const STATION_SORT_ORDER: Record<string, number> = {
+  'Dodec Spaceport': 0,
+  'Coriolis Station': 1,
+  'Orbis Station': 2,
+  'Ocellus Station': 3,
+  'Asteroid Base': 4,
+  Megaship: 999, // not buildable — sort to bottom
+  Outpost: 6,
+  'Surface Port': 7,
+  'Surface Station': 8,
+  'Surface Outpost': 9,
+  'Planetary Port': 10,
+  'Planetary Outpost': 11,
+  Settlement: 12,
+  Installation: 13,
+  Unknown: 999,
+};
+
+export const LANDABLE_SORT_ORDER: Record<string, number> = {
+  'Ringed Atmospheric': 0,
+  'Atmospheric Landable': 1,
+  'Ringed Landable': 2,
+  Landable: 3,
+  Unknown: 999,
+};
+
+export const NONLANDABLE_SORT_ORDER: Record<string, number> = {
+  'Earth-like World': 0,
+  'Water World': 1,
+  'Ammonia World': 2,
+  'Gas Giant': 3,
+  'High Metal Content': 4,
+  'Rocky Body': 5,
+  'Icy Body': 6,
+  Unknown: 999,
+};
+
+export const ATMO_SORT_ORDER: Record<string, number> = {
+  Oxygen: 0,
+  Nitrogen: 1,
+  Ammonia: 2,
+  'Carbon Dioxide': 3,
+  'Sulphur Dioxide': 4,
+  Water: 5,
+  Methane: 6,
+  Argon: 7,
+  Helium: 8,
+  Neon: 9,
+  None: 998,
+  Unknown: 999,
+};
+
+// ─── Constants ───────────────────────────────────────────────────────
+
+export const RARE_STAR_TYPES = new Set([
+  'Black Hole',
+  'Neutron Star',
+  'Wolf-Rayet',
+  'White Dwarf',
+  'O-class',
+  'Carbon Star',
+]);
+
+export const NOTABLE_STATION_LABELS = new Set([
+  'Coriolis Station',
+  'Orbis Station',
+  'Ocellus Station',
+  'Dodec Spaceport',
+  'Asteroid Base',
+  'Planetary Port',
+  'Surface Station',
+]);
+
+// Default highlight lists for Settings — exported so store defaults and Settings UI can reference them
+export const DEFAULT_HIGHLIGHT_STARS = [
+  'Black Hole', 'Neutron Star', 'Wolf-Rayet', 'White Dwarf', 'O-class', 'Carbon Star',
+];
+export const DEFAULT_HIGHLIGHT_ATMOS = ['Oxygen'];
+export const DEFAULT_HIGHLIGHT_STATIONS = [
+  'Coriolis Station', 'Orbis Station', 'Ocellus Station', 'Dodec Spaceport',
+  'Asteroid Base', 'Planetary Port',
+];
+
+// All known types for the settings UI toggles
+export const ALL_STAR_TYPES = Object.keys(STAR_SORT_ORDER).filter((k) => k !== 'Unknown');
+export const ALL_ATMO_TYPES = Object.keys(ATMO_SORT_ORDER).filter((k) => k !== 'Unknown' && k !== 'None');
+export const ALL_STATION_TYPES = Object.keys(STATION_SORT_ORDER).filter((k) => k !== 'Unknown');
+
+export const SOL = { x: 0, y: 0, z: 0 };
+
+// ─── Data types ──────────────────────────────────────────────────────
+
+export interface DomainBody {
+  body: JournalScannedBody;
+  systemName: string;
+  classification: ReturnType<typeof classifyPlanet>;
+}
+
+export interface DomainStation {
+  station: KnownStation;
+  typeLabel: string;
+  typeIcon: string;
+  typeCategory: string;
+}
+
+export interface Showpiece {
+  kind: 'star-system' | 'oxygen-world' | 'earth-like' | 'ringed-landable' | 'notable-station';
+  title: string;
+  subtitle: string;
+  systemName: string;
+  icon: string;
+  color: string; // tailwind text color class
+  galleryKey?: string;
+  bodies?: string[]; // body names for star systems
+}
+
+export interface DomainData {
+  colonyCount: number;
+  totalStars: number;
+  totalPlanets: number;
+  totalLandable: number;
+  totalStations: number;
+  totalPopulation: number;
+  showpieces: Showpiece[];
+  starsByType: Map<string, { bodies: { bodyName: string; systemName: string; subType: string }[]; systems: Set<string> }>;
+  landableByType: Map<string, DomainBody[]>;
+  landableByAtmo: Map<string, DomainBody[]>;
+  nonLandableByType: Map<string, DomainBody[]>;
+  stationsByType: Map<string, DomainStation[]>;
+  // Territorial
+  nearestSol: number;
+  farthestSol: number;
+  nearestSolName: string;
+  farthestSolName: string;
+  nearestHome: number;
+  farthestHome: number;
+  nearestHomeName: string;
+  farthestHomeName: string;
+}
+
+// ─── Internal helpers ────────────────────────────────────────────────
+
+function distance3d(a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }): number {
+  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2);
+}
+
+// ─── Aggregation function ────────────────────────────────────────────
+
+export function aggregateDomainData(
+  colonyNames: Set<string>,
+  knownSystems: Record<string, KnownSystem>,
+  knownStations: Record<number, KnownStation>,
+  journalExplorationCache: Record<number, JournalExplorationSystem>,
+  settings: { homeSystem?: string; domainHighlightStars?: string[]; domainHighlightAtmos?: string[]; domainHighlightStations?: string[] },
+): DomainData {
+  // Configurable highlight sets (fall back to defaults if settings don't have them yet)
+  const highlightStars = new Set(settings.domainHighlightStars ?? DEFAULT_HIGHLIGHT_STARS);
+  const highlightAtmos = new Set(settings.domainHighlightAtmos ?? DEFAULT_HIGHLIGHT_ATMOS);
+  const highlightStations = new Set(settings.domainHighlightStations ?? DEFAULT_HIGHLIGHT_STATIONS);
+
+  const starsByType = new Map<string, { bodies: { bodyName: string; systemName: string; subType: string }[]; systems: Set<string> }>();
+  const landableByType = new Map<string, DomainBody[]>();
+  const landableByAtmo = new Map<string, DomainBody[]>();
+  const nonLandableByType = new Map<string, DomainBody[]>();
+  const stationsByType = new Map<string, DomainStation[]>();
+
+  let totalStars = 0;
+  let totalPlanets = 0;
+  let totalLandable = 0;
+  let totalStations = 0;
+  let totalPopulation = 0;
+
+  const showpieces: Showpiece[] = [];
+
+  // Distance tracking
+  let nearestSol = Infinity;
+  let farthestSol = 0;
+  let nearestSolName = '';
+  let farthestSolName = '';
+  let nearestHome = Infinity;
+  let farthestHome = 0;
+  let nearestHomeName = '';
+  let farthestHomeName = '';
+
+  const homeCoords = settings.homeSystem
+    ? knownSystems[settings.homeSystem.toLowerCase()]?.coordinates || null
+    : null;
+
+  // Per-system star tracking for showpieces
+  const systemRareStars: Record<string, string[]> = {};
+
+  for (const systemNameLower of colonyNames) {
+    const kb = knownSystems[systemNameLower];
+    const displayName = kb?.systemName || systemNameLower;
+    if (kb?.population) totalPopulation += kb.population;
+
+    // Distances
+    if (kb?.coordinates) {
+      const distSol = distance3d(kb.coordinates, SOL);
+      if (distSol < nearestSol) { nearestSol = distSol; nearestSolName = displayName; }
+      if (distSol > farthestSol) { farthestSol = distSol; farthestSolName = displayName; }
+      if (homeCoords) {
+        const distHome = distance3d(kb.coordinates, homeCoords);
+        if (distHome < nearestHome) { nearestHome = distHome; nearestHomeName = displayName; }
+        if (distHome > farthestHome) { farthestHome = distHome; farthestHomeName = displayName; }
+      }
+    }
+
+    // Body data from journal exploration cache
+    const addr = kb?.systemAddress;
+    const exploData = addr ? journalExplorationCache[addr] : null;
+    systemRareStars[displayName] = [];
+
+    if (exploData) {
+      for (const body of exploData.scannedBodies) {
+        if (body.type === 'Star') {
+          totalStars++;
+          const cls = classifyStar(body.subType);
+
+          if (!starsByType.has(cls)) starsByType.set(cls, { bodies: [], systems: new Set() });
+          const entry = starsByType.get(cls)!;
+          entry.bodies.push({ bodyName: body.bodyName, systemName: displayName, subType: body.subType });
+          entry.systems.add(displayName);
+
+          if (highlightStars.has(cls)) {
+            systemRareStars[displayName].push(cls);
+          }
+        } else if (body.type === 'Planet') {
+          totalPlanets++;
+          const info = classifyPlanet(body);
+          const domainBody: DomainBody = { body, systemName: displayName, classification: info };
+
+          if (info.isLandable) {
+            totalLandable++;
+
+            // By type
+            if (!landableByType.has(info.type)) landableByType.set(info.type, []);
+            landableByType.get(info.type)!.push(domainBody);
+
+            // By atmosphere
+            const atmoKey = info.hasAtmo ? info.atmoType : 'None';
+            if (!landableByAtmo.has(atmoKey)) landableByAtmo.set(atmoKey, []);
+            landableByAtmo.get(atmoKey)!.push(domainBody);
+
+            // Showpieces: highlighted atmosphere types
+            if (info.atmoType && highlightAtmos.has(info.atmoType)) {
+              const aStyle = atmoStyle(info.atmoType);
+              showpieces.push({
+                kind: 'oxygen-world',
+                title: `${info.atmoType} World`,
+                subtitle: body.bodyName,
+                systemName: displayName,
+                icon: aStyle.icon,
+                color: aStyle.color,
+                galleryKey: `system:${displayName.toLowerCase()}:body:${body.bodyName.toLowerCase()}`,
+              });
+            }
+
+            // Showpieces: ringed landable
+            if (info.hasRings) {
+              showpieces.push({
+                kind: 'ringed-landable',
+                title: 'Ringed Landable',
+                subtitle: body.bodyName,
+                systemName: displayName,
+                icon: '\u{1F48D}',
+                color: 'text-pink-400',
+                galleryKey: `system:${displayName.toLowerCase()}:body:${body.bodyName.toLowerCase()}`,
+              });
+            }
+          } else {
+            // Non-landable
+            if (!nonLandableByType.has(info.type)) nonLandableByType.set(info.type, []);
+            nonLandableByType.get(info.type)!.push(domainBody);
+
+            // Showpieces: Earth-likes
+            if (info.type === 'Earth-like World') {
+              showpieces.push({
+                kind: 'earth-like',
+                title: 'Earth-like World',
+                subtitle: body.bodyName,
+                systemName: displayName,
+                icon: '\u{1F30D}',
+                color: 'text-green-400',
+                galleryKey: `system:${displayName.toLowerCase()}:body:${body.bodyName.toLowerCase()}`,
+              });
+            }
+
+            // Water worlds — tracked in Other Bodies but not showpieces (can't land/build)
+          }
+        }
+      }
+    }
+  }
+
+  // Showpieces: systems with rare stars
+  for (const [system, rareStars] of Object.entries(systemRareStars)) {
+    if (rareStars.length > 0) {
+      const unique = [...new Set(rareStars)];
+      showpieces.push({
+        kind: 'star-system',
+        title: rareStars.length > 1 ? `${rareStars.length} Rare Stars` : unique[0],
+        subtitle: unique.join(', '),
+        systemName: system,
+        icon: rareStars.length > 1 ? '\u{1F31F}' : '\u2B50',
+        color: rareStars.length > 1 ? 'text-yellow-400' : 'text-purple-400',
+        galleryKey: `system:${system.toLowerCase()}`,
+        bodies: rareStars,
+      });
+    }
+  }
+
+  // Stations — knownStations is keyed by marketId
+  const colonyStations: KnownStation[] = [];
+  for (const station of Object.values(knownStations)) {
+    if (!station.systemName) continue;
+    if (!colonyNames.has(station.systemName.toLowerCase())) continue;
+    const st = station.stationType.toLowerCase();
+    if (st.includes('fleetcarrier') || st.includes('construction')) continue;
+    // Filter out temporary colonisation ships
+    if (st.includes('colonisation') || station.stationName.toLowerCase().includes('colonisation') || station.stationName.includes('$EXT_PANEL')) continue;
+    colonyStations.push(station);
+  }
+
+  for (const station of colonyStations) {
+    totalStations++;
+    const info = getStationTypeInfo(station.stationType);
+    const domainStation: DomainStation = {
+      station,
+      typeLabel: info.label,
+      typeIcon: info.icon,
+      typeCategory: info.category,
+    };
+
+    if (!stationsByType.has(info.label)) stationsByType.set(info.label, []);
+    stationsByType.get(info.label)!.push(domainStation);
+
+    // Showpieces: highlighted stations
+    if (highlightStations.has(info.label)) {
+      showpieces.push({
+        kind: 'notable-station',
+        title: info.label,
+        subtitle: station.stationName,
+        systemName: station.systemName,
+        icon: info.icon,
+        color: 'text-orange-400',
+        galleryKey: `system:${station.systemName.toLowerCase()}:station:${station.stationName.toLowerCase()}`,
+      });
+    }
+  }
+
+  return {
+    colonyCount: colonyNames.size,
+    totalStars,
+    totalPlanets,
+    totalLandable,
+    totalStations,
+    totalPopulation,
+    showpieces,
+    starsByType,
+    landableByType,
+    landableByAtmo,
+    nonLandableByType,
+    stationsByType,
+    nearestSol,
+    farthestSol,
+    nearestSolName,
+    farthestSolName,
+    nearestHome,
+    farthestHome,
+    nearestHomeName,
+    farthestHomeName,
+  };
+}

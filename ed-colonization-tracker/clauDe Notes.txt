@@ -1,0 +1,23 @@
+Claude
+
+http://localhost:5173/systems/HIP%2047126
+Tracy Nutrition Enterprise - I set to Agricultural Settlement: Large via ui.  after journal sync it resets to "Settle"
+Ma Gateway is being reset
+Zalyotin Terminal is being reset
+I still cannot assign a body to Furukawa or Perez Terminal  
+
+Seeing this in the dev tool console
+Uncaught (in promise) Error: A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received
+
+Not seeing anything in game from EDMCOverlay including the test overlay text
+Im seeing this in the EDMC logs
+"2026-03-16 18:26:58.500 UTC - INFO - 25856:2712:2712 <plugins>.EDMCModernOverlay.load._EDMCLogHandler.emit:380: [18:26:58] [EDMCModernOverlay] Legacy overlay payload rejected (parse error): Expecting value: line 1 column 1 (char 0)"
+
+This might be useful - says legacy server listening on 5010 but regular on 57061
+2026-03-16 18:12:17.464 UTC - INFO - 25856:11440:11440 <plugins>.EDMCModernOverlay.load._EDMCLogHandler.emit:380: [18:12:17] [EDMCModernOverlay] Initialising Modern Overlay plugin from C:\Users\Michael\AppData\Local\EDMarketConnector\plugins\EDMCModernOverlay
+2026-03-16 18:12:17.486 UTC - INFO - 25856:11440:11440 <plugins>.EDMCModernOverlay.load._EDMCLogHandler.emit:380: [18:12:17] [EDMCModernOverlay] Initialising Overlay Controller journal command helper with launch prefix=!ovr
+2026-03-16 18:12:17.490 UTC - INFO - 25856:2192:2192 <plugins>.EDMCModernOverlay.load._EDMCLogHandler.emit:380: [18:12:17] [EDMCModernOverlay] Broadcast server listening on 127.0.0.1:57061
+2026-03-16 18:12:17.491 UTC - INFO - 25856:11440:11440 <plugins>.EDMCModernOverlay.load._EDMCLogHandler.emit:380: [18:12:17] [EDMCModernOverlay] Wrote port.json with port 57061 (plugin version 0.8.0)
+2026-03-16 18:12:17.494 UTC - WARNING - 25856:11440:11440 <plugins>.EDMCModernOverlay.load._EDMCLogHandler.emit:380: [18:12:17] [EDMCModernOverlay] EDMCHotkeys import failed (1/5): No module named 'EDMCHotkeys'; retrying in 0.5s
+2026-03-16 18:12:17.494 UTC - INFO - 25856:11440:11440 <plugins>.EDMCModernOverlay.load._EDMCLogHandler.emit:380: [18:12:17] [EDMCModernOverlay] Legacy overlay compatibility server listening on 127.0.0.1:5010
+2026-03-16 18:12:17.522 UTC - INFO - 25856:11440:11440 <plugins>.EDMCModernOverlay.load._EDMCLogHandler.emit:380: [18:12:17] [EDMCModernOverlay] Plugin started

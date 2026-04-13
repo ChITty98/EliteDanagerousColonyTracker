@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { useState, useMemo, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAppStore } from '@/store';
 import {
@@ -143,17 +143,17 @@ export function ScoutingPage() {
     });
   }, []);
 
-  // Backfill isColonised flag on all scouted systems whenever colonizedSystems changes
-  // (catches systems scouted before they were colonized, or before the field existed)
-  useEffect(() => {
-    if (colonizedSystems.length === 0) return;
+  // Backfill isColonised flag — one-time on mount, not on every render
+  const backfillDone = useRef(false);
+  if (!backfillDone.current && colonizedSystems.length > 0) {
+    backfillDone.current = true;
+    const colonySet = new Set(colonizedSystems.map((c) => c.toLowerCase()));
     for (const sd of Object.values(scoutedSystems)) {
-      if (!sd.isColonised && colonizedSystems.some((c) => c.toLowerCase() === sd.name.toLowerCase())) {
+      if (!sd.isColonised && colonySet.has(sd.name.toLowerCase())) {
         upsertScoutedSystem({ ...sd, isColonised: true });
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-run when colonized list changes
-  }, [colonizedSystems]);
+  }
 
   // --- Search for nearby systems ---
   const handleSearch = useCallback(async () => {
@@ -466,6 +466,7 @@ export function ScoutingPage() {
       if (hideColonized) {
         const isCol =
           sys.search.is_colonised ||
+          (sys.search.population && sys.search.population > 0) ||
           colonizedSystems.some((c) => c.toLowerCase() === sys.search.name.toLowerCase());
         if (isCol) return false;
       }
@@ -684,6 +685,11 @@ export function ScoutingPage() {
                         >
                           {sd?.name || 'Unknown'}
                         </Link>
+                        <Link
+                          to={`/orrery?system=${encodeURIComponent(sd?.name || '')}`}
+                          className="text-[10px] text-cyan-400 hover:text-cyan-300 ml-1"
+                          title="System View"
+                        >{'\u2604\uFE0F'}</Link>
                       </th>
                     );
                   })}
@@ -858,6 +864,11 @@ export function ScoutingPage() {
                         >
                           {sd.name}
                         </Link>
+                        <Link
+                          to={`/orrery?system=${encodeURIComponent(sd.name)}`}
+                          className="text-[10px] text-cyan-400 hover:text-cyan-300 ml-1"
+                          title="System View"
+                        >{'\u2604\uFE0F'}</Link>
                         <button
                           onClick={() => setRefSystem(sd.name)}
                           className="ml-1.5 text-xs text-muted-foreground hover:text-primary transition-colors"
@@ -1010,6 +1021,11 @@ export function ScoutingPage() {
                         >
                           {sd.name}
                         </Link>
+                        <Link
+                          to={`/orrery?system=${encodeURIComponent(sd.name)}`}
+                          className="text-[10px] text-cyan-400 hover:text-cyan-300 ml-1"
+                          title="System View"
+                        >{'\u2604\uFE0F'}</Link>
                         <button
                           onClick={() => setRefSystem(sd.name)}
                           className="text-xs text-muted-foreground hover:text-primary transition-colors"
@@ -1370,6 +1386,12 @@ export function ScoutingPage() {
                     {/* System name */}
                     <div className="min-w-[180px] shrink-0">
                       <span className="font-medium text-foreground">{sys.search.name}</span>
+                      <Link
+                        to={`/orrery?system=${encodeURIComponent(sys.search.name)}`}
+                        className="text-[10px] text-cyan-400 hover:text-cyan-300 ml-1"
+                        title="System View"
+                        onClick={(e) => e.stopPropagation()}
+                      >{'\u2604\uFE0F'}</Link>
                       {isSelf && <span className="ml-1.5 text-xs text-primary">(ref)</span>}
                       {isColonised && (
                         <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded bg-progress-complete/15 text-progress-complete">
@@ -1763,6 +1785,11 @@ export function ScoutingPage() {
                           </div>
                           <div className="min-w-[180px] shrink-0">
                             <span className="font-medium text-muted-foreground">{sys.search.name}</span>
+                            <Link
+                              to={`/orrery?system=${encodeURIComponent(sys.search.name)}`}
+                              className="text-[10px] text-cyan-400 hover:text-cyan-300 ml-1"
+                              title="System View"
+                            >{'\u2604\uFE0F'}</Link>
                             {isColonised && (
                               <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded bg-progress-complete/15 text-progress-complete">
                                 colonised

@@ -101,6 +101,15 @@ interface SupercruiseEntryEvent {
   SystemAddress: number;
 }
 
+interface SupercruiseDestDropEvent {
+  timestamp: string;
+  event: 'SupercruiseDestinationDrop';
+  Type: string;
+  Type_Localised?: string;
+  Threat: number;
+  MarketID?: number;
+}
+
 // --- Colonisation lifecycle events ---
 
 interface ColonisationSystemClaimEvent {
@@ -126,7 +135,8 @@ interface ColonisationContributionEvent {
   StarSystem?: string;
   SystemAddress?: number;
   MarketID: number;
-  Commodities?: { Name: string; Name_Localised?: string; Count: number }[];
+  Contributions?: { Name: string; Name_Localised?: string; Amount: number }[];
+  Commodities?: { Name: string; Name_Localised?: string; Count: number }[]; // legacy fallback
   Contribution?: number;
 }
 
@@ -150,6 +160,22 @@ interface CarrierJumpEvent {
   MarketID: number;
   Body?: string;
   StationName?: string;
+}
+
+interface CarrierJumpRequestEvent {
+  timestamp: string;
+  event: 'CarrierJumpRequest';
+  CarrierID: number;
+  SystemName: string;
+  SystemAddress: number;
+  Body?: string;
+  DepartureTime: string; // ISO timestamp of when the jump will happen
+}
+
+interface CarrierJumpCancelledEvent {
+  timestamp: string;
+  event: 'CarrierJumpCancelled';
+  CarrierID: number;
 }
 
 interface CarrierStatsEvent {
@@ -204,6 +230,7 @@ interface ScanEvent {
   SurfaceGravity?: number;
   SurfaceTemperature?: number;
   SurfacePressure?: number;
+  Radius?: number;
   TerraformState?: string;
   Composition?: Record<string, number>;
   Rings?: { Name: string; RingClass: string; MassMT: number; InnerRad: number; OuterRad: number }[];
@@ -589,6 +616,7 @@ export function parseJournalLines(lines: string[]) {
   const fsdJumpEvents: FSDJumpEvent[] = [];
   const fssSignalEvents: FSSSignalDiscoveredEvent[] = [];
   const supercruiseEntryEvents: SupercruiseEntryEvent[] = [];
+  const supercruiseDestDropEvents: SupercruiseDestDropEvent[] = [];
   // Colonisation lifecycle
   const systemClaimEvents: ColonisationSystemClaimEvent[] = [];
   const beaconPlacedEvents: ColonisationBeaconPlacedEvent[] = [];
@@ -596,6 +624,8 @@ export function parseJournalLines(lines: string[]) {
   const factionContributionEvents: ColonisationFactionContributionEvent[] = [];
   // Fleet Carrier
   const carrierJumpEvents: CarrierJumpEvent[] = [];
+  const carrierJumpRequestEvents: CarrierJumpRequestEvent[] = [];
+  const carrierJumpCancelledEvents: CarrierJumpCancelledEvent[] = [];
   const carrierStatsEvents: CarrierStatsEvent[] = [];
   const carrierDepositFuelEvents: CarrierDepositFuelEvent[] = [];
   // Exploration
@@ -688,8 +718,17 @@ export function parseJournalLines(lines: string[]) {
         case 'SupercruiseEntry':
           supercruiseEntryEvents.push(event as SupercruiseEntryEvent);
           break;
+        case 'SupercruiseDestinationDrop':
+          supercruiseDestDropEvents.push(event as SupercruiseDestDropEvent);
+          break;
         case 'CarrierJump':
           carrierJumpEvents.push(event as CarrierJumpEvent);
+          break;
+        case 'CarrierJumpRequest':
+          carrierJumpRequestEvents.push(event as CarrierJumpRequestEvent);
+          break;
+        case 'CarrierJumpCancelled':
+          carrierJumpCancelledEvents.push(event as CarrierJumpCancelledEvent);
           break;
         case 'CarrierStats':
           carrierStatsEvents.push(event as CarrierStatsEvent);
@@ -751,12 +790,15 @@ export function parseJournalLines(lines: string[]) {
     fsdJumpEvents,
     fssSignalEvents,
     supercruiseEntryEvents,
+    supercruiseDestDropEvents,
     // New events
     systemClaimEvents,
     beaconPlacedEvents,
     contributionEvents,
     factionContributionEvents,
     carrierJumpEvents,
+    carrierJumpRequestEvents,
+    carrierJumpCancelledEvents,
     carrierStatsEvents,
     carrierDepositFuelEvents,
     fssDiscoveryScanEvents,
@@ -1910,7 +1952,10 @@ export interface JournalScannedBody {
   volcanism?: string;
   surfaceTemperature?: number;
   terraformState?: string;
-  rings?: { name: string; ringClass: string }[];
+  surfacePressure?: number; // Pascals
+  radius?: number; // metres
+  semiMajorAxis?: number; // metres — orbital distance to parent
+  rings?: { name: string; ringClass: string; outerRad?: number; massKG?: number }[];
   parents?: Record<string, number>[];
   wasDiscovered?: boolean;
   wasMapped?: boolean;
@@ -2113,8 +2158,11 @@ export async function extractExplorationData(
         atmosphereType: ev.AtmosphereType || ev.Atmosphere,
         volcanism: ev.Volcanism,
         surfaceTemperature: ev.SurfaceTemperature,
+        surfacePressure: ev.SurfacePressure,
+        radius: ev.Radius,
+        semiMajorAxis: ev.SemiMajorAxis,
         terraformState: ev.TerraformState,
-        rings: ev.Rings?.map((r) => ({ name: r.Name, ringClass: r.RingClass })),
+        rings: ev.Rings?.map((r) => ({ name: r.Name, ringClass: r.RingClass, outerRad: r.OuterRad, massKG: r.MassMT })),
         parents: ev.Parents,
         wasDiscovered: ev.WasDiscovered,
         wasMapped: ev.WasMapped,

@@ -1,10 +1,14 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { useEffect } from 'react';
 import { useAppStore } from '@/store';
+import { startJournalWatcher, isWatcherRunning } from '@/services/journalWatcher';
+import { getJournalFolderHandle } from '@/services/journalReader';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '\u25C6' },
   { to: '/domain', label: "Architect's Domain", icon: '\u{1F3DB}\u{FE0F}' },
   { to: '/map', label: 'Colony Map', icon: '\u{1F30C}' },
+  { to: '/orrery', label: 'System View', icon: '\u{2604}\u{FE0F}' },
   { to: '/projects', label: 'Projects', icon: '\u25A3' },
   { to: '/fleet-carrier', label: 'Fleet Carrier', icon: '\u2693' },
   { to: '/scouting', label: 'Expansion', icon: '\u{1F52D}' },
@@ -22,14 +26,22 @@ const navItems = [
 
 export function Layout() {
   const activeSessionId = useAppStore((s) => s.activeSessionId);
+
+  // Auto-start journal watcher on app load if journal folder is available
+  useEffect(() => {
+    if (!isWatcherRunning() && getJournalFolderHandle()) {
+      startJournalWatcher();
+    }
+  }, []);
   const location = useLocation();
   // Full-width pages that shouldn't be constrained by max-w
   const fullWidthPages = ['/map', '/domain'];
   const isFullWidth = fullWidthPages.some((p) => location.pathname === p);
+  const hideNav = location.pathname === '/orrery';
   return (
     <div className="flex min-h-screen bg-background text-foreground">
-      {/* Sidebar */}
-      <nav className="w-56 shrink-0 border-r border-border bg-card flex flex-col">
+      {/* Sidebar — hidden on orrery page */}
+      <nav className={`w-56 shrink-0 border-r border-border bg-card flex flex-col ${hideNav ? 'hidden' : ''}`}>
         <div className="p-4 border-b border-border">
           <h1 className="text-lg font-bold text-primary tracking-wide">
             ED Colony Tracker
@@ -65,7 +77,7 @@ export function Layout() {
 
       {/* Main content */}
       <main className="flex-1 overflow-auto">
-        <div className={`${isFullWidth ? '' : 'max-w-7xl'} mx-auto p-6`}>
+        <div className={`${isFullWidth || hideNav ? '' : 'max-w-7xl'} mx-auto ${hideNav ? 'p-0' : 'p-6'}`}>
           <Outlet />
         </div>
       </main>

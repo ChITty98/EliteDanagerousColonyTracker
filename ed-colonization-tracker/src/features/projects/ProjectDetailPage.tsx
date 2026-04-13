@@ -43,7 +43,21 @@ export function ProjectDetailPage() {
   const bestSources = useMemo(() => {
     if (!project) return {};
     const projectSystem = project.systemName?.toLowerCase();
+    const projectCoords = projectSystem ? knownSystems[projectSystem]?.coordinates : null;
     const result: Record<string, { stationName: string; systemName: string; hasLargePads: boolean; isPlanetary: boolean; stock?: number; buyPrice?: number; lastSeen: string }> = {};
+
+    // Distance penalty: closer stations score higher
+    const distancePenalty = (systemName?: string): number => {
+      if (!projectCoords || !systemName) return 0;
+      const srcSys = knownSystems[systemName.toLowerCase()];
+      if (!srcSys?.coordinates) return 0;
+      const dx = projectCoords.x - srcSys.coordinates.x;
+      const dy = projectCoords.y - srcSys.coordinates.y;
+      const dz = projectCoords.z - srcSys.coordinates.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      // Penalty: -100 per ly of distance (a 700ly station loses 70,000 points)
+      return -Math.round(dist * 100);
+    };
 
     for (const c of project.commodities) {
       const remaining = c.requiredQuantity - c.providedQuantity;
@@ -58,10 +72,11 @@ export function ProjectDetailPage() {
         if (settings.myFleetCarrier && snap.stationName.toUpperCase() === settings.myFleetCarrier.toUpperCase()) continue;
         const item = snap.commodities.find((m) => m.commodityId === c.commodityId);
         if (!item || item.stock < 1 || item.buyPrice <= 0) continue;
-        // Score: prefer high stock, same system, large pads
+        // Score: prefer high stock, nearby, same system, large pads
         let score = Math.min(item.stock, 10000);
         if (snap.systemName?.toLowerCase() === projectSystem) score += 50000;
         if (snap.hasLargePads) score += 5000;
+        score += distancePenalty(snap.systemName);
         if (score > bestScore) {
           bestScore = score;
           best = {
@@ -87,6 +102,7 @@ export function ProjectDetailPage() {
         if (vm.systemName?.toLowerCase() === projectSystem) score += 50000;
         if (vm.hasLargePads) score += 5000;
         if (priceInfo) score += 2000; // has price data
+        score += distancePenalty(vm.systemName);
         if (score > bestScore) {
           bestScore = score;
           best = {
@@ -130,21 +146,20 @@ export function ProjectDetailPage() {
 
   // Carrier cargo state — initialize from persisted store
   const persistedFC = settings.myFleetCarrier ? carrierCargoStore[settings.myFleetCarrier] : null;
-  const [multiCarrierCargo, setMultiCarrierCargo] = useState<MultiCarrierCargo | null>(
-    persistedFC
-      ? {
-          myCarrier: {
-            items: persistedFC.items,
-            isEstimate: persistedFC.isEstimate,
-            earliestTransfer: persistedFC.updatedAt,
-            latestTransfer: persistedFC.updatedAt,
-            carrierCallsign: persistedFC.callsign,
-          },
-          squadronCarriers: [],
-        }
-      : null,
-  );
-  const [carrierCargoLoaded, setCarrierCargoLoaded] = useState(!!persistedFC);
+  // Derive FC cargo directly from store — works even when store hydrates after mount
+  const carrierCargoLoaded = !!persistedFC;
+  const multiCarrierCargo: MultiCarrierCargo | null = persistedFC
+    ? {
+        myCarrier: {
+          items: persistedFC.items,
+          isEstimate: persistedFC.isEstimate,
+          earliestTransfer: persistedFC.updatedAt,
+          latestTransfer: persistedFC.updatedAt,
+          carrierCallsign: persistedFC.callsign,
+        },
+        squadronCarriers: [],
+      }
+    : null;
   const [loadingCarrierCargo, setLoadingCarrierCargo] = useState(false);
   const [showCarrierCargo, setShowCarrierCargo] = useState(false);
 
@@ -185,8 +200,6 @@ export function ProjectDetailPage() {
         currentSettings.squadronCarrierCallsigns,
         currentCargo,
       );
-      setMultiCarrierCargo(cargo);
-      setCarrierCargoLoaded(true);
       setShowCarrierCargo(true);
 
       // Persist to store — only overwrite if new data is at least as good

@@ -54,6 +54,25 @@ const GALLERY_META = path.join(__dirname, 'colony-gallery.json');
 // Ensure gallery directory exists
 try { fs.mkdirSync(GALLERY_DIR, { recursive: true }); } catch {}
 
+// --- Automatic backup on startup ---
+const BACKUP_DIR = path.join(__dirname, 'backups');
+try { fs.mkdirSync(BACKUP_DIR, { recursive: true }); } catch {}
+try {
+  const stateSize = fs.statSync(STATE_FILE).size;
+  if (stateSize > 100) { // only backup if file has real data
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const backupPath = path.join(BACKUP_DIR, `colony-data.${ts}.json`);
+    fs.copyFileSync(STATE_FILE, backupPath);
+    console.log(`[Backup] Created ${backupPath} (${(stateSize / 1024).toFixed(0)}KB)`);
+    // Keep only last 5 backups
+    const backups = fs.readdirSync(BACKUP_DIR).filter(f => f.startsWith('colony-data.')).sort();
+    while (backups.length > 5) {
+      const old = backups.shift();
+      try { fs.unlinkSync(path.join(BACKUP_DIR, old)); } catch {}
+    }
+  }
+} catch (e) { console.warn('[Backup] Failed:', e.message); }
+
 function readGalleryMeta() {
   try { return JSON.parse(fs.readFileSync(GALLERY_META, 'utf-8')); } catch { return {}; }
 }
@@ -96,8 +115,18 @@ function writeStateDebounced(data) {
   stateWriteTimer = setTimeout(() => {
     if (pendingState !== null) {
       try {
-        fs.writeFileSync(STATE_FILE, JSON.stringify(pendingState));
-        console.log(`[State] Saved colony-data.json (${(JSON.stringify(pendingState).length / 1024).toFixed(0)}KB)`);
+        const newJson = JSON.stringify(pendingState);
+        // Size-check protection: refuse to overwrite with much smaller data
+        try {
+          const existingSize = fs.statSync(STATE_FILE).size;
+          if (existingSize > 1000 && newJson.length < existingSize * 0.3) {
+            console.error(`[State] BLOCKED write — new data (${(newJson.length/1024).toFixed(0)}KB) is <30% of existing (${(existingSize/1024).toFixed(0)}KB). Possible empty state overwrite.`);
+            pendingState = null;
+            return;
+          }
+        } catch { /* file doesn't exist yet, ok to write */ }
+        fs.writeFileSync(STATE_FILE, newJson);
+        console.log(`[State] Saved colony-data.json (${(newJson.length / 1024).toFixed(0)}KB)`);
       } catch (e) {
         console.error('[State] Write error:', e.message);
       }
@@ -265,6 +294,18 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Exploration API: GET /api/exploration/:addr — single system's body data
+  const exploMatch = pathname.match(/^\/api\/exploration\/(\d+)$/);
+  if (exploMatch && req.method === 'GET') {
+    const addr = exploMatch[1];
+    const data = readStateFile();
+    const cache = data.journalExplorationCache || {};
+    const system = cache[addr] || null;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(system));
+    return;
+  }
+
   // State API: PATCH /api/state
   if (pathname === '/api/state' && req.method === 'PATCH') {
     let body = '';
@@ -273,6 +314,9 @@ const server = http.createServer((req, res) => {
       try {
         const incoming = JSON.parse(body);
         writeStateDebounced(incoming);
+        // Broadcast state_updated to all other devices so they re-fetch
+        const sourceIp = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString();
+        broadcastEvent({ type: 'state_updated', source: sourceIp, timestamp: new Date().toISOString() });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
       } catch (e) {

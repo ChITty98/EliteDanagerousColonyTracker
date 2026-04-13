@@ -53,6 +53,10 @@ let pendingScanBodies: JournalScannedBody[] = [];
 // Track last known system for chat commands
 let lastSystemAddress: number | null = null;
 let lastSystemName: string | null = null;
+// Track last docked station for companion "Buy Here"
+let lastDockedMarketId: number | null = null;
+let lastDockedStationName: string | null = null;
+let lastDockedSystemName: string | null = null;
 
 /** Allow companion page (including iPad) to read current system */
 export function getLastSystem(): { address: number | null; name: string | null } {
@@ -62,6 +66,16 @@ export function getLastSystem(): { address: number | null; name: string | null }
 export function setLastSystem(address: number, name: string): void {
   lastSystemAddress = address;
   lastSystemName = name;
+}
+/** Allow companion to read last docked station */
+export function getLastDocked(): { marketId: number | null; stationName: string | null; systemName: string | null } {
+  return { marketId: lastDockedMarketId, stationName: lastDockedStationName, systemName: lastDockedSystemName };
+}
+/** Set last docked from SSE event */
+export function setLastDocked(marketId: number, stationName: string, systemName: string): void {
+  lastDockedMarketId = marketId;
+  lastDockedStationName = stationName;
+  lastDockedSystemName = systemName;
 }
 
 // --- Core send function ---
@@ -301,6 +315,11 @@ export function handleDocked(event: {
   SystemAddress: number;
   MarketID: number;
 }): void {
+  // Track last docked station for companion "Buy Here" button
+  lastDockedMarketId = event.MarketID;
+  lastDockedStationName = event.StationName;
+  lastDockedSystemName = event.StarSystem;
+
   if (!isEnabled()) return;
 
   const store = useAppStore.getState();
@@ -1207,6 +1226,61 @@ export function computeHaulContent(): CompanionContent {
     needs.lines.push({ text: 'No FC cargo data \u2014 visit Carrier Management to sync', color: '#e2e8f0' });
   }
   return needs;
+}
+
+export function computeBuyHereContent(): CompanionContent {
+  const store = useAppStore.getState();
+  const project = getActiveProject(store);
+  if (!project) return { lines: [{ text: 'No active hauling session', color: '#ef4444' }] };
+
+  const docked = getLastDocked();
+  if (!docked.marketId || !docked.stationName) {
+    return { lines: [{ text: 'Not docked at a station', color: '#ef4444' }] };
+  }
+
+  // Check if docked at own FC
+  const settings = store.settings;
+  if (settings.myFleetCarrierMarketId === docked.marketId) {
+    return { lines: [{ text: `Docked at your FC — use "Show Haul" for load list`, color: '#38bdf8' }] };
+  }
+
+  const snapshot = store.marketSnapshots[docked.marketId];
+  if (!snapshot) {
+    return { lines: [{ text: `No market data for ${docked.stationName} — dock to read market`, color: '#fbbf24' }] };
+  }
+
+  // Factor in FC cargo — don't recommend buying what's already on the carrier
+  const fcCallsign = settings.myFleetCarrier;
+  const fcCargo = fcCallsign ? store.carrierCargo[fcCallsign] : undefined;
+  const fcItems = fcCargo?.items || [];
+
+  const matches: { name: string; available: number; needToBuy: number; onFC: number; buyPrice: number }[] = [];
+  for (const c of project.commodities) {
+    const remaining = c.requiredQuantity - c.providedQuantity;
+    if (remaining <= 0) continue;
+    // Subtract what's already on the FC
+    const onFC = fcItems.find((i) => i.commodityId === c.commodityId)?.count || 0;
+    const needToBuy = Math.max(0, remaining - onFC);
+    if (needToBuy <= 0) continue;
+    const item = snapshot.commodities.find((m) => m.commodityId === c.commodityId);
+    if (item && item.stock > 0 && item.buyPrice > 0) {
+      matches.push({ name: c.name, available: item.stock, needToBuy, onFC, buyPrice: item.buyPrice });
+    }
+  }
+
+  if (matches.length === 0) {
+    return { lines: [{ text: `${docked.stationName}: nothing needed here (FC has the rest)`, color: '#94a3b8' }] };
+  }
+
+  const lines: CompanionContent['lines'] = [
+    { text: `Buy at ${docked.stationName}:`, color: '#22d3ee' },
+  ];
+  for (const m of matches) {
+    const qty = Math.min(m.available, m.needToBuy);
+    const fcNote = m.onFC > 0 ? ` (${m.onFC.toLocaleString()}t on FC)` : '';
+    lines.push({ text: `  ${m.name}: ${qty.toLocaleString()}t${fcNote}`, color: '#e2e8f0' });
+  }
+  return { lines };
 }
 
 export function computeStatusContent(): CompanionContent {

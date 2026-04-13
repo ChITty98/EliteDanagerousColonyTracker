@@ -17,15 +17,11 @@ export function ImageGallery({ galleryKey, title, compact }: ImageGalleryProps) 
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [viewIndex, setViewIndex] = useState<number | null>(null);
-  const [currentSlide, setCurrentSlide] = useState(0);
+  const [rawSlide, setRawSlide] = useState(0);
+  const currentSlide = images.length === 0 ? 0 : Math.min(rawSlide, images.length - 1);
+  const setCurrentSlide = setRawSlide;
   const [editingCaption, setEditingCaption] = useState<string | null>(null);
   const [captionValue, setCaptionValue] = useState('');
-
-  // Keep currentSlide in bounds
-  useEffect(() => {
-    if (currentSlide >= images.length && images.length > 0) setCurrentSlide(images.length - 1);
-    if (images.length === 0) setCurrentSlide(0);
-  }, [images.length, currentSlide]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;

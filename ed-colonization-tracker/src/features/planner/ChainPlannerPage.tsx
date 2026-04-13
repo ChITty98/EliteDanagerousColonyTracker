@@ -56,10 +56,7 @@ export function ChainPlannerPage() {
   const [isPreviewing, setIsPreviewing] = useState(false);
 
   // Colony systems with resolved coordinates
-  const [colonySystems, setColonySystems] = useState<
-    { name: string; id64: number; x: number; y: number; z: number }[]
-  >([]);
-  const [resolvingCoords, setResolvingCoords] = useState(false);
+  const resolvingCoords = false;
 
   // Try to resolve a system name locally from knownSystems first, then fall back to Spansh
   const resolveLocalFirst = useCallback(async (name: string) => {
@@ -137,32 +134,17 @@ export function ChainPlannerPage() {
     return entries;
   }, [myColonyEntries, knownSystems, scoutedSystems]);
 
-  // My colonies with resolved coordinates (for dropdown)
-  const [myColonySystems, setMyColonySystems] = useState<
-    { name: string; id64: number; x: number; y: number; z: number }[]
-  >([]);
-
-  // Build colony systems from local data only (no auto-Spansh calls)
-  // Coordinates come from knownSystems (journal) and scoutedSystems (cached from scouting)
-  useEffect(() => {
-    const haveCoords = colonyEntries.filter((e) => e.x !== undefined) as {
+  // Derive colony systems with coordinates (no useEffect needed — pure transform)
+  const colonySystems = useMemo(() => {
+    return colonyEntries.filter((e) => e.x !== undefined) as {
       name: string; id64: number; x: number; y: number; z: number;
     }[];
-    const missingCount = colonyEntries.length - haveCoords.length;
+  }, [colonyEntries]);
 
-    setColonySystems(haveCoords);
-    setResolvingCoords(false);
-
-    // Also partition my colonies
+  const myColonySystems = useMemo(() => {
     const myIds = new Set(myColonyEntries.map((e) => e.id64));
-    setMyColonySystems(
-      haveCoords.filter((s) => myIds.has(s.id64)).sort((a, b) => a.name.localeCompare(b.name)),
-    );
-
-    if (missingCount > 0) {
-      console.log(`[ChainPlanner] ${missingCount} colony system(s) missing coordinates — visit them in-game or use Find Route to resolve on demand`);
-    }
-  }, [colonyEntries, myColonyEntries]);
+    return colonySystems.filter((s) => myIds.has(s.id64)).sort((a, b) => a.name.localeCompare(b.name));
+  }, [colonySystems, myColonyEntries]);
 
   // Try local resolution of target system name (debounced, no network calls)
   // Falls back to Spansh only when user clicks Find Route or Preview

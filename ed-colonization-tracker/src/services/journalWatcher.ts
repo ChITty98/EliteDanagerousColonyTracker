@@ -223,13 +223,13 @@ async function processNewContent(file: File): Promise<void> {
     accLocationEvents.push(...parsed.locationEvents);
 
     // Process each event type
-    processKnowledgeUpdates(parsed);
-    processDepotUpdates(parsed);
-    processCargoUpdates(parsed);
-    processExplorationUpdates(parsed);
-    processOverlayUpdates(parsed);
-  } catch {
-    // Parsing error — skip this batch
+    try { processKnowledgeUpdates(parsed); } catch (e) { console.error('[Watcher] KB error:', e); }
+    try { processDepotUpdates(parsed); } catch (e) { console.error('[Watcher] Depot error:', e); }
+    try { processCargoUpdates(parsed); } catch (e) { console.error('[Watcher] Cargo error:', e); }
+    try { processExplorationUpdates(parsed); } catch (e) { console.error('[Watcher] Exploration error:', e); }
+    try { processOverlayUpdates(parsed); } catch (e) { console.error('[Watcher] Overlay error:', e); }
+  } catch (e) {
+    console.error('[Watcher] Parse error:', e);
   } finally {
     state.processing = false;
   }
@@ -327,19 +327,125 @@ function processCargoUpdates(parsed: ReturnType<typeof parseJournalLines>): void
  * Update scouting data from new exploration events.
  */
 function processExplorationUpdates(parsed: ReturnType<typeof parseJournalLines>): void {
-  // FSSAllBodiesFound — mark systems as complete
-  if (parsed.fssAllBodiesFoundEvents.length > 0) {
-    const store = useAppStore.getState();
-    for (const ev of parsed.fssAllBodiesFoundEvents) {
-      const existing = store.scoutedSystems[ev.SystemAddress];
-      if (existing) {
-        store.upsertScoutedSystem({
-          ...existing,
-          fssAllBodiesFound: true,
-          journalBodyCount: ev.Count,
-        });
-      }
+  const store = useAppStore.getState();
+  const cache = { ...store.journalExplorationCache };
+  let cacheChanged = false;
+
+  // FSSDiscoveryScan (honk) — create/update system entry with body count
+  for (const ev of parsed.fssDiscoveryScanEvents) {
+    const addr = ev.SystemAddress;
+    if (!addr) continue;
+    if (!cache[addr]) {
+      cache[addr] = {
+        systemAddress: addr,
+        systemName: ev.SystemName || store.systemAddressMap[addr] || `Unknown (${addr})`,
+        coordinates: null,
+        bodyCount: ev.BodyCount || 0,
+        fssAllBodiesFound: false,
+        scannedBodies: [],
+        lastSeen: ev.timestamp,
+      };
+      cacheChanged = true;
+    } else if (ev.BodyCount && ev.BodyCount > (cache[addr].bodyCount || 0)) {
+      cache[addr] = { ...cache[addr], bodyCount: ev.BodyCount, lastSeen: ev.timestamp };
+      cacheChanged = true;
     }
+  }
+
+  // Scan events — add body data to cache in real-time
+  for (const ev of parsed.scanEvents) {
+    const addr = ev.SystemAddress;
+    if (!addr) continue;
+    if (ev.PlanetClass === 'Belt Cluster') continue;
+    if (!ev.PlanetClass && !ev.StarType) continue;
+
+    if (!cache[addr]) {
+      cache[addr] = {
+        systemAddress: addr,
+        systemName: ev.StarSystem || store.systemAddressMap[addr] || `Unknown (${addr})`,
+        coordinates: null,
+        bodyCount: 0,
+        fssAllBodiesFound: false,
+        scannedBodies: [],
+        lastSeen: ev.timestamp,
+      };
+    }
+
+    const sys = cache[addr];
+    const existingIdx = sys.scannedBodies.findIndex((b) => b.bodyId === ev.BodyID || b.bodyName === ev.BodyName);
+    const body = {
+      bodyId: ev.BodyID,
+      bodyName: ev.BodyName,
+      type: (ev.StarType ? 'Star' : 'Planet') as 'Star' | 'Planet',
+      subType: ev.PlanetClass || (ev.StarType ? ev.StarType : 'Unknown'),
+      distanceToArrival: ev.DistanceFromArrivalLS,
+      starType: ev.StarType,
+      stellarMass: ev.StellarMass,
+      isLandable: ev.Landable,
+      earthMasses: ev.MassEM,
+      gravity: ev.SurfaceGravity,
+      atmosphereType: ev.AtmosphereType || ev.Atmosphere,
+      volcanism: ev.Volcanism,
+      surfaceTemperature: ev.SurfaceTemperature,
+      surfacePressure: ev.SurfacePressure,
+      radius: ev.Radius,
+      semiMajorAxis: ev.SemiMajorAxis,
+      terraformState: ev.TerraformState,
+      rings: ev.Rings?.map((r: { Name: string; RingClass: string; OuterRad?: number; MassMT?: number }) => ({ name: r.Name, ringClass: r.RingClass, outerRad: r.OuterRad, massKG: r.MassMT })),
+      parents: ev.Parents,
+      wasDiscovered: ev.WasDiscovered,
+      wasMapped: ev.WasMapped,
+    };
+
+    const newBodies = [...sys.scannedBodies];
+    if (existingIdx >= 0) {
+      newBodies[existingIdx] = body;
+    } else {
+      newBodies.push(body);
+    }
+    cache[addr] = { ...sys, scannedBodies: newBodies, lastSeen: ev.timestamp };
+    cacheChanged = true;
+  }
+
+  // FSSAllBodiesFound — mark systems as complete
+  for (const ev of parsed.fssAllBodiesFoundEvents) {
+    const addr = ev.SystemAddress;
+    if (cache[addr]) {
+      cache[addr] = { ...cache[addr], fssAllBodiesFound: true, bodyCount: ev.Count || cache[addr].bodyCount };
+      cacheChanged = true;
+    }
+    const existing = store.scoutedSystems[addr];
+    if (existing) {
+      store.upsertScoutedSystem({
+        ...existing,
+        fssAllBodiesFound: true,
+        journalBodyCount: ev.Count,
+      });
+    }
+  }
+
+  if (cacheChanged) {
+    // Track the last scanned body name for orrery pop notification
+    const lastScanned = parsed.scanEvents.length > 0
+      ? parsed.scanEvents[parsed.scanEvents.length - 1].BodyName
+      : undefined;
+    store.setJournalExplorationCache(cache);
+    // Include systemAddress + systemName so remote orrery can fetch without local lookup
+    const lastAddr = parsed.scanEvents.length > 0 ? parsed.scanEvents[parsed.scanEvents.length - 1].SystemAddress
+      : parsed.fssDiscoveryScanEvents.length > 0 ? parsed.fssDiscoveryScanEvents[parsed.fssDiscoveryScanEvents.length - 1].SystemAddress
+      : undefined;
+    const lastSysName = parsed.scanEvents.length > 0 ? parsed.scanEvents[parsed.scanEvents.length - 1].StarSystem
+      : parsed.fssDiscoveryScanEvents.length > 0 ? parsed.fssDiscoveryScanEvents[parsed.fssDiscoveryScanEvents.length - 1].SystemName
+      : undefined;
+    const lastAddrNum = lastAddr;
+    const sysData = lastAddrNum ? cache[lastAddrNum] : undefined;
+    broadcastCompanionEvent({
+      type: 'exploration_update',
+      body: lastScanned,
+      systemAddress: lastAddr,
+      system: lastSysName,
+      explorationData: sysData,
+    });
   }
 }
 
@@ -378,6 +484,46 @@ function processOverlayUpdates(parsed: ReturnType<typeof parseJournalLines>): vo
     });
   }
 
+  // CarrierJump — treat like FSDJump for orrery updates
+  for (const ev of parsed.carrierJumpEvents) {
+    if (ev.StarSystem) {
+      useAppStore.getState().setCommanderPosition({
+        systemName: ev.StarSystem,
+        systemAddress: ev.SystemAddress,
+        coordinates: { x: 0, y: 0, z: 0 }, // CarrierJump doesn't have StarPos
+      });
+      broadcastCompanionEvent({
+        type: 'fsd_jump',
+        system: ev.StarSystem,
+        systemAddress: ev.SystemAddress,
+        population: 0,
+      });
+      // Clear the countdown — jump completed
+      useAppStore.getState().setCarrierJumpCountdown(null);
+    }
+  }
+
+  // CarrierJumpRequest — start countdown
+  for (const ev of parsed.carrierJumpRequestEvents) {
+    useAppStore.getState().setCarrierJumpCountdown({
+      destination: ev.SystemName,
+      departureTime: ev.DepartureTime,
+      systemAddress: ev.SystemAddress,
+    });
+    broadcastCompanionEvent({
+      type: 'fc_jump_scheduled',
+      destination: ev.SystemName,
+      departureTime: ev.DepartureTime,
+    });
+  }
+
+  // CarrierJumpCancelled — clear countdown
+  for (const ev of parsed.carrierJumpCancelledEvents) {
+    void ev;
+    useAppStore.getState().setCarrierJumpCountdown(null);
+    broadcastCompanionEvent({ type: 'fc_jump_cancelled' });
+  }
+
   // Docked — FC load, station needs, missing image prompt
   for (const ev of parsed.dockedEvents) {
     handleDocked(ev);
@@ -386,6 +532,7 @@ function processOverlayUpdates(parsed: ReturnType<typeof parseJournalLines>): vo
       station: ev.StationName,
       system: ev.StarSystem,
       stationType: ev.StationType,
+      marketId: ev.MarketID,
     });
   }
 
@@ -426,11 +573,27 @@ function processOverlayUpdates(parsed: ReturnType<typeof parseJournalLines>): vo
 
   // ColonisationContribution — broadcast progress updates
   for (const ev of parsed.contributionEvents) {
+    const contributions = ev.Contributions || [];
+    const legacyItems = ev.Commodities || [];
+    const items = contributions.length > 0
+      ? contributions.map((c) => ({ name: c.Name_Localised || c.Name, count: c.Amount }))
+      : legacyItems.map((c) => ({ name: c.Name_Localised || c.Name, count: c.Count }));
+    const summary = items.map((c) => `${c.name} x${c.count}`).join(', ');
+    const totalCount = items.reduce((sum, c) => sum + c.count, 0);
     broadcastCompanionEvent({
       type: 'contribution',
-      commodity: ev.CommodityName || ev.Commodity,
-      amount: ev.Amount || ev.Quantity,
+      commodity: summary || 'commodities',
+      amount: totalCount || ev.Contribution || 0,
       system: ev.StarSystem,
+    });
+  }
+
+  // SupercruiseDestinationDrop — broadcast arrival at body/station
+  for (const ev of parsed.supercruiseDestDropEvents) {
+    broadcastCompanionEvent({
+      type: 'sc_drop',
+      station: ev.Type_Localised || ev.Type,
+      marketId: ev.MarketID,
     });
   }
 

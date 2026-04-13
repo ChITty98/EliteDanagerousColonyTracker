@@ -19,6 +19,8 @@ import {
   type DomainStation,
   type DomainData,
   type Showpiece,
+  computeDomainRecords,
+  type DomainRecord,
 } from './domainHelpers';
 
 // ─── Sub-components ──────────────────────────────────────────────────
@@ -179,6 +181,12 @@ export function ArchitectDomainPage() {
     [colonyNames, knownSystems, knownStations, journalExplorationCache, settings],
   );
 
+  // Domain records (superlatives)
+  const domainRecords = useMemo(
+    () => computeDomainRecords(journalExplorationCache, colonyNames, knownSystems),
+    [journalExplorationCache, colonyNames, knownSystems],
+  );
+
   // Highlight sets from settings
   const highlightStars = useMemo(
     () => new Set(settings.domainHighlightStars ?? DEFAULT_HIGHLIGHT_STARS),
@@ -235,6 +243,30 @@ export function ArchitectDomainPage() {
           <div className="flex flex-wrap gap-3">
             {domain.showpieces.map((sp, i) => (
               <ShowpieceCard key={i} sp={sp} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Records */}
+      {domainRecords.length > 0 && (
+        <div className="bg-gradient-to-r from-card to-muted/30 border border-amber-500/20 rounded-lg p-4 mb-6">
+          <h3 className="text-xs font-semibold text-amber-400/80 uppercase tracking-wider mb-3">{'\u{1F3C6}'} Domain Records</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {domainRecords.map((rec, i) => (
+              <div key={i} className="flex items-center gap-2 bg-background/40 rounded-md px-3 py-2">
+                <span className="text-lg">{rec.icon}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">{rec.label}</div>
+                  <div className="text-sm font-semibold text-foreground truncate">{rec.value}</div>
+                  <div className="text-xs text-muted-foreground truncate">
+                    {rec.bodyName.replace(rec.systemName + ' ', '')} <span className="text-muted-foreground/50">in</span>{' '}
+                    <Link to={`/systems/${encodeURIComponent(rec.systemName)}`} className="text-primary hover:underline">
+                      {rec.systemName}
+                    </Link>
+                  </div>
+                </div>
+              </div>
             ))}
           </div>
         </div>

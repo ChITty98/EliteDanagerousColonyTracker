@@ -327,6 +327,12 @@ export function DashboardPage() {
       const handle = getJournalFolderHandle();
       if (handle) {
         journalExploration = await extractExplorationData(handle) as Map<number, { bodyCount: number; fssAllBodiesFound: boolean; scannedBodies: { BodyName: string }[] }>;
+        // Populate journalExplorationCache for Architect's Domain records
+        const cache: Record<number, import('@/services/journalReader').JournalExplorationSystem> = {};
+        for (const [addr, sys] of (journalExploration as Map<number, import('@/services/journalReader').JournalExplorationSystem>)) {
+          cache[addr] = sys;
+        }
+        useAppStore.getState().setJournalExplorationCache(cache);
       }
     } catch { /* journal unavailable */ }
 

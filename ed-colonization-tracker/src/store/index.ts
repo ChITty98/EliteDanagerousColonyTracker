@@ -103,26 +103,33 @@ async function checkServerStorage(): Promise<boolean> {
   return serverStorageAvailable;
 }
 
+let hydrationComplete = false;
+
 const serverStorage: StateStorage = {
   getItem: async (name: string) => {
     const available = await checkServerStorage();
-    if (!available) return localStorage.getItem(name);
+    if (!available) { hydrationComplete = true; return localStorage.getItem(name); }
     try {
       const res = await fetch(apiUrl('/api/state'));
-      if (!res.ok) return null;
+      if (!res.ok) { hydrationComplete = true; return null; }
       const data = await res.json();
+      hydrationComplete = true;
       if (!data || Object.keys(data).length === 0) return null;
       return JSON.stringify({ state: data, version: 19 });
     } catch {
+      hydrationComplete = true;
       return null;
     }
   },
   setItem: async (name: string, value: string) => {
     const available = await checkServerStorage();
     if (!available) { localStorage.setItem(name, value); return; }
+    // Don't PATCH empty/default state to server before hydration completes
+    if (!hydrationComplete) return;
     if (setItemDebounceTimer) clearTimeout(setItemDebounceTimer);
     setItemDebounceTimer = setTimeout(async () => {
       try {
+        markOwnPatch();
         const parsed = JSON.parse(value);
         await fetch(apiUrl('/api/state'), {
           method: 'PATCH',
@@ -139,6 +146,56 @@ const serverStorage: StateStorage = {
     if (!available) localStorage.removeItem(name);
   },
 };
+
+// --- SSE state sync: re-fetch state when another device changes it ---
+let lastOwnPatchTime = 0;
+const PATCH_IGNORE_WINDOW = 2000; // ignore state_updated for 2s after our own PATCH
+
+function markOwnPatch() {
+  lastOwnPatchTime = Date.now();
+}
+
+function startStateSyncListener() {
+  try {
+    const url = apiUrl('/api/events');
+    const es = new EventSource(url);
+    // Track exploration updates to avoid rehydration conflicts
+    let lastExplorationUpdate = 0;
+    es.onmessage = async (e) => {
+      try {
+        const ev = JSON.parse(e.data);
+        // Track exploration updates — orrery handles these via inline SSE data
+        if (ev.type === 'exploration_update') {
+          lastExplorationUpdate = Date.now();
+          return;
+        }
+        if (ev.type !== 'state_updated') return;
+        // Skip if this was likely our own PATCH
+        if (Date.now() - lastOwnPatchTime < PATCH_IGNORE_WINDOW) return;
+        // Skip if a recent exploration update caused this — orrery handles it directly
+        if (Date.now() - lastExplorationUpdate < 5000) return;
+        // Re-fetch state from server and merge into store
+        const res = await fetch(apiUrl('/api/state'));
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data || Object.keys(data).length === 0) return;
+        // Rehydrate the store with server state
+        useAppStore.persist.rehydrate();
+      } catch { /* ignore */ }
+    };
+    es.onerror = () => {
+      // SSE will auto-reconnect
+    };
+  } catch { /* SSE not available */ }
+}
+
+// Start SSE sync after a short delay to let the store initialize
+setTimeout(() => {
+  checkServerStorage().then((available) => {
+    if (available) startStateSyncListener();
+  });
+}, 1000);
+
 import type {
   ColonizationProject,
   CustomSource,
@@ -197,6 +254,8 @@ interface AppState {
 
   // Commander position (live-updated by journal watcher on FSDJump)
   commanderPosition: { systemName: string; systemAddress: number; coordinates: { x: number; y: number; z: number } } | null;
+  carrierJumpCountdown: { destination: string; departureTime: string; systemAddress: number } | null;
+  setCarrierJumpCountdown: (countdown: { destination: string; departureTime: string; systemAddress: number } | null) => void;
   setCommanderPosition: (pos: { systemName: string; systemAddress: number; coordinates: { x: number; y: number; z: number } }) => void;
 
   // Ship cargo (live-updated by journal watcher)
@@ -545,6 +604,8 @@ export const useAppStore = create<AppState>()(
       // Commander position
       commanderPosition: null,
       setCommanderPosition: (pos) => set({ commanderPosition: pos }),
+      carrierJumpCountdown: null,
+      setCarrierJumpCountdown: (countdown) => set({ carrierJumpCountdown: countdown }),
 
       // Fleet Carriers
       fleetCarriers: [],

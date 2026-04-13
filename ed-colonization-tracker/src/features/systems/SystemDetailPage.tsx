@@ -704,7 +704,10 @@ export function SystemDetailPage() {
     <div>
       {/* Hero Header */}
       <div className={`mb-6 rounded-xl border-2 ${tier.borderClass} ${tier.bgGradient} p-6`}>
-        <Link to="/" className="text-sm text-muted-foreground hover:text-foreground mb-3 inline-block">{'\u2190'} Dashboard</Link>
+        <div className="flex items-center gap-3 mb-3">
+          <Link to="/" className="text-sm text-muted-foreground hover:text-foreground">{'\u2190'} Dashboard</Link>
+          <Link to={`/orrery?system=${encodeURIComponent(systemName)}`} className="text-sm text-cyan-400 hover:text-cyan-300">{'\u2604\uFE0F'} System View</Link>
+        </div>
 
         {/* Top row: tier badge + name + score */}
         <div className="flex items-start justify-between mb-4">
@@ -1188,8 +1191,8 @@ function InstallationsTab({
                               return (
                                 <span
                                   className={`font-medium cursor-pointer hover:text-primary ${station.body ? 'text-foreground' : 'text-primary/70'}`}
-                                  onClick={(e) => { e.stopPropagation(); if (bodyNames.length > 0) setEditingBody(station.stationName); }}
-                                  title={bodyNames.length > 0 ? 'Click to change body' : (station.bodyType || '')}
+                                  onClick={(e) => { e.stopPropagation(); setEditingBody(station.stationName); }}
+                                  title="Click to change body"
                                 >{capitalizeBodyName(resolvedBody)}</span>
                               );
                             }

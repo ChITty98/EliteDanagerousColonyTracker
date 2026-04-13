@@ -16,6 +16,7 @@ import { JournalStatsPage } from '@/features/journal-stats/JournalStatsPage';
 import { CompanionPage } from '@/features/companion/CompanionPage';
 import { ArchitectDomainPage } from '@/features/domain/ArchitectDomainPage';
 import { ColonyMapPage } from '@/features/map/ColonyMapPage';
+import { OrreryPage } from '@/features/orrery/OrreryPage';
 
 export const router = createBrowserRouter([
   {
@@ -34,6 +35,7 @@ export const router = createBrowserRouter([
       { path: 'sessions', element: <SessionsPage /> },
       { path: 'domain', element: <ArchitectDomainPage /> },
       { path: 'map', element: <ColonyMapPage /> },
+      { path: 'orrery', element: <OrreryPage /> },
       { path: 'companion', element: <CompanionPage /> },
       { path: 'journal-stats', element: <JournalStatsPage /> },
       { path: 'settings', element: <SettingsPage /> },

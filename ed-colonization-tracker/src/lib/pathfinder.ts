@@ -218,10 +218,16 @@ async function findCandidateRoutes(
       const distToTarget = distance3d(frontier, targetSystem);
       const targetInNearby = nearby.find((s) => s.id64 === targetSystem.id64);
       if (targetInNearby || distToTarget <= 15) {
-        completed.push([
-          ...entry.systems,
-          { ...targetSystem, body_count: targetInNearby?.body_count ?? 0, population: targetInNearby?.population ?? 0 },
-        ]);
+        // Only add target if not already the last system in the route
+        const lastSys = entry.systems[entry.systems.length - 1];
+        if (lastSys.id64 !== targetSystem.id64) {
+          completed.push([
+            ...entry.systems,
+            { ...targetSystem, body_count: targetInNearby?.body_count ?? 0, population: targetInNearby?.population ?? 0 },
+          ]);
+        } else {
+          completed.push([...entry.systems]);
+        }
         // Don't stop — keep exploring for alternative routes at this hop
       }
 
@@ -438,7 +444,15 @@ export async function findChainPaths(
   };
 
   const completedPaths: ChainPath[] = routes.map((route) => {
-    const nodes: ChainNode[] = route.map((sys, i) => {
+    // Deduplicate systems in the route (same system can appear twice, e.g. target repeated)
+    const seen = new Set<number>();
+    const dedupedRoute = route.filter((sys, i) => {
+      if (i === 0) return true; // always keep start
+      if (seen.has(sys.id64)) return false;
+      seen.add(sys.id64);
+      return true;
+    });
+    const nodes: ChainNode[] = dedupedRoute.map((sys, i) => {
       if (i === 0) return startNode;
       return scoredNodes.get(sys.id64) ?? {
         id64: sys.id64, name: sys.name, x: sys.x, y: sys.y, z: sys.z,

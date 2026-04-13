@@ -4,10 +4,12 @@ import {
   computeNeedsContent,
   computeScoreContent,
   computeHaulContent,
+  computeBuyHereContent,
   computeStatusContent,
   sendContentToOverlay,
   postCompanionEvent,
   setLastSystem,
+  setLastDocked,
   type CompanionContent,
 } from '@/services/overlayService';
 
@@ -137,6 +139,10 @@ export function CompanionPage() {
             });
           }
         }
+        // Track docked station for "Buy Here" button
+        if (ev.type === 'docked' && ev.marketId && ev.station && ev.system) {
+          setLastDocked(ev.marketId as number, ev.station as string, ev.system as string);
+        }
         setEvents((prev) => [ev, ...prev].slice(0, 50));
       } catch { /* ignore parse errors */ }
     };
@@ -226,6 +232,15 @@ export function CompanionPage() {
           <div className="text-2xl mb-1">{'\u{1F69A}'}</div>
           <div className="text-sm font-medium text-cyan-400">Show Haul</div>
           <div className="text-[10px] text-muted-foreground mt-0.5">Needs + FC load list</div>
+        </button>
+
+        <button
+          onClick={() => handleAction('Buy Here', computeBuyHereContent)}
+          className="bg-card border border-yellow-500/30 rounded-lg px-4 py-4 text-center hover:bg-yellow-500/10 transition-colors"
+        >
+          <div className="text-2xl mb-1">{'\u{1F6D2}'}</div>
+          <div className="text-sm font-medium text-yellow-400">Buy Here</div>
+          <div className="text-[10px] text-muted-foreground mt-0.5">What to buy at this station</div>
         </button>
 
         <button

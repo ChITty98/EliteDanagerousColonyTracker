@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Orrery Mockup — HIP 52629</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; color: #e2e8f0; font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; height: 100vh; }
+
+  .container { display: flex; height: 100vh; }
+
+  /* Left panel — priority info */
+  .info-panel {
+    width: 320px; padding: 20px; display: flex; flex-direction: column; gap: 16px;
+    background: linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(2,6,23,0.98) 100%);
+    border-right: 1px solid rgba(59,130,246,0.2);
+    z-index: 10;
+  }
+
+  .system-name { font-size: 28px; font-weight: 800; color: #fff; letter-spacing: 1px; }
+  .system-score { font-size: 48px; font-weight: 900; color: #22d3ee; text-shadow: 0 0 20px rgba(34,211,238,0.5); }
+  .score-label { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 2px; }
+
+  .divider { height: 1px; background: linear-gradient(90deg, rgba(59,130,246,0.3), transparent); }
+
+  .priority-section { margin-bottom: 4px; }
+  .priority-label { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 8px; }
+
+  .highlight-card {
+    background: rgba(34,211,238,0.08); border: 1px solid rgba(34,211,238,0.2);
+    border-radius: 8px; padding: 10px 12px; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .highlight-card.oxygen { border-color: rgba(34,197,94,0.4); background: rgba(34,197,94,0.08); }
+  .highlight-card.ringed { border-color: rgba(236,72,153,0.4); background: rgba(236,72,153,0.08); }
+  .highlight-card.neutron { border-color: rgba(168,85,247,0.4); background: rgba(168,85,247,0.08); }
+  .highlight-card.landable { border-color: rgba(59,130,246,0.3); background: rgba(59,130,246,0.06); }
+
+  .highlight-icon { font-size: 24px; }
+  .highlight-info { flex: 1; min-width: 0; }
+  .highlight-name { font-size: 13px; font-weight: 600; color: #f8fafc; }
+  .highlight-detail { font-size: 11px; color: #94a3b8; margin-top: 1px; }
+  .highlight-badge { font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 600; }
+  .badge-oxygen { background: rgba(34,197,94,0.2); color: #4ade80; }
+  .badge-landable { background: rgba(59,130,246,0.2); color: #60a5fa; }
+  .badge-ringed { background: rgba(236,72,153,0.2); color: #f472b6; }
+
+  .body-count { display: flex; gap: 16px; margin-top: 4px; }
+  .body-stat { text-align: center; }
+  .body-stat-value { font-size: 20px; font-weight: 700; color: #f8fafc; }
+  .body-stat-label { font-size: 9px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; }
+
+  /* Right panel — orrery visualization */
+  .orrery {
+    flex: 1; position: relative; overflow: hidden;
+    background: radial-gradient(ellipse at 30% 50%, rgba(15,23,42,1) 0%, #000 70%);
+  }
+
+  /* Stars */
+  .star {
+    position: absolute; border-radius: 50%;
+    transform: translate(-50%, -50%);
+  }
+  .star-main {
+    width: 60px; height: 60px;
+    background: radial-gradient(circle, #fff8e1 0%, #ffd54f 40%, #ff8f00 70%, transparent 100%);
+    box-shadow: 0 0 40px 15px rgba(255,183,77,0.4), 0 0 80px 30px rgba(255,183,77,0.15);
+    animation: pulse-star 4s ease-in-out infinite;
+  }
+  .star-secondary {
+    width: 35px; height: 35px;
+    background: radial-gradient(circle, #fff 0%, #ff8a80 40%, #d32f2f 70%, transparent 100%);
+    box-shadow: 0 0 25px 10px rgba(211,47,47,0.3), 0 0 50px 20px rgba(211,47,47,0.1);
+    animation: pulse-star 3.5s ease-in-out infinite;
+  }
+  .star-neutron {
+    width: 20px; height: 20px;
+    background: radial-gradient(circle, #fff 0%, #ce93d8 30%, #7b1fa2 60%, transparent 100%);
+    box-shadow: 0 0 30px 15px rgba(123,31,162,0.5), 0 0 60px 30px rgba(123,31,162,0.2);
+    animation: pulse-neutron 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse-star {
+    0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+    50% { transform: translate(-50%, -50%) scale(1.05); opacity: 0.9; }
+  }
+  @keyframes pulse-neutron {
+    0%, 100% { transform: translate(-50%, -50%) scale(1); }
+    50% { transform: translate(-50%, -50%) scale(1.15); }
+  }
+
+  /* Orbit rings */
+  .orbit {
+    position: absolute; border-radius: 50%; border: 1px solid rgba(100,116,139,0.12);
+    transform: translate(-50%, -50%);
+  }
+
+  /* Bodies */
+  .body {
+    position: absolute; border-radius: 50%;
+    transform: translate(-50%, -50%);
+    cursor: pointer; transition: all 0.2s;
+  }
+  .body:hover { transform: translate(-50%, -50%) scale(1.3); z-index: 100; }
+  .body-label {
+    position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+    font-size: 9px; color: #94a3b8; white-space: nowrap; margin-top: 4px;
+    pointer-events: none;
+  }
+  .body:hover .body-label { color: #f8fafc; }
+
+  /* Body types */
+  .body-gas-giant {
+    background: linear-gradient(135deg, #d4a574 0%, #8d6e4a 50%, #c4956a 100%);
+    box-shadow: 0 0 8px rgba(212,165,116,0.3);
+  }
+  .body-rocky {
+    background: linear-gradient(135deg, #78909c 0%, #546e7a 50%, #607d8b 100%);
+  }
+  .body-icy {
+    background: linear-gradient(135deg, #e0f7fa 0%, #80deea 50%, #b2ebf2 100%);
+  }
+  .body-hmc {
+    background: linear-gradient(135deg, #a1887f 0%, #6d4c41 50%, #8d6e63 100%);
+  }
+  .body-earthlike {
+    background: linear-gradient(135deg, #4fc3f7 0%, #2e7d32 40%, #1565c0 100%);
+    box-shadow: 0 0 12px rgba(79,195,247,0.4);
+  }
+  .body-water {
+    background: linear-gradient(135deg, #0288d1 0%, #01579b 50%, #0277bd 100%);
+    box-shadow: 0 0 10px rgba(2,136,209,0.3);
+  }
+
+  /* Landable indicator */
+  .landable-ring {
+    position: absolute; inset: -3px; border-radius: 50%;
+    border: 2px solid rgba(34,197,94,0.6);
+    animation: pulse-landable 2s ease-in-out infinite;
+  }
+  @keyframes pulse-landable {
+    0%, 100% { opacity: 0.6; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.1); }
+  }
+
+  /* Atmosphere glow */
+  .atmo-glow {
+    position: absolute; inset: -6px; border-radius: 50%;
+    opacity: 0.4;
+  }
+  .atmo-oxygen { box-shadow: 0 0 15px 5px rgba(34,197,94,0.5); background: rgba(34,197,94,0.1); }
+  .atmo-nitrogen { box-shadow: 0 0 12px 4px rgba(96,165,250,0.4); background: rgba(96,165,250,0.08); }
+  .atmo-ammonia { box-shadow: 0 0 12px 4px rgba(250,204,21,0.4); background: rgba(250,204,21,0.08); }
+  .atmo-co2 { box-shadow: 0 0 10px 3px rgba(251,146,60,0.3); background: rgba(251,146,60,0.06); }
+
+  /* Rings on bodies */
+  .body-rings {
+    position: absolute; top: 50%; left: 50%;
+    width: 200%; height: 30%;
+    transform: translate(-50%, -50%) rotateX(70deg);
+    border: 1px solid rgba(200,200,200,0.3);
+    border-radius: 50%;
+    pointer-events: none;
+  }
+  .body-rings::before {
+    content: ''; position: absolute; inset: 3px;
+    border: 1px solid rgba(200,200,200,0.15);
+    border-radius: 50%;
+  }
+
+  /* Jump flash animation */
+  .jump-flash {
+    position: absolute; inset: 0;
+    background: radial-gradient(circle at 30% 50%, rgba(59,130,246,0.3), transparent 60%);
+    animation: flash-in 1.5s ease-out forwards;
+    pointer-events: none;
+  }
+  @keyframes flash-in {
+    0% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
+  /* Body entrance animation */
+  .body-enter {
+    animation: body-pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    opacity: 0;
+  }
+  @keyframes body-pop {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(0); }
+    100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  }
+
+  /* Distance markers */
+  .distance-label {
+    position: absolute; font-size: 8px; color: rgba(100,116,139,0.5);
+    transform: translateX(-50%);
+  }
+
+  /* Colony badge */
+  .colony-badge {
+    position: absolute; top: 12px; right: 16px;
+    background: linear-gradient(135deg, rgba(234,179,8,0.2), rgba(234,179,8,0.05));
+    border: 1px solid rgba(234,179,8,0.4);
+    border-radius: 8px; padding: 8px 14px;
+    font-size: 12px; font-weight: 700; color: #fbbf24;
+    text-transform: uppercase; letter-spacing: 2px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <!-- Left: Priority info panel -->
+  <div class="info-panel">
+    <div>
+      <div class="system-name">HIP 52629</div>
+      <div style="display:flex; align-items:baseline; gap:12px; margin-top:4px;">
+        <div class="system-score">81</div>
+        <div>
+          <div class="score-label">Scout Score</div>
+          <div style="font-size:12px; color:#fbbf24; margin-top:2px;">Your Colony</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="body-count">
+      <div class="body-stat"><div class="body-stat-value">3</div><div class="body-stat-label">Stars</div></div>
+      <div class="body-stat"><div class="body-stat-value">13</div><div class="body-stat-label">Planets</div></div>
+      <div class="body-stat"><div class="body-stat-value">7</div><div class="body-stat-label">Landable</div></div>
+      <div class="body-stat"><div class="body-stat-value">4</div><div class="body-stat-label">Atmo</div></div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Priority 1: What you care about most -->
+    <div class="priority-section">
+      <div class="priority-label">Highlights</div>
+
+      <div class="highlight-card oxygen">
+        <div class="highlight-icon">&#x1F7E2;</div>
+        <div class="highlight-info">
+          <div class="highlight-name">A 6 e</div>
+          <div class="highlight-detail">Rocky body &middot; 0.21g &middot; 183K &middot; 8,124 Pa</div>
+        </div>
+        <span class="highlight-badge badge-oxygen">O&#x2082;</span>
+      </div>
+
+      <div class="highlight-card ringed">
+        <div class="highlight-icon">&#x1F48D;</div>
+        <div class="highlight-info">
+          <div class="highlight-name">A 2</div>
+          <div class="highlight-detail">Gas giant &middot; Water-based life &middot; 2.09g</div>
+        </div>
+        <span class="highlight-badge badge-ringed">Ringed</span>
+      </div>
+
+      <div class="highlight-card landable">
+        <div class="highlight-icon">&#x2600;&#xFE0F;</div>
+        <div class="highlight-info">
+          <div class="highlight-name">A 1 A</div>
+          <div class="highlight-detail">Rocky &middot; 0.08g &middot; CO&#x2082; atmo &middot; 812 ls</div>
+        </div>
+        <span class="highlight-badge badge-landable">Land</span>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Priority 2: Landable bodies list -->
+    <div class="priority-section">
+      <div class="priority-label">Landable Bodies</div>
+      <div style="display:flex; flex-direction:column; gap:3px;">
+        <div style="font-size:12px; display:flex; justify-content:space-between;">
+          <span>&#x1F7E2; A 6 e</span><span style="color:#4ade80;">O&#x2082; &middot; 0.21g</span>
+        </div>
+        <div style="font-size:12px; display:flex; justify-content:space-between;">
+          <span>&#x1F7E0; A 1 A</span><span style="color:#fb923c;">CO&#x2082; &middot; 0.08g</span>
+        </div>
+        <div style="font-size:12px; display:flex; justify-content:space-between;">
+          <span>&#x1F7E0; A 1 B</span><span style="color:#fb923c;">CO&#x2082; &middot; 0.09g</span>
+        </div>
+        <div style="font-size:12px; display:flex; justify-content:space-between;">
+          <span>&#x1F7E0; A 2 A</span><span style="color:#fb923c;">CO&#x2082; &middot; 0.07g</span>
+        </div>
+        <div style="font-size:12px; display:flex; justify-content:space-between;">
+          <span style="color:#94a3b8;">A 5</span><span style="color:#64748b;">None &middot; 0.34g</span>
+        </div>
+        <div style="font-size:12px; display:flex; justify-content:space-between;">
+          <span style="color:#94a3b8;">A 6 a</span><span style="color:#64748b;">None &middot; 0.04g</span>
+        </div>
+        <div style="font-size:12px; display:flex; justify-content:space-between;">
+          <span style="color:#94a3b8;">A 6 d</span><span style="color:#64748b;">None &middot; 0.02g</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="priority-section">
+      <div class="priority-label">Installations</div>
+      <div style="font-size:12px; color:#fbbf24;">&#x1F3DB;&#xFE0F; Tier 3: Colony &middot; 10 stations</div>
+      <div style="font-size:11px; color:#94a3b8; margin-top:4px;">Kalian Port (Coriolis) &middot; Chitty City (Surface Port) &middot; +8 more</div>
+    </div>
+  </div>
+
+  <!-- Right: Orrery visualization -->
+  <div class="orrery">
+    <div class="jump-flash"></div>
+    <div class="colony-badge">&#x1F3D9;&#xFE0F; Your Colony</div>
+
+    <!-- Star A (G-class, main) -->
+    <div class="star star-main" style="left:25%; top:45%;"></div>
+
+    <!-- Orbit rings -->
+    <div class="orbit" style="left:25%; top:45%; width:180px; height:180px;"></div>
+    <div class="orbit" style="left:25%; top:45%; width:300px; height:300px;"></div>
+    <div class="orbit" style="left:25%; top:45%; width:440px; height:440px;"></div>
+    <div class="orbit" style="left:25%; top:45%; width:600px; height:600px;"></div>
+    <div class="orbit" style="left:25%; top:45%; width:780px; height:780px;"></div>
+    <div class="orbit" style="left:25%; top:45%; width:950px; height:950px;"></div>
+
+    <!-- A 1: Gas giant with water-based life -->
+    <div class="body body-gas-giant body-enter" style="left:33%; top:32%; width:28px; height:28px; animation-delay:0.2s;">
+      <div class="body-rings"></div>
+      <div class="body-label">A 1</div>
+    </div>
+
+    <!-- A 1 A: Rocky, landable, CO2 atmo -->
+    <div class="body body-rocky body-enter" style="left:36%; top:29%; width:8px; height:8px; animation-delay:0.3s;">
+      <div class="landable-ring"></div>
+      <div class="atmo-glow atmo-co2"></div>
+      <div class="body-label">A 1 A</div>
+    </div>
+
+    <!-- A 1 B: Rocky, landable, CO2 atmo -->
+    <div class="body body-rocky body-enter" style="left:35%; top:36%; width:8px; height:8px; animation-delay:0.35s;">
+      <div class="landable-ring"></div>
+      <div class="atmo-glow atmo-co2"></div>
+      <div class="body-label">A 1 B</div>
+    </div>
+
+    <!-- A 2: Gas giant (Sudarsky III) -->
+    <div class="body body-gas-giant body-enter" style="left:42%; top:58%; width:32px; height:32px; animation-delay:0.4s;">
+      <div class="body-label">A 2</div>
+    </div>
+
+    <!-- A 2 A: Rocky, landable, CO2 -->
+    <div class="body body-rocky body-enter" style="left:45%; top:55%; width:7px; height:7px; animation-delay:0.45s;">
+      <div class="landable-ring"></div>
+      <div class="atmo-glow atmo-co2"></div>
+      <div class="body-label">A 2 A</div>
+    </div>
+
+    <!-- A 3: HMC -->
+    <div class="body body-hmc body-enter" style="left:48%; top:35%; width:14px; height:14px; animation-delay:0.5s;">
+      <div class="body-label">A 3</div>
+    </div>
+
+    <!-- A 4: HMC -->
+    <div class="body body-hmc body-enter" style="left:56%; top:52%; width:16px; height:16px; animation-delay:0.6s;">
+      <div class="body-label">A 4</div>
+    </div>
+
+    <!-- A 5: Rocky, landable, no atmo -->
+    <div class="body body-rocky body-enter" style="left:62%; top:38%; width:12px; height:12px; animation-delay:0.7s;">
+      <div class="landable-ring"></div>
+      <div class="body-label">A 5</div>
+    </div>
+
+    <!-- A 6: Gas giant with rings -->
+    <div class="body body-gas-giant body-enter" style="left:70%; top:48%; width:24px; height:24px; animation-delay:0.8s;">
+      <div class="body-rings"></div>
+      <div class="body-label">A 6</div>
+    </div>
+
+    <!-- A 6 a: Icy, landable -->
+    <div class="body body-icy body-enter" style="left:68%; top:43%; width:6px; height:6px; animation-delay:0.85s;">
+      <div class="landable-ring"></div>
+      <div class="body-label" style="font-size:8px;">a</div>
+    </div>
+
+    <!-- A 6 d: Rocky, landable -->
+    <div class="body body-rocky body-enter" style="left:73%; top:44%; width:5px; height:5px; animation-delay:0.9s;">
+      <div class="landable-ring"></div>
+      <div class="body-label" style="font-size:8px;">d</div>
+    </div>
+
+    <!-- A 6 e: Rocky, landable, OXYGEN! -->
+    <div class="body body-rocky body-enter" style="left:72%; top:53%; width:9px; height:9px; animation-delay:0.95s;">
+      <div class="landable-ring"></div>
+      <div class="atmo-glow atmo-oxygen"></div>
+      <div class="body-label" style="color:#4ade80; font-weight:600;">A 6 e &#x1F7E2;</div>
+    </div>
+
+    <!-- Distance markers -->
+    <div class="distance-label" style="left:33%; bottom:8px;">812 ls</div>
+    <div class="distance-label" style="left:42%; bottom:8px;">1.2K ls</div>
+    <div class="distance-label" style="left:56%; bottom:8px;">2.0K ls</div>
+    <div class="distance-label" style="left:70%; bottom:8px;">3.7K ls</div>
+
+    <!-- Star label -->
+    <div style="position:absolute; left:25%; top:56%; transform:translateX(-50%); font-size:11px; color:#ffd54f; font-weight:600; text-align:center;">
+      A<br><span style="font-size:9px; color:#94a3b8; font-weight:400;">G-class &middot; 1.05 M&#x2609;</span>
+    </div>
+  </div>
+</div>
+</body>
+</html>

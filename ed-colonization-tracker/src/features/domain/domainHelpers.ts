@@ -94,15 +94,15 @@ export function properCase(s: string): string {
 
 export function atmoStyle(type: string): { icon: string; color: string } {
   switch (type) {
-    case 'Oxygen': return { icon: '\u{1F7E2}', color: 'text-green-400' };
+    case 'Oxygen': return { icon: '\u{1F7E3}', color: 'text-violet-400' };
     case 'Nitrogen': return { icon: '\u{1F535}', color: 'text-blue-400' };
-    case 'Ammonia': return { icon: '\u{1F7E1}', color: 'text-yellow-400' };
-    case 'Carbon Dioxide': return { icon: '\u{1F7E0}', color: 'text-orange-400' };
-    case 'Sulphur Dioxide': return { icon: '\u{1F7E4}', color: 'text-amber-600' };
+    case 'Ammonia': return { icon: '\u{1F7E2}', color: 'text-green-400' };
+    case 'Carbon Dioxide': return { icon: '\u{1F7E1}', color: 'text-yellow-400' };
+    case 'Sulphur Dioxide': return { icon: '\u{1F7E0}', color: 'text-orange-400' };
     case 'Water': return { icon: '\u{1F4A7}', color: 'text-cyan-400' };
-    case 'Methane': return { icon: '\u{1F7E3}', color: 'text-purple-400' };
-    case 'Argon': return { icon: '\u26AA', color: 'text-gray-400' };
-    case 'Helium': return { icon: '\u26AA', color: 'text-pink-300' };
+    case 'Methane': return { icon: '\u{1F30B}', color: 'text-muted-foreground' };
+    case 'Argon': return { icon: '\u{1F535}', color: 'text-indigo-300' };
+    case 'Helium': return { icon: '\u{1F30B}', color: 'text-muted-foreground' };
     case 'Neon': return { icon: '\u{1F534}', color: 'text-red-400' };
     case 'None': return { icon: '\u2014', color: 'text-muted-foreground/50' };
     default: return { icon: '\u2753', color: 'text-muted-foreground' };
@@ -501,4 +501,149 @@ export function aggregateDomainData(
     nearestHomeName,
     farthestHomeName,
   };
+}
+
+// ─── Domain Records (superlatives) ─────────────────────────────────
+
+export interface DomainRecord {
+  label: string;
+  icon: string;
+  bodyName: string;
+  systemName: string;
+  value: string; // formatted display value
+  rawValue: number; // for sorting
+}
+
+export function computeDomainRecords(
+  explorationData: Record<number, JournalExplorationSystem>,
+  colonySystems: Set<string>,
+  knownSystems: Record<string, KnownSystem>,
+): DomainRecord[] {
+  const records: DomainRecord[] = [];
+
+  // Collect all bodies from colony systems
+  interface BodyWithSystem { body: JournalScannedBody; systemName: string }
+  const allBodies: BodyWithSystem[] = [];
+
+  for (const sys of Object.values(explorationData)) {
+    const sysName = sys.systemName || '';
+    if (!colonySystems.has(sysName.toLowerCase())) continue;
+    for (const body of sys.scannedBodies) {
+      allBodies.push({ body, systemName: sysName });
+    }
+  }
+
+  if (allBodies.length === 0) return records;
+
+  // Helper to add a record
+  const add = (label: string, icon: string, b: BodyWithSystem, value: string, rawValue: number) => {
+    records.push({ label, icon, bodyName: b.body.bodyName, systemName: b.systemName, value, rawValue });
+  };
+
+  // --- Stars ---
+  const stars = allBodies.filter((b) => b.body.type === 'Star' && b.body.stellarMass != null);
+  if (stars.length > 0) {
+    const largest = stars.reduce((a, b) => (b.body.stellarMass! > a.body.stellarMass!) ? b : a);
+    add('Largest Star', '\u{2B50}', largest, `${largest.body.stellarMass!.toFixed(2)} M\u{2609}`, largest.body.stellarMass!);
+
+    const smallest = stars.reduce((a, b) => (b.body.stellarMass! < a.body.stellarMass!) ? b : a);
+    if (smallest.body.bodyName !== largest.body.bodyName) {
+      add('Smallest Star', '\u{1F31F}', smallest, `${smallest.body.stellarMass!.toFixed(4)} M\u{2609}`, smallest.body.stellarMass!);
+    }
+
+    const hottestStars = stars.filter((b) => b.body.surfaceTemperature != null);
+    if (hottestStars.length > 0) {
+      const hottest = hottestStars.reduce((a, b) => (b.body.surfaceTemperature! > a.body.surfaceTemperature!) ? b : a);
+      add('Hottest Star', '\u{1F525}', hottest, `${Math.round(hottest.body.surfaceTemperature!).toLocaleString()} K`, hottest.body.surfaceTemperature!);
+    }
+  }
+
+  // --- Landable with atmosphere ---
+  const landableAtmo = allBodies.filter((b) => b.body.type === 'Planet' && b.body.isLandable && b.body.atmosphereType && !/none|unknown/i.test(b.body.atmosphereType));
+
+  if (landableAtmo.length > 0) {
+    // Thickest atmosphere
+    const withPressure = landableAtmo.filter((b) => b.body.surfacePressure != null && b.body.surfacePressure > 0);
+    if (withPressure.length > 0) {
+      const thickest = withPressure.reduce((a, b) => (b.body.surfacePressure! > a.body.surfacePressure!) ? b : a);
+      add('Thickest Atmosphere', '\u{1F32B}\u{FE0F}', thickest, `${thickest.body.surfacePressure!.toFixed(0)} Pa`, thickest.body.surfacePressure!);
+    }
+
+    // Largest atmospheric landable (by radius)
+    const withRadius = landableAtmo.filter((b) => b.body.radius != null && b.body.radius > 0);
+    if (withRadius.length > 0) {
+      const largest = withRadius.reduce((a, b) => (b.body.radius! > a.body.radius!) ? b : a);
+      add('Largest Atmo Landable', '\u{1F30D}', largest, `${(largest.body.radius! / 1000).toFixed(0)} km`, largest.body.radius!);
+
+      const smallest = withRadius.reduce((a, b) => (b.body.radius! < a.body.radius!) ? b : a);
+      if (smallest.body.bodyName !== largest.body.bodyName) {
+        add('Smallest Atmo Landable', '\u{1FA90}', smallest, `${(smallest.body.radius! / 1000).toFixed(0)} km`, smallest.body.radius!);
+      }
+    }
+  }
+
+  // --- All landables ---
+  const landables = allBodies.filter((b) => b.body.type === 'Planet' && b.body.isLandable);
+
+  if (landables.length > 0) {
+    // Highest gravity
+    const withGravity = landables.filter((b) => b.body.gravity != null && b.body.gravity > 0);
+    if (withGravity.length > 0) {
+      const highest = withGravity.reduce((a, b) => (b.body.gravity! > a.body.gravity!) ? b : a);
+      add('Highest Gravity', '\u{2B07}\u{FE0F}', highest, `${(highest.body.gravity! / 9.81).toFixed(3)}g`, highest.body.gravity!);
+
+      const lowest = withGravity.reduce((a, b) => (b.body.gravity! < a.body.gravity!) ? b : a);
+      if (lowest.body.bodyName !== highest.body.bodyName) {
+        add('Lowest Gravity', '\u{1F3CB}\u{FE0F}', lowest, `${(lowest.body.gravity! / 9.81).toFixed(3)}g`, lowest.body.gravity!);
+      }
+    }
+
+    // Closest to arrival star
+    const withDist = landables.filter((b) => b.body.distanceToArrival != null && b.body.distanceToArrival > 0);
+    if (withDist.length > 0) {
+      const closest = withDist.reduce((a, b) => (b.body.distanceToArrival < a.body.distanceToArrival) ? b : a);
+      add('Closest to Star', '\u{2600}\u{FE0F}', closest, `${closest.body.distanceToArrival.toFixed(0)} ls`, closest.body.distanceToArrival);
+    }
+
+    // Closest orbital distance to parent body (tightest orbit)
+    const withSMA = landables.filter((b) => b.body.semiMajorAxis != null && b.body.semiMajorAxis > 0);
+    if (withSMA.length > 0) {
+      const tightest = withSMA.reduce((a, b) => (b.body.semiMajorAxis! < a.body.semiMajorAxis!) ? b : a);
+      const smaLS = tightest.body.semiMajorAxis! / 299792458; // metres to light-seconds
+      const smaDisplay = smaLS < 1 ? `${(tightest.body.semiMajorAxis! / 1000).toFixed(0)} km` : `${smaLS.toFixed(1)} ls`;
+      add('Tightest Orbit', '\u{1F300}', tightest, smaDisplay, tightest.body.semiMajorAxis!);
+    }
+
+    // Hottest / Coolest landable
+    const withTemp = landables.filter((b) => b.body.surfaceTemperature != null);
+    if (withTemp.length > 0) {
+      const hottest = withTemp.reduce((a, b) => (b.body.surfaceTemperature! > a.body.surfaceTemperature!) ? b : a);
+      add('Hottest Surface', '\u{1F321}\u{FE0F}', hottest, `${Math.round(hottest.body.surfaceTemperature!)} K`, hottest.body.surfaceTemperature!);
+
+      const coldest = withTemp.reduce((a, b) => (b.body.surfaceTemperature! < a.body.surfaceTemperature!) ? b : a);
+      if (coldest.body.bodyName !== hottest.body.bodyName) {
+        add('Coldest Surface', '\u{2744}\u{FE0F}', coldest, `${Math.round(coldest.body.surfaceTemperature!)} K`, coldest.body.surfaceTemperature!);
+      }
+    }
+  }
+
+  // --- Largest ring ---
+  const withRings = allBodies.filter((b) => b.body.rings && b.body.rings.length > 0);
+  if (withRings.length > 0) {
+    let bestRing: { bws: BodyWithSystem; ring: JournalScannedBody['rings'][0]; outerRad: number } | null = null;
+    for (const bws of withRings) {
+      for (const ring of bws.body.rings!) {
+        if (ring.outerRad && (!bestRing || ring.outerRad > bestRing.outerRad)) {
+          bestRing = { bws, ring, outerRad: ring.outerRad };
+        }
+      }
+    }
+    if (bestRing) {
+      const radiusLS = bestRing.outerRad / 299792458;
+      const display = radiusLS < 0.01 ? `${(bestRing.outerRad / 1000).toFixed(0)} km` : `${radiusLS.toFixed(2)} ls`;
+      add('Largest Ring', '\u{1F48D}', bestRing.bws, `${display} (${bestRing.ring.name.split(' ').pop()})`, bestRing.outerRad);
+    }
+  }
+
+  return records;
 }

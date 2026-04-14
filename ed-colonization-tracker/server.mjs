@@ -294,6 +294,20 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Token API: GET /api/network-url — returns network URL with token (localhost only)
+  if (pathname === '/api/network-url' && req.method === 'GET') {
+    if (!isLocalhost(req)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Localhost only' }));
+      return;
+    }
+    const hostname = os.hostname();
+    const networkUrl = `http://${hostname}:${PORT}?token=${APP_TOKEN}`;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ url: networkUrl, token: APP_TOKEN, hostname, port: PORT }));
+    return;
+  }
+
   // Exploration API: GET /api/exploration/:addr — single system's body data
   const exploMatch = pathname.match(/^\/api\/exploration\/(\d+)$/);
   if (exploMatch && req.method === 'GET') {

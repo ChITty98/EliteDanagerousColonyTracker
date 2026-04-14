@@ -615,6 +615,21 @@ function OrreryCanvas({ systemData, flash, relativeSizes }: { systemData: NonNul
                 </circle>
               )}
 
+              {/* Bio signal indicator */}
+              {!isStar && ob.body.bioSignals && ob.body.bioSignals > 0 && (
+                <text x={x + size + Math.max(3, 3 * scale)} y={y + 4}
+                  fill="#22c55e" fontSize={Math.max(6, 7 * scale)} fontWeight="700">
+                  {'\u{1F9EC}'}{ob.body.bioSignals}
+                </text>
+              )}
+              {/* Geo signal indicator */}
+              {!isStar && ob.body.geoSignals && ob.body.geoSignals > 0 && !ob.body.bioSignals && (
+                <text x={x + size + Math.max(3, 3 * scale)} y={y + 4}
+                  fill="#f59e0b" fontSize={Math.max(6, 7 * scale)} fontWeight="700">
+                  {'\u{1F30B}'}{ob.body.geoSignals}
+                </text>
+              )}
+
               {/* Label — gems and top-level visible, dirt moons hidden */}
               {(isHighlight || isStar || !ob.body.parents?.some(pr => 'Planet' in pr) || ob.cls.isLandable && ob.cls.hasAtmo) && (
                 <text x={x} y={y + size + Math.max(14, 12 * scale)}
@@ -622,9 +637,14 @@ function OrreryCanvas({ systemData, flash, relativeSizes }: { systemData: NonNul
                   fontSize={Math.max(7, (isHighlight || isStar ? 10 : 7) * scale)}
                   textAnchor="middle" fontWeight={isHighlight || isStar ? '700' : '400'}
                   opacity={isHighlight || isStar ? 1 : 0.5}>
-                  {label}
+                  {label}{!isStar && (() => {
+                    const illum = getIllumination(ob.body, systemData.stars);
+                    return illum !== null && illum < 0.1 ? ' \u{1F311}' : '';
+                  })()}
                 </text>
               )}
+              {/* Dark zone indicator — to the right of label */}
+
               {/* Star class label — only if not overlapping other bodies */}
               {isStar && ob.starCls && systemData.stars.length <= 2 && (
                 <text x={x + size + 6} y={y + 3} fill="#475569"
@@ -672,6 +692,22 @@ function OrreryCanvas({ systemData, flash, relativeSizes }: { systemData: NonNul
 
 const UNIFORM_SIZE = 8;
 const UNIFORM_STAR_SIZE = 10;
+
+// Calculate illumination relative to Earth (1.0 = Earth-like light from Sol at 1 AU)
+// Uses mass-luminosity relation: L ≈ M^3.5 for main sequence stars
+function getIllumination(body: JournalScannedBody, stars: OrreryBody[]): number | null {
+  if (body.type === 'Star' || !body.distanceToArrival || body.distanceToArrival < 1) return null;
+  // Find the parent star — use the closest/brightest for simplicity
+  let totalLuminosity = 0;
+  for (const s of stars) {
+    const mass = s.body.stellarMass || 0.5;
+    totalLuminosity += Math.pow(mass, 3.5);
+  }
+  if (totalLuminosity === 0) return null;
+  const distAU = body.distanceToArrival / 499; // ls to AU
+  if (distAU < 0.01) return null;
+  return totalLuminosity / (distAU * distAU);
+}
 
 function getStarSize(s: OrreryBody, relative = true): number {
   if (!relative) return UNIFORM_STAR_SIZE;
@@ -841,21 +877,21 @@ export function OrreryPage() {
     }
   }, [commanderPosition?.systemName, systemName]);
 
-  // Poll for commander position on remote devices (every 10s)
+  // Poll for commander position on remote devices (every 3s)
+  const lastSSEJump = useRef(0);
   useEffect(() => {
     const token = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
-    if (!token) return; // localhost doesn't need polling
+    if (!token) return;
     const poll = () => {
-      const url = token ? `/api/state?token=${token}` : '/api/state';
-      fetch(url).then(r => r.ok ? r.json() : null).then(data => {
+      if (Date.now() - lastSSEJump.current < 5000) return;
+      fetch(`/api/state?token=${token}`).then(r => r.ok ? r.json() : null).then(data => {
         if (data?.commanderPosition?.systemName && data.commanderPosition.systemName !== systemName) {
           setSystemName(data.commanderPosition.systemName);
           useAppStore.getState().setCommanderPosition(data.commanderPosition);
         }
       }).catch(() => {});
     };
-    const t = setInterval(poll, 10000);
-    poll(); // immediate first check
+    const t = setInterval(poll, 3000);
     return () => clearInterval(t);
   }, [systemName]);
 
@@ -891,6 +927,7 @@ export function OrreryPage() {
       try {
         const ev = JSON.parse(e.data);
         if (ev.type === 'fsd_jump' && ev.system) {
+          lastSSEJump.current = Date.now(); // suppress polling for 15s
           setSystemName(ev.system as string);
           // Update commanderPosition on remote devices
           if (ev.systemAddress && ev.starPos) {
@@ -1268,8 +1305,12 @@ export function OrreryPage() {
                       <div className="text-[11px] text-slate-400">
                         {p.cls.type}
                         {p.body.gravity ? ` \u00B7 ${(p.body.gravity / 9.81).toFixed(2)}g` : ''}
-                        {p.body.surfaceTemperature ? ` \u00B7 ${Math.round(p.body.surfaceTemperature)}K` : ''}
-                        {p.body.surfacePressure ? ` \u00B7 ${p.body.surfacePressure.toFixed(0)} Pa` : ''}
+                        {p.body.surfaceTemperature ? (() => {
+                          const t = Math.round(p.body.surfaceTemperature!);
+                          const label = t < 180 ? 'Cold' : t > 500 ? (t > 700 ? 'Dangerous' : 'Hot') : 'Normal';
+                          return ` \u00B7 ${t} Kelvin (${label})`;
+                        })() : ''}
+                        {p.body.surfacePressure && p.body.surfacePressure / 101325 >= 0.01 ? ` \u00B7 ${(p.body.surfacePressure / 101325).toFixed(2)} atm` : ''}
                       </div>
                       {isTight && (
                         <div className="text-[10px] text-cyan-400 mt-0.5">
@@ -1327,6 +1368,23 @@ export function OrreryPage() {
         <Link to="/" className="absolute top-3 left-3 bg-slate-800/80 hover:bg-slate-700/80 border border-slate-600/40 rounded-lg px-3 py-1.5 text-xs text-slate-300 hover:text-white transition-colors z-20">
           {'\u2190'} Menu
         </Link>
+
+        {/* Refresh button — fetch current system from server */}
+        <button
+          onClick={() => {
+            const token = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
+            const url = token ? `/api/state?token=${token}` : '/api/state';
+            fetch(url).then(r => r.ok ? r.json() : null).then(data => {
+              if (data?.commanderPosition?.systemName) {
+                setSystemName(data.commanderPosition.systemName);
+                useAppStore.getState().setCommanderPosition(data.commanderPosition);
+              }
+            }).catch(() => {});
+          }}
+          className="absolute top-3 left-24 bg-slate-800/80 hover:bg-slate-700/80 border border-slate-600/40 rounded-lg px-3 py-1.5 text-xs text-slate-300 hover:text-white transition-colors z-20"
+        >
+          {'\u{1F504}'} Refresh
+        </button>
 
         {/* Colony badge */}
         {systemData.isColony && (

@@ -407,6 +407,37 @@ function processExplorationUpdates(parsed: ReturnType<typeof parseJournalLines>)
     cacheChanged = true;
   }
 
+  // FSSBodySignals — attach bio/geo signal counts to bodies
+  for (const ev of parsed.fssBodySignalsEvents) {
+    const addr = ev.SystemAddress;
+    if (!cache[addr]) continue;
+    const body = cache[addr].scannedBodies.find(b => b.bodyId === ev.BodyID || b.bodyName === ev.BodyName);
+    if (body) {
+      for (const sig of ev.Signals) {
+        if (sig.Type.includes('Biological')) body.bioSignals = sig.Count;
+        else if (sig.Type.includes('Geological')) body.geoSignals = sig.Count;
+      }
+      cacheChanged = true;
+    } else {
+      // Body not scanned yet — store signals on a placeholder
+      const newBody = {
+        bodyId: ev.BodyID,
+        bodyName: ev.BodyName,
+        type: 'Planet' as const,
+        subType: '',
+        distanceToArrival: 0,
+        bioSignals: 0,
+        geoSignals: 0,
+      };
+      for (const sig of ev.Signals) {
+        if (sig.Type.includes('Biological')) newBody.bioSignals = sig.Count;
+        else if (sig.Type.includes('Geological')) newBody.geoSignals = sig.Count;
+      }
+      cache[addr].scannedBodies.push(newBody);
+      cacheChanged = true;
+    }
+  }
+
   // FSSAllBodiesFound — mark systems as complete
   for (const ev of parsed.fssAllBodiesFoundEvents) {
     const addr = ev.SystemAddress;

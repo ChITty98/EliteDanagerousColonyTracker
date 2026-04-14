@@ -200,6 +200,15 @@ interface CarrierDepositFuelEvent {
 
 // --- Exploration events (for future scouting) ---
 
+interface FSSBodySignalsEvent {
+  timestamp: string;
+  event: 'FSSBodySignals';
+  BodyName: string;
+  BodyID: number;
+  SystemAddress: number;
+  Signals: { Type: string; Type_Localised?: string; Count: number }[];
+}
+
 interface FSSDiscoveryScanEvent {
   timestamp: string;
   event: 'FSSDiscoveryScan';
@@ -630,6 +639,7 @@ export function parseJournalLines(lines: string[]) {
   const carrierDepositFuelEvents: CarrierDepositFuelEvent[] = [];
   // Exploration
   const fssDiscoveryScanEvents: FSSDiscoveryScanEvent[] = [];
+  const fssBodySignalsEvents: FSSBodySignalsEvent[] = [];
   const fssAllBodiesFoundEvents: FSSAllBodiesFoundEvent[] = [];
   const scanEvents: ScanEvent[] = [];
   const saaScanCompleteEvents: SAAScanCompleteEvent[] = [];
@@ -697,6 +707,9 @@ export function parseJournalLines(lines: string[]) {
           break;
         case 'FSSDiscoveryScan':
           fssDiscoveryScanEvents.push(event as FSSDiscoveryScanEvent);
+          break;
+        case 'FSSBodySignals':
+          fssBodySignalsEvents.push(event as FSSBodySignalsEvent);
           break;
         case 'FSSAllBodiesFound':
           fssAllBodiesFoundEvents.push(event as FSSAllBodiesFoundEvent);
@@ -802,6 +815,7 @@ export function parseJournalLines(lines: string[]) {
     carrierStatsEvents,
     carrierDepositFuelEvents,
     fssDiscoveryScanEvents,
+    fssBodySignalsEvents,
     fssAllBodiesFoundEvents,
     scanEvents,
     saaScanCompleteEvents,
@@ -1959,6 +1973,8 @@ export interface JournalScannedBody {
   parents?: Record<string, number>[];
   wasDiscovered?: boolean;
   wasMapped?: boolean;
+  bioSignals?: number; // count of biological signals from FSSBodySignals
+  geoSignals?: number; // count of geological signals from FSSBodySignals
 }
 
 /**

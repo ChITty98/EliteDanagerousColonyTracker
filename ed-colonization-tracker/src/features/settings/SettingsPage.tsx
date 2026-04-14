@@ -323,6 +323,70 @@ export function SettingsPage() {
   );
 }
 
+// --- Network Access section with QR code ---
+
+function NetworkAccessSection() {
+  const [networkUrl, setNetworkUrl] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    // Fetch the full network URL with token from the server (localhost only endpoint)
+    fetch('/api/network-url').then(r => r.ok ? r.json() : null).then(data => {
+      if (data?.url) setNetworkUrl(data.url);
+    }).catch(() => {
+      // Fallback: try sessionStorage token
+      const token = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
+      if (token) setNetworkUrl(`${window.location.origin}?token=${token}`);
+    });
+  }, []);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(networkUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <div className="border-t border-border pt-6">
+      <h3 className="text-sm font-semibold text-foreground mb-3">{'\u{1F4F1}'} Network Access</h3>
+      <p className="text-xs text-muted-foreground mb-3">
+        Open this URL on your iPad, Surface, or phone to access the app remotely.
+      </p>
+
+      <div className="flex items-start gap-4">
+        {networkUrl && (
+          <div className="shrink-0 bg-white p-2 rounded-lg">
+            <img
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(networkUrl)}`}
+              alt="Scan with phone/tablet"
+              width={150} height={150} className="block"
+            />
+          </div>
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="bg-muted/30 border border-border rounded-lg p-4 mb-2">
+            <div className="text-xs text-muted-foreground mb-2">Network URL (includes access token):</div>
+            <div className="text-sm font-mono text-primary break-all select-all">{networkUrl || 'Loading...'}</div>
+          </div>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={handleCopy}
+          disabled={!networkUrl}
+          className="px-3 py-1.5 text-xs bg-primary/20 text-primary rounded hover:bg-primary/30 transition-colors"
+        >
+          {copied ? 'Copied!' : 'Copy to Clipboard'}
+        </button>
+        <span className="text-[10px] text-muted-foreground">
+          Tip: bookmark this URL on each device so you don't need to copy it again.
+        </span>
+      </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- Domain Highlights configuration section ---
 
 import type { AppSettings } from '@/store/types';

@@ -45,6 +45,7 @@ colony-data.json
 colony-token.txt
 colony-images/
 colony-gallery.json
+backups/
 
 # Project handoff
 PROJECT-HANDOFF.md

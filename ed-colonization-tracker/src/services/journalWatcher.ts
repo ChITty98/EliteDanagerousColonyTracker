@@ -555,6 +555,30 @@ function processOverlayUpdates(parsed: ReturnType<typeof parseJournalLines>): vo
     broadcastCompanionEvent({ type: 'fc_jump_cancelled' });
   }
 
+  // CarrierStats — FC free cargo sync (fires on opening Carrier Management)
+  if (parsed.carrierStatsEvents.length > 0) {
+    console.log(`[Watcher] CarrierStats events received: ${parsed.carrierStatsEvents.length}`);
+  }
+  for (const ev of parsed.carrierStatsEvents) {
+    console.log('[Watcher] CarrierStats:', ev.Callsign, 'SpaceUsage=', ev.SpaceUsage);
+    if (!ev.Callsign) continue;
+    // Some journal variants nest differently; guard each field.
+    const spaceUsage = ev.SpaceUsage;
+    if (!spaceUsage || typeof spaceUsage.FreeSpace !== 'number') continue;
+    useAppStore.getState().setFleetCarrierSpaceUsage(ev.Callsign, {
+      totalCapacity: spaceUsage.TotalCapacity,
+      cargo: spaceUsage.Cargo,
+      freeSpace: spaceUsage.FreeSpace,
+    });
+    broadcastCompanionEvent({
+      type: 'fc_space_update',
+      callsign: ev.Callsign,
+      totalCapacity: spaceUsage.TotalCapacity,
+      cargo: spaceUsage.Cargo,
+      freeSpace: spaceUsage.FreeSpace,
+    });
+  }
+
   // Docked — FC load, station needs, missing image prompt
   for (const ev of parsed.dockedEvents) {
     handleDocked(ev);

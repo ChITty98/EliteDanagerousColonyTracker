@@ -20,6 +20,9 @@ export function SettingsPage() {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const fleetCarriers = useAppStore((s) => s.fleetCarriers);
+  const fleetCarrierSpaceUsage = useAppStore((s) => s.fleetCarrierSpaceUsage);
+  const setFleetCarrierSpaceUsage = useAppStore((s) => s.setFleetCarrierSpaceUsage);
+  const myFcUsage = settings.myFleetCarrier ? fleetCarrierSpaceUsage?.[settings.myFleetCarrier] : undefined;
   const [journalStatus, setJournalStatus] = useState<string>(
     getJournalFolderHandle() ? 'Journal folder connected \u2713' : 'No folder selected'
   );
@@ -205,6 +208,31 @@ export function SettingsPage() {
                 )}
               </p>
             </div>
+
+            {/* FC Capacity configuration */}
+            {settings.myFleetCarrier && (
+              <div className="bg-muted/30 border border-border rounded-lg p-3">
+                <label className="block text-sm font-semibold text-foreground mb-2">
+                  {'\u{1F69A}'} FC Capacity
+                </label>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Max capacity is fixed at <span className="text-foreground font-mono">25,000t</span>. Free cargo is computed live as <code className="text-foreground">25,000 − Modules − Current Cargo</code>, where current cargo is tracked from your journal.
+                </p>
+                <div>
+                  <label className="block text-[10px] uppercase text-muted-foreground mb-1">Modules (t)</label>
+                  <input
+                    type="number"
+                    value={settings.fcModulesCapacity}
+                    onChange={(e) => updateSettings({ fcModulesCapacity: e.target.value ? parseInt(e.target.value) : 0 })}
+                    className="w-full bg-muted border border-border rounded px-2 py-1 text-sm text-foreground font-mono"
+                    placeholder="0"
+                  />
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-2">
+                  Modules (t) = total tons used by installed services. You can read this off Carrier Management → Cargo tab.
+                </p>
+              </div>
+            )}
 
             <div>
               <label className="block text-sm text-muted-foreground mb-1">Squadron Carrier Callsigns</label>

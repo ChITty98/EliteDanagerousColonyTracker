@@ -115,7 +115,7 @@ const serverStorage: StateStorage = {
       const data = await res.json();
       hydrationComplete = true;
       if (!data || Object.keys(data).length === 0) return null;
-      return JSON.stringify({ state: data, version: 19 });
+      return JSON.stringify({ state: data, version: 20 });
     } catch {
       hydrationComplete = true;
       return null;
@@ -207,6 +207,7 @@ import type {
   KnownStation,
   MarketSnapshot,
   FleetCarrierInfo,
+  FleetCarrierSpaceUsage,
   FSSSignal,
   ManualInstallation,
   ScoutedSystemData,
@@ -266,6 +267,9 @@ interface AppState {
   fleetCarriers: FleetCarrierInfo[];
   addFleetCarrier: (fc: FleetCarrierInfo) => void;
   updateFleetCarrier: (callsign: string, updates: Partial<FleetCarrierInfo>) => void;
+  // FC space usage — keyed by callsign; populated from CarrierStats journal events
+  fleetCarrierSpaceUsage: Record<string, FleetCarrierSpaceUsage>;
+  setFleetCarrierSpaceUsage: (callsign: string, usage: Omit<FleetCarrierSpaceUsage, 'updatedAt'>) => void;
 
   // FSS Signals
   fssSignals: FSSSignal[];
@@ -362,6 +366,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   myFleetCarrier: '',
   myFleetCarrierMarketId: null,
   squadronCarrierCallsigns: [],
+  fcModulesCapacity: 0,
   overlayEnabled: true,
   domainHighlightStars: ['Black Hole', 'Neutron Star', 'Wolf-Rayet', 'White Dwarf', 'O-class', 'Carbon Star'],
   domainHighlightAtmos: ['Oxygen'],
@@ -644,6 +649,15 @@ export const useAppStore = create<AppState>()(
           ),
         })),
 
+      fleetCarrierSpaceUsage: {},
+      setFleetCarrierSpaceUsage: (callsign, usage) =>
+        set((state) => ({
+          fleetCarrierSpaceUsage: {
+            ...state.fleetCarrierSpaceUsage,
+            [callsign]: { ...usage, updatedAt: new Date().toISOString() },
+          },
+        })),
+
       // FSS Signals
       fssSignals: [],
       setFSSSignals: (signals) =>
@@ -891,7 +905,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'ed-colonization-tracker',
-      version: 19,
+      version: 20,
       storage: createJSONStorage(() => serverStorage),
       onRehydrateStorage: () => {
         return (_state, error) => {
@@ -931,6 +945,7 @@ export const useAppStore = create<AppState>()(
         lastSessionSummaryShown: state.lastSessionSummaryShown,
         stationBodyOverrides: state.stationBodyOverrides,
         commanderPosition: state.commanderPosition,
+        fleetCarrierSpaceUsage: state.fleetCarrierSpaceUsage,
       }),
       migrate: (persistedState: unknown, version: number) => {
         const state = persistedState as Record<string, unknown>;
@@ -1093,6 +1108,16 @@ export const useAppStore = create<AppState>()(
           settings.domainHighlightStars = settings.domainHighlightStars ?? DEFAULT_SETTINGS.domainHighlightStars;
           settings.domainHighlightAtmos = settings.domainHighlightAtmos ?? DEFAULT_SETTINGS.domainHighlightAtmos;
           settings.domainHighlightStations = settings.domainHighlightStations ?? DEFAULT_SETTINGS.domainHighlightStations;
+        }
+
+        if (version < 20) {
+          // v19 → v20: Add fleetCarrierSpaceUsage map (CarrierStats journal tracking, legacy)
+          //            and fcModulesCapacity setting (FC free-space = 25k − modules − cargo)
+          state.fleetCarrierSpaceUsage = (state.fleetCarrierSpaceUsage as Record<string, unknown>) ?? {};
+          const settings = state.settings as AppSettings;
+          if (settings) {
+            settings.fcModulesCapacity = settings.fcModulesCapacity ?? 0;
+          }
         }
 
         return state as AppState;

@@ -38,10 +38,11 @@ Integrates with [EDMCModernOverlay](https://github.com/) for heads-up display wh
 Designed for an iPad propped up next to your monitor:
 - **Live event feed** via Server-Sent Events — see jumps, docks, scans, contributions in real-time
 - **Remote control buttons** — trigger "Show Score", "Show Needs", "Show Haul", "Show Status" on the overlay without alt-tabbing
+- **FC Free Cargo widget** — at-a-glance free space on your Fleet Carrier, computed live as `25,000 − Modules − Current Cargo`. Color-coded (green/yellow/red) so you know at a glance whether you have room for one more haul.
 - Works from any device on your local network
 
 ### Fleet Carrier Management
-Track cargo across your fleet carrier and squadron carriers. Auto-detects carrier callsign and market ID from journal events. Monitor commodity stock levels and plan deliveries.
+Track cargo across your fleet carrier and squadron carriers. Auto-detects carrier callsign and market ID from journal events. Monitor commodity stock levels and plan deliveries. Set your installed Modules tonnage once in Settings and the app will keep your free space accurate as you load and unload.
 
 ### Sessions
 Start/stop play sessions tied to specific colonization projects. Tracks commodities hauled, jumps made, stations docked. Session summary popup shows contribution totals when you return.

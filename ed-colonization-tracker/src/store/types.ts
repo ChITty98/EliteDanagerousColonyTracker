@@ -1,3 +1,7 @@
+// Fleet carrier max cargo capacity is fixed by Frontier at 25,000t.
+// (Squadron carriers have a different capacity — revisit if we add support.)
+export const FC_MAX_CAPACITY = 25000;
+
 export interface ProjectCommodity {
   commodityId: string;
   name: string;
@@ -138,6 +142,7 @@ export interface AppSettings {
   myFleetCarrier: string;
   myFleetCarrierMarketId: number | null;
   squadronCarrierCallsigns: string[];
+  fcModulesCapacity: number; // Tons of capacity consumed by installed services/modules (user-entered from Carrier Management)
   overlayEnabled: boolean;
   // Domain Highlights — configurable lists of which types show as showpieces on the Architect's Domain page
   domainHighlightStars: string[];

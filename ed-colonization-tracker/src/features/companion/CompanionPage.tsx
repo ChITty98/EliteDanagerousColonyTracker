@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from '@/store';
+import { FC_MAX_CAPACITY } from '@/store/types';
 import {
   computeNeedsContent,
   computeScoreContent,
@@ -103,8 +104,13 @@ export function CompanionPage() {
   const sessions = useAppStore((s) => s.sessions);
   const projects = useAppStore((s) => s.projects);
   const myFleetCarrier = useAppStore((s) => s.settings.myFleetCarrier);
-  const fleetCarrierSpaceUsage = useAppStore((s) => s.fleetCarrierSpaceUsage);
-  const fcUsage = myFleetCarrier ? fleetCarrierSpaceUsage?.[myFleetCarrier] : undefined;
+  const fcModulesCapacity = useAppStore((s) => s.settings.fcModulesCapacity);
+  const carrierCargo = useAppStore((s) => s.carrierCargo);
+
+  // Live FC free-space computation: 25,000 − modules − current cargo (from journal)
+  const myCargo = myFleetCarrier ? carrierCargo?.[myFleetCarrier] : undefined;
+  const currentCargoTons = myCargo?.items.reduce((sum, i) => sum + i.count, 0) ?? 0;
+  const fcFreeSpace = FC_MAX_CAPACITY - (fcModulesCapacity || 0) - currentCargoTons;
 
   const [events, setEvents] = useState<CompanionEvent[]>([]);
   const [connected, setConnected] = useState(false);
@@ -208,7 +214,7 @@ export function CompanionPage() {
         </div>
       </div>
 
-      {/* FC Free Space */}
+      {/* FC Free Space — computed live from settings + journal cargo */}
       {myFleetCarrier && (
         <div className="bg-card border border-border rounded-lg px-4 py-3 mb-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -217,38 +223,38 @@ export function CompanionPage() {
               <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                 {myFleetCarrier} — Free Cargo
               </div>
-              {fcUsage ? (
-                <div className="flex items-baseline gap-2">
-                  <span
-                    className={`text-2xl font-bold tabular-nums ${
-                      fcUsage.freeSpace < 1000
-                        ? 'text-red-400'
-                        : fcUsage.freeSpace < 5000
-                        ? 'text-yellow-400'
-                        : 'text-green-400'
-                    }`}
-                  >
-                    {fcUsage.freeSpace.toLocaleString()}t
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    as of {new Date(fcUsage.updatedAt).toLocaleString(undefined, {
-                      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-                    })}
-                  </span>
-                </div>
-              ) : (
-                <div className="text-sm text-muted-foreground italic">
-                  Open Carrier Management in-game to sync
+              <div className="flex items-baseline gap-2">
+                <span
+                  className={`text-2xl font-bold tabular-nums ${
+                    fcFreeSpace < 1000
+                      ? 'text-red-400'
+                      : fcFreeSpace < 5000
+                      ? 'text-yellow-400'
+                      : 'text-green-400'
+                  }`}
+                >
+                  {fcFreeSpace.toLocaleString()}t
+                </span>
+                <span className="text-xs text-muted-foreground font-mono">
+                  = 25,000 − {(fcModulesCapacity || 0).toLocaleString()} − {currentCargoTons.toLocaleString()}
+                </span>
+              </div>
+              {!fcModulesCapacity && (
+                <div className="text-[11px] text-yellow-400/80 mt-0.5">
+                  Set Modules tonnage in Settings for accurate free space
                 </div>
               )}
             </div>
           </div>
-          {fcUsage && (
-            <div className="text-right text-xs text-muted-foreground">
-              <div>Cargo: {fcUsage.cargo.toLocaleString()}t</div>
-              <div>Total: {fcUsage.totalCapacity.toLocaleString()}t</div>
-            </div>
-          )}
+          <div className="text-right text-xs text-muted-foreground">
+            <div>Modules: {(fcModulesCapacity || 0).toLocaleString()}t</div>
+            <div>Cargo: {currentCargoTons.toLocaleString()}t</div>
+            {myCargo && (
+              <div className="text-[10px] opacity-70">
+                as of {new Date(myCargo.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

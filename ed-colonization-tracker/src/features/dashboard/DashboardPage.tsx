@@ -710,6 +710,24 @@ export function DashboardPage() {
         />
       )}
 
+      {/* Hero banner */}
+      <div className="relative w-full h-56 md:h-72 mb-6 rounded-xl overflow-hidden border border-border">
+        <img
+          src="/app-image.png"
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover object-[center_85%]"
+        />
+        <div className="absolute inset-0 bg-gradient-to-r from-background/90 via-background/40 to-transparent" />
+        <div className="relative h-full flex flex-col justify-end p-5 md:p-6">
+          <h1 className="text-2xl md:text-4xl font-bold text-foreground drop-shadow-lg tracking-tight">
+            ED Colony Tracker
+          </h1>
+          <p className="text-sm md:text-base text-muted-foreground mt-1 drop-shadow">
+            Build. Expand. Dominate the black.
+          </p>
+        </div>
+      </div>
+
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold">Dashboard</h2>

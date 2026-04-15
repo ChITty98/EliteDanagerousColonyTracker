@@ -652,6 +652,45 @@ const faqItems: FaqItem[] = [
     ),
   },
 
+  {
+    category: 'Fleet Carrier',
+    question: 'How is "Free Cargo" on the Companion page calculated?',
+    answer: (
+      <>
+        <p>
+          The Companion page shows live free space on your Fleet Carrier as:
+        </p>
+        <p className="mt-2 font-mono text-sm bg-muted/50 px-3 py-2 rounded">
+          Free = 25,000 &minus; Modules &minus; Current Cargo
+        </p>
+        <ul className="list-disc ml-5 mt-3 space-y-1">
+          <li>
+            <strong>25,000t</strong> &mdash; the fixed Frontier max for Fleet
+            Carriers. Hardcoded. (Squadron carriers have a different cap and
+            aren&rsquo;t supported here yet.)
+          </li>
+          <li>
+            <strong>Modules</strong> &mdash; tons consumed by installed services
+            (refinery, shipyard, etc.). Set this once in{' '}
+            <strong>Settings &rarr; Fleet Carrier &rarr; FC Capacity</strong>.
+            You can read the value off Carrier Management &rarr; Cargo tab in
+            game.
+          </li>
+          <li>
+            <strong>Current Cargo</strong> &mdash; the sum of everything in your
+            FC market, tracked from Market.json reads when you dock. The
+            timestamp under the number tells you how fresh that snapshot is.
+          </li>
+        </ul>
+        <p className="mt-2">
+          The number turns yellow under 5,000t and red under 1,000t. If you
+          haven&rsquo;t set Modules yet you&rsquo;ll see a warning &mdash; until
+          then the math assumes 0t of services.
+        </p>
+      </>
+    ),
+  },
+
   // --- APIs & External Services ---
   {
     category: 'APIs & External Services',

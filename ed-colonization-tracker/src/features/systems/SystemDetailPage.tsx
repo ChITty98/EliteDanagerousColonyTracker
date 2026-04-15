@@ -645,7 +645,11 @@ export function SystemDetailPage() {
       hideInstallation(systemName, station.stationName);
     } else if (station.marketId && station.marketId !== 0) {
       // Real known station from journal — update type override
-      updateStationType(station.marketId, newType);
+      updateStationType(station.marketId, newType, {
+        stationName: station.stationName,
+        systemName: systemName,
+        systemAddress: station.systemAddress,
+      });
     }
     setEditingType(null);
   };
@@ -706,7 +710,7 @@ export function SystemDetailPage() {
       <div className={`mb-6 rounded-xl border-2 ${tier.borderClass} ${tier.bgGradient} p-6`}>
         <div className="flex items-center gap-3 mb-3">
           <Link to="/" className="text-sm text-muted-foreground hover:text-foreground">{'\u2190'} Dashboard</Link>
-          <Link to={`/orrery?system=${encodeURIComponent(systemName)}`} className="text-sm text-cyan-400 hover:text-cyan-300">{'\u2604\uFE0F'} System View</Link>
+          <Link to={`/system-view?system=${encodeURIComponent(systemName)}`} className="text-sm text-cyan-400 hover:text-cyan-300">{'\u2604\uFE0F'} System View</Link>
         </div>
 
         {/* Top row: tier badge + name + score */}

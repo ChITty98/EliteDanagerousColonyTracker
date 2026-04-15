@@ -198,25 +198,32 @@ export function getStationTypeInfo(stationType: string): StationTypeInfo {
   // Check if it's an installation type ID (e.g. "coriolis_starport")
   const instType = getInstallationTypeById(stationType);
   if (instType) {
-    // If the installation type maps to a known journal station type, use that canonical label
-    // e.g. dodec_starport → journalTypes ['StationDodec'] → "Dodec Spaceport"
+    // Try to borrow the canonical icon/category from a matching journal-type entry,
+    // but ALWAYS use the specific instType's name so sub-types stay distinguishable.
+    let borrowedIcon: string | undefined;
+    let borrowedCategory: StationTypeInfo['category'] | undefined;
     if (instType.journalTypes?.length) {
       for (const jt of instType.journalTypes) {
-        if (STATION_TYPE_MAP[jt]) return STATION_TYPE_MAP[jt];
+        if (STATION_TYPE_MAP[jt]) {
+          borrowedIcon = STATION_TYPE_MAP[jt].icon;
+          borrowedCategory = STATION_TYPE_MAP[jt].category;
+          break;
+        }
       }
     }
-    // Otherwise build a StationTypeInfo from the installation type
-    const category: StationTypeInfo['category'] =
-      instType.location === 'Surface'
+    const category: StationTypeInfo['category'] = borrowedCategory ??
+      (instType.location === 'Surface'
         ? (instType.padSize ? 'surface' : 'settlement')
-        : (instType.padSize === 'L' ? 'orbital' : instType.padSize === 'M' ? 'outpost' : 'other');
-    const icon = instType.padSize === null ? '\u2699'  // gear for installations
+        : (instType.padSize === 'L' ? 'orbital' : instType.padSize === 'M' ? 'outpost' : 'other'));
+    const icon = borrowedIcon ?? (instType.padSize === null ? '\u2699'  // gear for installations
       : instType.location === 'Orbital' && instType.padSize === 'L' ? '\u{1F6F0}'  // satellite
       : instType.location === 'Orbital' ? '\u{1F4E1}'  // antenna
-      : '\u{1FA90}';  // ringed planet for surface
+      : '\u{1FA90}');  // ringed planet for surface
     return {
       label: instType.name,
-      shortLabel: instType.name.length > 12 ? instType.name.split(/[:\s]/)[0] : instType.name,
+      shortLabel: instType.name.length > 14
+        ? instType.name.split(/[:\s]/).filter(Boolean).slice(0, 2).join(' ')
+        : instType.name,
       icon,
       category,
       showInSystemOverview: true,

@@ -164,7 +164,7 @@ function startStateSyncListener() {
     es.onmessage = async (e) => {
       try {
         const ev = JSON.parse(e.data);
-        // Track exploration updates — orrery handles these via inline SSE data
+        // Track exploration updates — system view handles these via inline SSE data
         if (ev.type === 'exploration_update') {
           lastExplorationUpdate = Date.now();
           return;
@@ -172,7 +172,7 @@ function startStateSyncListener() {
         if (ev.type !== 'state_updated') return;
         // Skip if this was likely our own PATCH
         if (Date.now() - lastOwnPatchTime < PATCH_IGNORE_WINDOW) return;
-        // Skip if a recent exploration update caused this — orrery handles it directly
+        // Skip if a recent exploration update caused this — system view handles it directly
         if (Date.now() - lastExplorationUpdate < 5000) return;
         // Re-fetch state from server and merge into store
         const res = await fetch(apiUrl('/api/state'));
@@ -238,7 +238,7 @@ interface AppState {
   upsertKnownStation: (station: KnownStation) => void;
   upsertKnownStations: (stations: KnownStation[]) => void;
   updateStationBody: (marketId: number, body: string) => void;
-  updateStationType: (marketId: number, stationType: string) => void;
+  updateStationType: (marketId: number, stationType: string, fallback?: { stationName: string; systemName: string; systemAddress: number }) => void;
   // Body overrides for stations without marketId (keyed by "systemName|stationName" lowercase)
   stationBodyOverrides: Record<string, string>;
   setStationBodyOverride: (systemName: string, stationName: string, body: string) => void;
@@ -568,11 +568,27 @@ export const useAppStore = create<AppState>()(
           return { knownStations: { ...state.knownStations, [marketId]: { ...existing, body } } };
         }),
 
-      updateStationType: (marketId, stationType) =>
+      updateStationType: (marketId, stationType, fallback) =>
         set((state) => {
           const existing = state.knownStations[marketId];
-          if (!existing) return {};
-          return { knownStations: { ...state.knownStations, [marketId]: { ...existing, stationType } } };
+          if (existing) {
+            return { knownStations: { ...state.knownStations, [marketId]: { ...existing, stationType } } };
+          }
+          // Upsert: station wasn't in KB (e.g. came from visitedMarkets/FSS/manual).
+          if (!fallback || !marketId) return {};
+          const minimal: KnownStation = {
+            stationName: fallback.stationName,
+            stationType,
+            marketId,
+            systemName: fallback.systemName,
+            systemAddress: fallback.systemAddress,
+            distFromStarLS: null,
+            landingPads: null,
+            economies: [],
+            services: [],
+            lastSeen: new Date().toISOString(),
+          };
+          return { knownStations: { ...state.knownStations, [marketId]: minimal } };
         }),
 
       stationBodyOverrides: {},

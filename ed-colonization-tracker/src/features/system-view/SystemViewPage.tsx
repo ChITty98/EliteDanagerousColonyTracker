@@ -6,6 +6,7 @@ import { startJournalWatcher, isWatcherRunning } from '@/services/journalWatcher
 import { selectJournalFolder, getJournalFolderHandle, extractExplorationData } from '@/services/journalReader';
 import type { JournalScannedBody } from '@/services/journalReader';
 import { fetchSystemDump, resolveSystemName } from '@/services/spanshApi';
+import { buildSourceTag } from '@/services/overlayService';
 
 // ─── Constants ─────────────────────────────────────────────────────
 
@@ -44,7 +45,7 @@ const ATMO_RARITY: Record<string, number> = {
 
 // ─── Types ─────────────────────────────────────────────────────────
 
-interface OrreryBody {
+interface SystemViewBody {
   body: JournalScannedBody;
   cls: ReturnType<typeof classifyPlanet>;
   starCls?: string;
@@ -53,9 +54,9 @@ interface OrreryBody {
   orbitRadius: number; // normalized 0-1 position from star
 }
 
-// ─── Orrery Canvas (pan/zoom, horizontal layout) ───────────────────
+// ─── System View Canvas (pan/zoom, horizontal layout) ─────────────
 
-function OrreryCanvas({ systemData, flash, relativeSizes }: { systemData: NonNullable<ReturnType<typeof useOrreryData>>; flash: boolean; relativeSizes: boolean }) {
+function SystemViewCanvas({ systemData, flash, relativeSizes }: { systemData: NonNullable<ReturnType<typeof useSystemViewData>>; flash: boolean; relativeSizes: boolean }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [vb, setVb] = useState({ x: 0, y: 0, w: 1200, h: 600 });
   const [isPanning, setIsPanning] = useState(false);
@@ -63,7 +64,7 @@ function OrreryCanvas({ systemData, flash, relativeSizes }: { systemData: NonNul
 
   // Build positioned nodes — even horizontal spacing, distance labels, moons tucked near parents
   const nodeData = useMemo(() => {
-    type Node = { body: OrreryBody; x: number; y: number; size: number; fill: string; parentX?: number; parentY?: number; distLabel?: string };
+    type Node = { body: SystemViewBody; x: number; y: number; size: number; fill: string; parentX?: number; parentY?: number; distLabel?: string };
     type Bracket = { starYs: number[]; starX: number; planetX: number; midY: number; label: string };
     const result: Node[] = [];
     const brackets: Bracket[] = [];
@@ -77,7 +78,7 @@ function OrreryCanvas({ systemData, flash, relativeSizes }: { systemData: NonNul
     const sysName = systemData.name;
 
     // Parse name suffix into path tokens
-    const getPath = (ob: OrreryBody): string[] => {
+    const getPath = (ob: SystemViewBody): string[] => {
       const name = ob.body.bodyName;
       // If the body name IS the system name, it's the main star — empty path
       if (name === sysName || name.toLowerCase() === sysName.toLowerCase()) return [];
@@ -88,7 +89,7 @@ function OrreryCanvas({ systemData, flash, relativeSizes }: { systemData: NonNul
     };
 
     // Build tree from names: group by parent path
-    const childrenOf = new Map<string, OrreryBody[]>(); // parentPath → children
+    const childrenOf = new Map<string, SystemViewBody[]>(); // parentPath → children
     for (const ob of allBodies) {
       const path = getPath(ob);
       // Empty path = main star (body name IS system name) — add to __root__
@@ -107,9 +108,9 @@ function OrreryCanvas({ systemData, flash, relativeSizes }: { systemData: NonNul
     const V_GAP = Math.max(12, 50 - totalBodies);
 
     // Helpers
-    const sizeOf = (ob: OrreryBody) => ob.body.type === 'Star' ? getStarSize(ob, relativeSizes) : getBodySize(ob, relativeSizes);
-    const fillOf = (ob: OrreryBody) => ob.body.type === 'Star' ? (STAR_COLORS[ob.starCls || ''] || STAR_COLORS['G-class']).fill : getBodyColor(ob);
-    const distOf = (ob: OrreryBody) => { const d = ob.body.distanceToArrival || 0; return d < 1 ? '' : d < 1000 ? `${d.toFixed(0)} ls` : `${(d / 1000).toFixed(1)}K ls`; };
+    const sizeOf = (ob: SystemViewBody) => ob.body.type === 'Star' ? getStarSize(ob, relativeSizes) : getBodySize(ob, relativeSizes);
+    const fillOf = (ob: SystemViewBody) => ob.body.type === 'Star' ? (STAR_COLORS[ob.starCls || ''] || STAR_COLORS['G-class']).fill : getBodyColor(ob);
+    const distOf = (ob: SystemViewBody) => { const d = ob.body.distanceToArrival || 0; return d < 1 ? '' : d < 1000 ? `${d.toFixed(0)} ls` : `${(d / 1000).toFixed(1)}K ls`; };
     const isLetterSuffix = (s: string) => /^[A-Z]+$/i.test(s);
 
     // Layout: stars (letters) stack vertically left, planets (numbers) go horizontal right
@@ -124,8 +125,8 @@ function OrreryCanvas({ systemData, flash, relativeSizes }: { systemData: NonNul
       if (children.length === 0) return groupY;
 
       // Split into stars (letter suffix) and planets (number suffix)
-      const starBodies: OrreryBody[] = [];
-      let planetBodies: OrreryBody[] = [];
+      const starBodies: SystemViewBody[] = [];
+      let planetBodies: SystemViewBody[] = [];
       for (const c of children) {
         const path = getPath(c);
         const lastToken = path[path.length - 1] || '';
@@ -440,7 +441,7 @@ function OrreryCanvas({ systemData, flash, relativeSizes }: { systemData: NonNul
             <stop offset="100%" stopColor="#14532d" />
           </radialGradient>
           {/* Grid pattern */}
-          <pattern id="orrery-grid" width="50" height="50" patternUnits="userSpaceOnUse">
+          <pattern id="systemview-grid" width="50" height="50" patternUnits="userSpaceOnUse">
             <path d="M 50 0 L 0 0 0 50" fill="none" stroke="rgba(30,41,59,0.4)" strokeWidth="0.5" />
           </pattern>
           {/* Body texture patterns */}
@@ -489,7 +490,7 @@ function OrreryCanvas({ systemData, flash, relativeSizes }: { systemData: NonNul
         </defs>
 
         {/* Grid background */}
-        <rect x={vb.x - vb.w} y={vb.y - vb.h} width={vb.w * 3} height={vb.h * 3} fill="url(#orrery-grid)" />
+        <rect x={vb.x - vb.w} y={vb.y - vb.h} width={vb.w * 3} height={vb.h * 3} fill="url(#systemview-grid)" />
 
         {/* No main axis line — tree layout uses parent-child connections */}
 
@@ -561,7 +562,7 @@ function OrreryCanvas({ systemData, flash, relativeSizes }: { systemData: NonNul
           const label = ob.body.bodyName.replace(systemData.name + ' ', '').toUpperCase();
 
           return (
-            <g key={`node-${i}`} style={{ animation: `orrery-body-pop 0.5s cubic-bezier(0.34,1.56,0.64,1) ${0.1 + i * 0.03}s both` }}>
+            <g key={`node-${i}`} style={{ animation: `systemview-body-pop 0.5s cubic-bezier(0.34,1.56,0.64,1) ${0.1 + i * 0.03}s both` }}>
               {/* Star glow — compact for normal stars, intense for neutron/black hole */}
               {isStar && colors && (
                 <circle cx={x} cy={y} r={ob.starCls === 'Neutron Star' || ob.starCls === 'Black Hole' ? size * 2.5 : size * 1.3}
@@ -664,7 +665,7 @@ function OrreryCanvas({ systemData, flash, relativeSizes }: { systemData: NonNul
           // For now, show CMDR at any station in the system, and FC at FC stations
           for (const station of systemData.stations) {
             const stDist = station.distFromStarLS || 0;
-            // Find nearest orrery node to this distance
+            // Find nearest system-view node to this distance
             let nearestNode = nodeData.nodes[0];
             let nearestDelta = Infinity;
             for (const n of nodeData.nodes) {
@@ -695,7 +696,7 @@ const UNIFORM_STAR_SIZE = 10;
 
 // Calculate illumination relative to Earth (1.0 = Earth-like light from Sol at 1 AU)
 // Uses mass-luminosity relation: L ≈ M^3.5 for main sequence stars
-function getIllumination(body: JournalScannedBody, stars: OrreryBody[]): number | null {
+function getIllumination(body: JournalScannedBody, stars: SystemViewBody[]): number | null {
   if (body.type === 'Star' || !body.distanceToArrival || body.distanceToArrival < 1) return null;
   // Find the parent star — use the closest/brightest for simplicity
   let totalLuminosity = 0;
@@ -709,7 +710,7 @@ function getIllumination(body: JournalScannedBody, stars: OrreryBody[]): number 
   return totalLuminosity / (distAU * distAU);
 }
 
-function getStarSize(s: OrreryBody, relative = true): number {
+function getStarSize(s: SystemViewBody, relative = true): number {
   if (!relative) return UNIFORM_STAR_SIZE;
   const cls = s.starCls || '';
   if (cls === 'Neutron Star' || cls === 'Black Hole') return 5;
@@ -718,7 +719,7 @@ function getStarSize(s: OrreryBody, relative = true): number {
   return Math.min(15, 8 + Math.log2((s.body.stellarMass || 1) + 1) * 2);
 }
 
-function getBodySize(p: OrreryBody, relative = true): number {
+function getBodySize(p: SystemViewBody, relative = true): number {
   if (!relative) return UNIFORM_SIZE;
   if (p.cls.isLandable && p.cls.hasAtmo) return 14;
   if (p.cls.type === 'Earth-like World') return 16;
@@ -731,7 +732,7 @@ function getBodySize(p: OrreryBody, relative = true): number {
   return 5;
 }
 
-function getBodyColor(p: OrreryBody): string {
+function getBodyColor(p: SystemViewBody): string {
   const sub = (p.body.subType || '').toLowerCase();
   if (sub.includes('earth')) return '#22d3ee';
   if (sub.includes('water world')) return '#0ea5e9';
@@ -774,19 +775,19 @@ function renderBodyTexture(x: number, y: number, size: number, fill: string, bod
   return layers;
 }
 
-function getRingGradient(p: OrreryBody): string {
+function getRingGradient(p: SystemViewBody): string {
   const ringClass = p.body.rings?.[0]?.ringClass?.toLowerCase() || '';
   if (ringClass.includes('icy')) return 'url(#ring-icy)';
   if (ringClass.includes('metal') || ringClass.includes('metallic')) return 'url(#ring-metallic)';
   return 'url(#ring-rocky)';
 }
 
-// Helper to use orrery data (avoids duplication)
-function useOrreryData() { return null as unknown; }
+// Helper to use system-view data (avoids duplication)
+function useSystemViewData() { return null as unknown; }
 
 // ─── Page ──────────────────────────────────────────────────────────
 
-export function OrreryPage() {
+export function SystemViewPage() {
   const [searchParams] = useSearchParams();
   const urlSystem = searchParams.get('system');
 
@@ -794,6 +795,7 @@ export function OrreryPage() {
   const knownStations = useAppStore((s) => s.knownStations);
   const journalExplorationCache = useAppStore((s) => s.journalExplorationCache);
   const commanderPosition = useAppStore((s) => s.commanderPosition);
+  const scoutedSystems = useAppStore((s) => s.scoutedSystems);
   const settings = useAppStore((s) => s.settings);
   const fleetCarriers = useAppStore((s) => s.fleetCarriers);
 
@@ -860,7 +862,7 @@ export function OrreryPage() {
   // Auto-start watcher if not running and journal folder available
   useEffect(() => {
     if (!isWatcherRunning() && getJournalFolderHandle()) {
-      console.log('[Orrery] Auto-starting journal watcher');
+      console.log('[SystemView] Auto-starting journal watcher');
       startJournalWatcher();
       setWatcherStatus('running');
     }
@@ -1058,8 +1060,8 @@ export function OrreryPage() {
     // Filter out barycentres
     bodySource = bodySource.filter(b => !b.bodyName.toLowerCase().includes('barycentre'));
 
-    const stars: OrreryBody[] = [];
-    const planets: OrreryBody[] = [];
+    const stars: SystemViewBody[] = [];
+    const planets: SystemViewBody[] = [];
     const maxDist = Math.max(...bodySource.map((b) => b.distanceToArrival || 0), 1);
 
     // Read user's highlight preferences
@@ -1182,6 +1184,21 @@ export function OrreryPage() {
     );
   }
 
+  // Resolve scouted score entry for this system (keyed by SystemAddress).
+  // Prefer commanderPosition match; otherwise case-insensitive name scan.
+  const scoredEntry = (() => {
+    if (!systemData.name) return null;
+    const target = systemData.name.toLowerCase();
+    if (commanderPosition && commanderPosition.systemName?.toLowerCase() === target) {
+      const entry = scoutedSystems[commanderPosition.systemAddress];
+      if (entry) return entry;
+    }
+    for (const entry of Object.values(scoutedSystems)) {
+      if (entry.name?.toLowerCase() === target) return entry;
+    }
+    return null;
+  })();
+
   const highlights = systemData.planets.filter((p) => p.importance >= 6);
   const landableAtmo = systemData.planets.filter((p) => p.cls.isLandable && p.cls.hasAtmo);
   const landableNoAtmo = systemData.planets.filter((p) => p.cls.isLandable && !p.cls.hasAtmo);
@@ -1191,7 +1208,7 @@ export function OrreryPage() {
       {/* Flash overlay on jump */}
       {flash && (
         <div className="absolute inset-0 z-50 pointer-events-none"
-          style={{ background: 'radial-gradient(circle at center, rgba(59,130,246,0.4), transparent 70%)', animation: 'orrery-flash 1.5s ease-out forwards' }}
+          style={{ background: 'radial-gradient(circle at center, rgba(59,130,246,0.4), transparent 70%)', animation: 'systemview-flash 1.5s ease-out forwards' }}
         />
       )}
 
@@ -1200,13 +1217,29 @@ export function OrreryPage() {
         {/* System header */}
         <div>
           <div className="text-2xl font-extrabold text-white tracking-wide">{systemData.name}</div>
-          <div className="flex items-baseline gap-3 mt-1">
+          <div className="flex items-baseline gap-3 mt-1 flex-wrap">
             {systemData.economy && systemData.economy !== 'Unknown' && (
               <span className="text-sm text-primary">{systemData.economy}</span>
             )}
             {systemData.isColony && (
               <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">Your Colony</span>
             )}
+            {scoredEntry && scoredEntry.score && scoredEntry.score.total > 0 ? (
+              <span
+                className="text-xs font-semibold px-1.5 py-0.5 rounded"
+                style={{
+                  color: scoredEntry.score.total >= 100 ? '#fcd34d'
+                    : scoredEntry.score.total >= 60 ? '#4ade80'
+                    : '#38bdf8',
+                  backgroundColor: 'rgba(148,163,184,0.1)',
+                }}
+                title={`Source: ${buildSourceTag(scoredEntry)}`}
+              >
+                Score: {scoredEntry.score.total} [{buildSourceTag(scoredEntry)}]
+              </span>
+            ) : scoredEntry ? (
+              <span className="text-xs text-muted-foreground">Unscored</span>
+            ) : null}
           </div>
         </div>
 
@@ -1360,9 +1393,9 @@ export function OrreryPage() {
         )}
       </div>
 
-      {/* Right: Orrery SVG with pan/zoom + overlays — must fill all vertical space */}
+      {/* Right: System View SVG with pan/zoom + overlays — must fill all vertical space */}
       <div className="flex-1 flex flex-col relative overflow-hidden">
-        <OrreryCanvas systemData={systemData} flash={flash} relativeSizes={relativeSizes} />
+        <SystemViewCanvas systemData={systemData} flash={flash} relativeSizes={relativeSizes} />
 
         {/* Back to app */}
         <Link to="/" className="absolute top-3 left-3 bg-slate-800/80 hover:bg-slate-700/80 border border-slate-600/40 rounded-lg px-3 py-1.5 text-xs text-slate-300 hover:text-white transition-colors z-20">
@@ -1395,7 +1428,7 @@ export function OrreryPage() {
 
         {/* Scan pop notification */}
         {scanPop && (
-          <div className="absolute bottom-8 left-1/2 -translate-x-1/2 pointer-events-none z-30" style={{ animation: 'orrery-scan-pop 3s ease-out forwards' }}>
+          <div className="absolute bottom-8 left-1/2 -translate-x-1/2 pointer-events-none z-30" style={{ animation: 'systemview-scan-pop 3s ease-out forwards' }}>
             <div className="bg-cyan-500/20 border border-cyan-400/40 rounded-xl px-6 py-3 backdrop-blur-sm">
               <div className="text-cyan-300 text-sm font-bold tracking-wide text-center">BODY SCANNED</div>
               <div className="text-white text-lg font-extrabold text-center mt-1">{scanPop}</div>
@@ -1405,15 +1438,15 @@ export function OrreryPage() {
       </div>
 
       <style>{`
-        @keyframes orrery-flash {
+        @keyframes systemview-flash {
           0% { opacity: 1; }
           100% { opacity: 0; }
         }
-        @keyframes orrery-body-pop {
+        @keyframes systemview-body-pop {
           0% { opacity: 0; transform: scale(0); }
           100% { opacity: 1; transform: scale(1); }
         }
-        @keyframes orrery-scan-pop {
+        @keyframes systemview-scan-pop {
           0% { opacity: 0; transform: translate(-50%, 20px) scale(0.8); }
           15% { opacity: 1; transform: translate(-50%, 0) scale(1.05); }
           25% { transform: translate(-50%, 0) scale(1); }

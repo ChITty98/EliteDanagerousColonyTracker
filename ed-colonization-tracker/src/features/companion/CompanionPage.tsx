@@ -102,6 +102,9 @@ export function CompanionPage() {
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const sessions = useAppStore((s) => s.sessions);
   const projects = useAppStore((s) => s.projects);
+  const myFleetCarrier = useAppStore((s) => s.settings.myFleetCarrier);
+  const fleetCarrierSpaceUsage = useAppStore((s) => s.fleetCarrierSpaceUsage);
+  const fcUsage = myFleetCarrier ? fleetCarrierSpaceUsage?.[myFleetCarrier] : undefined;
 
   const [events, setEvents] = useState<CompanionEvent[]>([]);
   const [connected, setConnected] = useState(false);
@@ -204,6 +207,50 @@ export function CompanionPage() {
           )}
         </div>
       </div>
+
+      {/* FC Free Space */}
+      {myFleetCarrier && (
+        <div className="bg-card border border-border rounded-lg px-4 py-3 mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-xl">{'\u{1F69A}'}</span>
+            <div>
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                {myFleetCarrier} — Free Cargo
+              </div>
+              {fcUsage ? (
+                <div className="flex items-baseline gap-2">
+                  <span
+                    className={`text-2xl font-bold tabular-nums ${
+                      fcUsage.freeSpace < 1000
+                        ? 'text-red-400'
+                        : fcUsage.freeSpace < 5000
+                        ? 'text-yellow-400'
+                        : 'text-green-400'
+                    }`}
+                  >
+                    {fcUsage.freeSpace.toLocaleString()}t
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    as of {new Date(fcUsage.updatedAt).toLocaleString(undefined, {
+                      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                    })}
+                  </span>
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground italic">
+                  Open Carrier Management in-game to sync
+                </div>
+              )}
+            </div>
+          </div>
+          {fcUsage && (
+            <div className="text-right text-xs text-muted-foreground">
+              <div>Cargo: {fcUsage.cargo.toLocaleString()}t</div>
+              <div>Total: {fcUsage.totalCapacity.toLocaleString()}t</div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Quick Action Buttons */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">

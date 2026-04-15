@@ -13,6 +13,7 @@ export function ImageGallery({ galleryKey, title, compact }: ImageGalleryProps) 
   const addImage = useGalleryStore((s) => s.addImage);
   const removeImage = useGalleryStore((s) => s.removeImage);
   const updateCaption = useGalleryStore((s) => s.updateCaption);
+  const setPrimaryImage = useGalleryStore((s) => s.setPrimaryImage);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -47,6 +48,15 @@ export function ImageGallery({ galleryKey, title, compact }: ImageGalleryProps) 
   const handleSaveCaption = (imgId: string) => {
     updateCaption(galleryKey, imgId, captionValue);
     setEditingCaption(null);
+  };
+
+  const handleSetPrimary = (img: GalleryImage) => {
+    setPrimaryImage(galleryKey, img.id);
+    // Close lightbox so the user sees the reordered thumbnail strip — otherwise
+    // the lightbox just re-renders the same image at its new index 0 and it
+    // looks like nothing happened.
+    setViewIndex(null);
+    setRawSlide(0);
   };
 
   const handleDelete = (img: GalleryImage) => {
@@ -95,6 +105,7 @@ export function ImageGallery({ galleryKey, title, compact }: ImageGalleryProps) 
             totalImages={images.length}
             onClose={() => setViewIndex(null)}
             onDelete={() => handleDelete(viewImage)}
+            onSetPrimary={() => handleSetPrimary(viewImage)}
             onNext={goNext}
             onPrev={goPrev}
             editingCaption={editingCaption}
@@ -191,6 +202,7 @@ export function ImageGallery({ galleryKey, title, compact }: ImageGalleryProps) 
           totalImages={images.length}
           onClose={() => setViewIndex(null)}
           onDelete={() => handleDelete(viewImage)}
+          onSetPrimary={() => handleSetPrimary(viewImage)}
           onNext={goNext}
           onPrev={goPrev}
           editingCaption={editingCaption}
@@ -207,7 +219,7 @@ export function ImageGallery({ galleryKey, title, compact }: ImageGalleryProps) 
 
 // --- Lightbox modal with prev/next navigation ---
 function Lightbox({
-  image, imageIndex, totalImages, onClose, onDelete, onNext, onPrev,
+  image, imageIndex, totalImages, onClose, onDelete, onSetPrimary, onNext, onPrev,
   editingCaption, captionValue, onStartEditCaption, onSaveCaption, setCaptionValue, setEditingCaption,
 }: {
   image: GalleryImage;
@@ -215,6 +227,7 @@ function Lightbox({
   totalImages: number;
   onClose: () => void;
   onDelete: () => void;
+  onSetPrimary: () => void;
   onNext: () => void;
   onPrev: () => void;
   editingCaption: string | null;
@@ -309,6 +322,15 @@ function Lightbox({
             </button>
           )}
           <div className="flex gap-2">
+            {imageIndex > 0 && (
+              <button
+                onClick={onSetPrimary}
+                className="text-xs text-yellow-400/80 hover:text-yellow-400 transition-colors px-2 py-1"
+                title="Make this the primary image"
+              >
+                {'\u2B50'} Set as primary
+              </button>
+            )}
             <button
               onClick={onDelete}
               className="text-xs text-destructive/60 hover:text-destructive transition-colors px-2 py-1"

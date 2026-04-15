@@ -138,6 +138,7 @@ Tier is determined by T2/T3 installation points when available, falling back to 
 - Windows 10/11
 - Elite Dangerous (for journal data)
 - Chrome browser (for File System Access API — Firefox won't work for journal scanning)
+- Node.js v20 or newer (required if running via the .bat launcher; not needed for the standalone .exe)
 - [EDMCModernOverlay](https://github.com/) (optional, for in-game overlay)
 
 ### Running the App
@@ -151,7 +152,7 @@ npm run build:exe
 # Run it
 ./ed-colony-tracker.exe
 ```
-The exe bundles everything — Node.js runtime, server, and built frontend. No dependencies needed at runtime.
+The build produces two artifacts: `ed-colony-tracker.exe` (standalone — bundles Node.js, no install needed) and `ed-colony-tracker.bat` (a fallback launcher that requires Node.js installed on the machine). Use the .exe when available.
 
 **Option 2: Development Mode**
 ```bash

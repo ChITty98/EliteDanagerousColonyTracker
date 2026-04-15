@@ -456,12 +456,12 @@ function processExplorationUpdates(parsed: ReturnType<typeof parseJournalLines>)
   }
 
   if (cacheChanged) {
-    // Track the last scanned body name for orrery pop notification
+    // Track the last scanned body name for system view pop notification
     const lastScanned = parsed.scanEvents.length > 0
       ? parsed.scanEvents[parsed.scanEvents.length - 1].BodyName
       : undefined;
     store.setJournalExplorationCache(cache);
-    // Include systemAddress + systemName so remote orrery can fetch without local lookup
+    // Include systemAddress + systemName so remote system view can fetch without local lookup
     const lastAddr = parsed.scanEvents.length > 0 ? parsed.scanEvents[parsed.scanEvents.length - 1].SystemAddress
       : parsed.fssDiscoveryScanEvents.length > 0 ? parsed.fssDiscoveryScanEvents[parsed.fssDiscoveryScanEvents.length - 1].SystemAddress
       : undefined;
@@ -515,7 +515,7 @@ function processOverlayUpdates(parsed: ReturnType<typeof parseJournalLines>): vo
     });
   }
 
-  // CarrierJump — treat like FSDJump for orrery updates
+  // CarrierJump — treat like FSDJump for system view updates
   for (const ev of parsed.carrierJumpEvents) {
     if (ev.StarSystem) {
       useAppStore.getState().setCommanderPosition({

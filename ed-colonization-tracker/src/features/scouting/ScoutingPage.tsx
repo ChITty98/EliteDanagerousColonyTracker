@@ -686,7 +686,7 @@ export function ScoutingPage() {
                           {sd?.name || 'Unknown'}
                         </Link>
                         <Link
-                          to={`/orrery?system=${encodeURIComponent(sd?.name || '')}`}
+                          to={`/system-view?system=${encodeURIComponent(sd?.name || '')}`}
                           className="text-[10px] text-cyan-400 hover:text-cyan-300 ml-1"
                           title="System View"
                         >{'\u2604\uFE0F'}</Link>
@@ -865,7 +865,7 @@ export function ScoutingPage() {
                           {sd.name}
                         </Link>
                         <Link
-                          to={`/orrery?system=${encodeURIComponent(sd.name)}`}
+                          to={`/system-view?system=${encodeURIComponent(sd.name)}`}
                           className="text-[10px] text-cyan-400 hover:text-cyan-300 ml-1"
                           title="System View"
                         >{'\u2604\uFE0F'}</Link>
@@ -1022,7 +1022,7 @@ export function ScoutingPage() {
                           {sd.name}
                         </Link>
                         <Link
-                          to={`/orrery?system=${encodeURIComponent(sd.name)}`}
+                          to={`/system-view?system=${encodeURIComponent(sd.name)}`}
                           className="text-[10px] text-cyan-400 hover:text-cyan-300 ml-1"
                           title="System View"
                         >{'\u2604\uFE0F'}</Link>
@@ -1387,7 +1387,7 @@ export function ScoutingPage() {
                     <div className="min-w-[180px] shrink-0">
                       <span className="font-medium text-foreground">{sys.search.name}</span>
                       <Link
-                        to={`/orrery?system=${encodeURIComponent(sys.search.name)}`}
+                        to={`/system-view?system=${encodeURIComponent(sys.search.name)}`}
                         className="text-[10px] text-cyan-400 hover:text-cyan-300 ml-1"
                         title="System View"
                         onClick={(e) => e.stopPropagation()}
@@ -1786,7 +1786,7 @@ export function ScoutingPage() {
                           <div className="min-w-[180px] shrink-0">
                             <span className="font-medium text-muted-foreground">{sys.search.name}</span>
                             <Link
-                              to={`/orrery?system=${encodeURIComponent(sys.search.name)}`}
+                              to={`/system-view?system=${encodeURIComponent(sys.search.name)}`}
                               className="text-[10px] text-cyan-400 hover:text-cyan-300 ml-1"
                               title="System View"
                             >{'\u2604\uFE0F'}</Link>

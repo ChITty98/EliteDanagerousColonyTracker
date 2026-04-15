@@ -236,3 +236,12 @@ export interface ManualInstallation {
   sourceSignalName: string | null;
   createdAt: string;
 }
+
+// Fleet carrier space usage — captured from journal CarrierStats events.
+// Frontier already computes free space as (total capacity - installed services - cargo).
+export interface FleetCarrierSpaceUsage {
+  totalCapacity: number;
+  cargo: number;
+  freeSpace: number;
+  updatedAt: string; // ISO timestamp
+}

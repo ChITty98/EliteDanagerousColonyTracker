@@ -16,6 +16,7 @@ interface GalleryState {
   addImage: (key: GalleryKey, dataUrl: string, caption: string) => Promise<void>;
   removeImage: (key: GalleryKey, imageId: string) => void;
   updateCaption: (key: GalleryKey, imageId: string, caption: string) => void;
+  setPrimaryImage: (key: GalleryKey, imageId: string) => void;
   getImages: (key: GalleryKey) => GalleryImage[];
 }
 
@@ -161,6 +162,17 @@ export const useGalleryStore = create<GalleryState>()(
               ...state.images,
               [key]: existing.map((img) => (img.id === imageId ? { ...img, caption } : img)),
             },
+          };
+        }),
+
+      setPrimaryImage: (key, imageId) =>
+        set((state) => {
+          const existing = state.images[key] ?? [];
+          const idx = existing.findIndex((i) => i.id === imageId);
+          if (idx <= 0) return state;
+          const reordered = [existing[idx], ...existing.slice(0, idx), ...existing.slice(idx + 1)];
+          return {
+            images: { ...state.images, [key]: reordered },
           };
         }),
 

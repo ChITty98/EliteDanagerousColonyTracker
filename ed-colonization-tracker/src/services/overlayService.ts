@@ -62,6 +62,21 @@ let lastDockedSystemName: string | null = null;
 export function getLastSystem(): { address: number | null; name: string | null } {
   return { address: lastSystemAddress, name: lastSystemName };
 }
+/**
+ * Resolve current system with fallback to persisted commanderPosition.
+ * `lastSystemAddress` is module-level state that resets on page reload,
+ * but commanderPosition is persisted, so it's the reliable source after reloads.
+ */
+function resolveCurrentSystem(): { address: number | null; name: string | null } {
+  if (lastSystemAddress) return { address: lastSystemAddress, name: lastSystemName };
+  const pos = useAppStore.getState().commanderPosition;
+  if (pos) {
+    lastSystemAddress = pos.systemAddress;
+    lastSystemName = pos.systemName;
+    return { address: pos.systemAddress, name: pos.systemName };
+  }
+  return { address: null, name: null };
+}
 /** Set last system from SSE event (iPad receives fsd_jump broadcasts) */
 export function setLastSystem(address: number, name: string): void {
   lastSystemAddress = address;
@@ -697,7 +712,7 @@ function buildScanHighlights(bodies: JournalScannedBody[]): string {
 /**
  * Build a short tag describing where the system data comes from.
  */
-function buildSourceTag(scouted: { spanshBodyCount?: number; fromJournal?: boolean; fssAllBodiesFound?: boolean; journalBodyCount?: number }): string {
+export function buildSourceTag(scouted: { spanshBodyCount?: number; fromJournal?: boolean; fssAllBodiesFound?: boolean; journalBodyCount?: number }): string {
   const hasSpansh = (scouted.spanshBodyCount ?? 0) > 0;
   const hasJournal = !!scouted.fromJournal || !!scouted.fssAllBodiesFound || (scouted.journalBodyCount ?? 0) > 0;
   if (hasSpansh && hasJournal) return 'Spansh+Journal';
@@ -1003,9 +1018,10 @@ export function handleChatCommand(event: {
     showProjectNeedsSummary(activeProject, 0);
   } else if (cmd === 'score') {
     // Show current system score
-    if (lastSystemAddress) {
+    const { address: curAddr, name: curName } = resolveCurrentSystem();
+    if (curAddr) {
       const store = useAppStore.getState();
-      const scouted = store.scoutedSystems[lastSystemAddress];
+      const scouted = store.scoutedSystems[curAddr];
       if (scouted && scouted.score && scouted.score.total > 0) {
         const source = buildSourceTag(scouted);
         const color = scouted.score.total >= 100 ? '#fcd34d' : scouted.score.total >= 60 ? '#4ade80' : '#38bdf8';
@@ -1020,7 +1036,7 @@ export function handleChatCommand(event: {
       } else {
         sendOverlay({
           id: `edcolony_cmd_score`,
-          text: `${lastSystemName || 'Current system'} \u2014 Not scored yet`,
+          text: `${curName || 'Current system'} \u2014 Not scored yet`,
           color: '#e2e8f0',
           x: X_LEFT,
           y: Y_SCORE,
@@ -1193,15 +1209,16 @@ export function computeNeedsContent(): CompanionContent {
 }
 
 export function computeScoreContent(): CompanionContent {
-  if (!lastSystemAddress) return { lines: [{ text: 'No system jump detected yet', color: '#e2e8f0' }] };
+  const { address: curAddr, name: curName } = resolveCurrentSystem();
+  if (!curAddr) return { lines: [{ text: 'No system jump detected yet', color: '#e2e8f0' }] };
   const store = useAppStore.getState();
-  const scouted = store.scoutedSystems[lastSystemAddress];
+  const scouted = store.scoutedSystems[curAddr];
   if (scouted && scouted.score && scouted.score.total > 0) {
     const source = buildSourceTag(scouted);
     const color = scouted.score.total >= 100 ? '#fcd34d' : scouted.score.total >= 60 ? '#4ade80' : '#38bdf8';
     return { lines: [{ text: `${scouted.name} \u2014 Score: ${scouted.score.total} [${source}] | ${scouted.bodyString || ''}`, color }] };
   }
-  return { lines: [{ text: `${lastSystemName || 'Current system'} \u2014 Not scored yet`, color: '#e2e8f0' }] };
+  return { lines: [{ text: `${curName || 'Current system'} \u2014 Not scored yet`, color: '#e2e8f0' }] };
 }
 
 export function computeHaulContent(): CompanionContent {

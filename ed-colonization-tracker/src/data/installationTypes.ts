@@ -148,6 +148,10 @@ export function computeTierPoints(
     if (inst.installationTypeId) {
       iType = INSTALLATION_TYPE_MAP[inst.installationTypeId];
     }
+    // stationType is dual-purpose: dropdowns write installation-type IDs directly into it
+    if (!iType && inst.stationType && INSTALLATION_TYPE_MAP[inst.stationType]) {
+      iType = INSTALLATION_TYPE_MAP[inst.stationType];
+    }
     if (!iType && inst.stationType) {
       // Fall back to first match for journal type (conservative default)
       const matches = getInstallationTypesForJournalType(inst.stationType);

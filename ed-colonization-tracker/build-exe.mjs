@@ -508,6 +508,7 @@ try {
   console.log('Created ' + EXE_PATH);
 } catch (e) {
   console.log('SEA exe build failed (this is OK). Use the .bat launcher instead.');
+  console.log('  Error:', e && e.message);
   try { fs.unlinkSync(EXE_PATH); } catch {}
 }
 

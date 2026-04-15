@@ -8,7 +8,7 @@ const navItems = [
   { to: '/', label: 'Dashboard', icon: '\u25C6' },
   { to: '/domain', label: "Architect's Domain", icon: '\u{1F3DB}\u{FE0F}' },
   { to: '/map', label: 'Colony Map', icon: '\u{1F30C}' },
-  { to: '/orrery', label: 'System View', icon: '\u{2604}\u{FE0F}' },
+  { to: '/system-view', label: 'System View', icon: '\u{2604}\u{FE0F}' },
   { to: '/projects', label: 'Projects', icon: '\u25A3' },
   { to: '/fleet-carrier', label: 'Fleet Carrier', icon: '\u2693' },
   { to: '/scouting', label: 'Expansion', icon: '\u{1F52D}' },
@@ -37,10 +37,10 @@ export function Layout() {
   // Full-width pages that shouldn't be constrained by max-w
   const fullWidthPages = ['/map', '/domain'];
   const isFullWidth = fullWidthPages.some((p) => location.pathname === p);
-  const hideNav = location.pathname === '/orrery';
+  const hideNav = location.pathname === '/system-view';
   return (
     <div className="flex min-h-screen bg-background text-foreground">
-      {/* Sidebar — hidden on orrery page */}
+      {/* Sidebar — hidden on system view page */}
       <nav className={`w-56 shrink-0 border-r border-border bg-card flex flex-col ${hideNav ? 'hidden' : ''}`}>
         <div className="p-4 border-b border-border">
           <h1 className="text-lg font-bold text-primary tracking-wide">

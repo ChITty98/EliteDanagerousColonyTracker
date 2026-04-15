@@ -65,6 +65,15 @@ export function DashboardPage() {
   const [sessionSummary, setSessionSummary] = useState<RecentContributionSummary[] | null>(null);
   const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
   const [showSessionSummary, setShowSessionSummary] = useState(false);
+  const [showFullImage, setShowFullImage] = useState(false);
+
+  // Close full-image lightbox on Esc
+  useEffect(() => {
+    if (!showFullImage) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowFullImage(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showFullImage]);
 
   // Auto-scan for session summary on mount
   useEffect(() => {
@@ -711,14 +720,19 @@ export function DashboardPage() {
       )}
 
       {/* Hero banner */}
-      <div className="relative w-full h-56 md:h-72 mb-6 rounded-xl overflow-hidden border border-border">
+      <button
+        type="button"
+        onClick={() => setShowFullImage(true)}
+        className="relative w-full h-56 md:h-72 mb-6 rounded-xl overflow-hidden border border-border block text-left group cursor-zoom-in"
+        aria-label="View full banner image"
+      >
         <img
           src="/app-image.png"
           alt=""
-          className="absolute inset-0 w-full h-full object-cover object-[center_85%]"
+          className="absolute inset-0 w-full h-full object-cover object-[center_85%] transition-transform duration-500 group-hover:scale-105"
         />
         <div className="absolute inset-0 bg-gradient-to-r from-background/90 via-background/40 to-transparent" />
-        <div className="relative h-full flex flex-col justify-end p-5 md:p-6">
+        <div className="relative h-full flex flex-col justify-end p-5 md:p-6 pointer-events-none">
           <h1 className="text-2xl md:text-4xl font-bold text-foreground drop-shadow-lg tracking-tight">
             ED Colony Tracker
           </h1>
@@ -726,7 +740,33 @@ export function DashboardPage() {
             Build. Expand. Dominate the black.
           </p>
         </div>
-      </div>
+        <div className="absolute top-2 right-2 text-[10px] uppercase tracking-wide text-foreground/70 bg-background/60 backdrop-blur px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+          Click to view
+        </div>
+      </button>
+
+      {/* Full-image lightbox */}
+      {showFullImage && (
+        <div
+          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4 cursor-zoom-out"
+          onClick={() => setShowFullImage(false)}
+        >
+          <img
+            src="/app-image.png"
+            alt="ED Colony Tracker banner"
+            className="max-w-full max-h-full object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            type="button"
+            onClick={() => setShowFullImage(false)}
+            className="absolute top-4 right-4 text-white/80 hover:text-white text-2xl leading-none w-10 h-10 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/70"
+            aria-label="Close"
+          >
+            {'\u2715'}
+          </button>
+        </div>
+      )}
 
       {/* Header */}
       <div className="flex items-center justify-between mb-6">

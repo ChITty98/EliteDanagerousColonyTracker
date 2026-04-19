@@ -4,7 +4,7 @@ import { useAppStore } from '@/store';
 import { cleanProjectName } from '@/lib/utils';
 import { COMMODITY_BY_ID, COMMODITIES } from '@/data/commodities';
 import { findNearbySources, type ArdentStation } from '@/services/ardentApi';
-import { readMarketSnapshot } from '@/services/journalReader';
+import { readMarketSnapshot, isEphemeralStation } from '@/services/journalReader';
 import type { CustomSource } from '@/store/types';
 
 interface CommodityNeed {
@@ -21,23 +21,28 @@ interface SourceResults {
 
 type SearchState = 'idle' | 'loading' | 'done' | 'error';
 
-// Station type classification
+// Station type classification — covers both canonical Frontier types and the
+// custom installation IDs users can assign from the Installation Type dataset
+// (civilian_surface_outpost, extraction_surface_outpost, etc.)
 const PLANETARY_TYPES = new Set([
   'CraterOutpost', 'CraterPort', 'OnFootSettlement', 'SurfaceStation',
   'PlanetaryOutpost', 'PlanetaryPort', 'SurfaceOutpost',
   'PlanetaryConstructionDepot', 'SurfaceConstructionDepot',
 ]);
 function isPlanetary(stationType: string) {
-  return PLANETARY_TYPES.has(stationType);
+  if (!stationType) return false;
+  if (PLANETARY_TYPES.has(stationType)) return true;
+  // Custom user-assigned types from installationTypes.ts that are explicitly surface/planetary.
+  // Don't catch "_outpost" alone — commercial_outpost / industrial_outpost are ORBITAL.
+  return /surface_|planetary_|settlement/i.test(stationType);
 }
 function stationTypeLabel(stationType: string) {
-  if (PLANETARY_TYPES.has(stationType)) return 'Planet';
+  if (isPlanetary(stationType)) return 'Planet';
   if (stationType === 'FleetCarrier') return 'FC';
-  // Everything else that's not planetary is orbital
   return 'Orbital';
 }
 function stationTypeIcon(stationType: string) {
-  if (PLANETARY_TYPES.has(stationType)) return '\u{1F30D}'; // globe
+  if (isPlanetary(stationType)) return '\u{1F30D}'; // globe
   if (stationType === 'FleetCarrier') return '\u{1F6A2}'; // ship
   return '\u{2B50}';
 }
@@ -52,6 +57,10 @@ export function SourcesPage() {
   const settings = useAppStore((s) => s.settings);
   const marketSnapshots = useAppStore((s) => s.marketSnapshots);
   const upsertMarketSnapshot = useAppStore((s) => s.upsertMarketSnapshot);
+  const knownSystems = useAppStore((s) => s.knownSystems);
+  const commanderPosition = useAppStore((s) => s.commanderPosition);
+  const currentShip = useAppStore((s) => s.currentShip);
+  const stationTravelTimes = useAppStore((s) => s.stationTravelTimes);
   const activeProjects = useMemo(() => projects.filter((p) => p.status === 'active'), [projects]);
 
   const [selectedProjectId, setSelectedProjectId] = useState<string | 'all'>('all');
@@ -60,6 +69,130 @@ export function SourcesPage() {
   const [searchErrors, setSearchErrors] = useState<Record<string, string>>({});
   const [includeFC, setIncludeFC] = useState(false);
   const [maxDistance, setMaxDistance] = useState(80);
+
+  // Browse Market Data — search stored snapshots by system / station / commodity
+  type BrowseMode = 'system' | 'station' | 'commodity';
+  const [browseMode, setBrowseMode] = useState<BrowseMode>('commodity');
+  const [browseQuery, setBrowseQuery] = useState('');
+
+  const browseResults = useMemo(() => {
+    const q = browseQuery.trim().toLowerCase();
+    if (!q) return null;
+
+    // Distance from commander to a system (via knownSystems coords)
+    const here = commanderPosition?.coordinates;
+    const distanceTo = (systemName: string): number => {
+      if (!here) return Number.POSITIVE_INFINITY;
+      const ks = knownSystems[systemName.toLowerCase()];
+      if (!ks?.coordinates) return Number.POSITIVE_INFINITY;
+      const dx = ks.coordinates.x - here.x;
+      const dy = ks.coordinates.y - here.y;
+      const dz = ks.coordinates.z - here.z;
+      return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    };
+
+    // Unified station entry — either from snapshot (fresh, has stock) OR visitedMarkets (journal, no stock)
+    interface UnifiedStation {
+      marketId: number;
+      stationName: string;
+      systemName: string;
+      stationType: string;
+      isPlanetary: boolean;
+      hasLargePads: boolean;
+      commodities: { commodityId: string; name: string; buyPrice: number; stock: number | null }[];
+      updatedAt: string;
+      source: 'snapshot' | 'journal';
+      distance: number;
+    }
+
+    // Build unified view — snapshots win over visitedMarkets for the same marketId
+    const byMarketId = new Map<number, UnifiedStation>();
+    for (const s of Object.values(marketSnapshots)) {
+      if (isEphemeralStation(s.stationName, s.stationType, s.marketId)) continue;
+      byMarketId.set(s.marketId, {
+        marketId: s.marketId,
+        stationName: s.stationName,
+        systemName: s.systemName,
+        stationType: s.stationType,
+        isPlanetary: s.isPlanetary,
+        hasLargePads: s.hasLargePads,
+        commodities: s.commodities.map((c) => ({ commodityId: c.commodityId, name: c.name, buyPrice: c.buyPrice, stock: c.stock })),
+        updatedAt: s.updatedAt,
+        source: 'snapshot',
+        distance: distanceTo(s.systemName),
+      });
+    }
+    for (const v of visitedMarkets) {
+      if (isEphemeralStation(v.stationName, v.stationType, v.marketId)) continue;
+      if (byMarketId.has(v.marketId)) continue; // snapshot wins
+      byMarketId.set(v.marketId, {
+        marketId: v.marketId,
+        stationName: v.stationName,
+        systemName: v.systemName,
+        stationType: v.stationType,
+        isPlanetary: v.isPlanetary,
+        hasLargePads: v.hasLargePads,
+        commodities: v.commodities.map((id) => ({
+          commodityId: id,
+          name: COMMODITY_BY_ID[id]?.name || id,
+          buyPrice: v.commodityPrices?.[id]?.buyPrice ?? 0,
+          stock: null, // journal data has no stock
+        })),
+        updatedAt: v.lastVisited,
+        source: 'journal',
+        distance: distanceTo(v.systemName),
+      });
+    }
+
+    const allStations = [...byMarketId.values()];
+
+    if (browseMode === 'commodity') {
+      const rows: {
+        marketId: number;
+        stationName: string;
+        systemName: string;
+        stationType: string;
+        commodityName: string;
+        buyPrice: number;
+        stock: number | null;
+        updatedAt: string;
+        source: 'snapshot' | 'journal';
+        distance: number;
+      }[] = [];
+      for (const st of allStations) {
+        for (const c of st.commodities) {
+          const defName = COMMODITY_BY_ID[c.commodityId]?.name || c.name;
+          if (
+            c.commodityId.toLowerCase().includes(q) ||
+            c.name.toLowerCase().includes(q) ||
+            defName.toLowerCase().includes(q)
+          ) {
+            rows.push({
+              marketId: st.marketId,
+              stationName: st.stationName,
+              systemName: st.systemName,
+              stationType: st.stationType,
+              commodityName: defName,
+              buyPrice: c.buyPrice,
+              stock: c.stock,
+              updatedAt: st.updatedAt,
+              source: st.source,
+              distance: st.distance,
+            });
+          }
+        }
+      }
+      rows.sort((a, b) => a.distance - b.distance);
+      return { mode: 'commodity' as const, rows };
+    }
+
+    const matched = allStations.filter((s) => {
+      if (browseMode === 'system') return s.systemName.toLowerCase().includes(q);
+      return s.stationName.toLowerCase().includes(q);
+    });
+    matched.sort((a, b) => a.distance - b.distance);
+    return { mode: browseMode, rows: matched };
+  }, [browseMode, browseQuery, marketSnapshots, visitedMarkets, knownSystems, commanderPosition]);
 
   // Market sync
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
@@ -175,9 +308,20 @@ export function SourcesPage() {
     return customSources.filter((s) => s.commodities.includes(commodityId));
   };
 
-  // Get visited markets that sell a commodity
+  // Get visited markets that sell a commodity.
+  // Snapshot-wins policy: if a station has a current market snapshot, that
+  // snapshot is the source of truth — only include the station as a source
+  // if the snapshot still lists this commodity. If there's no snapshot, fall
+  // back to the journal-derived `visitedMarkets` entry (historical MarketBuy
+  // events — commodity may or may not still be in stock).
   const getVisitedMarketsFor = (commodityId: string) => {
-    return visitedMarkets.filter((m) => m.commodities.includes(commodityId));
+    return visitedMarkets.filter((m) => {
+      const snapshot = marketSnapshots[m.marketId];
+      if (snapshot) {
+        return snapshot.commodities.some((c) => c.commodityId === commodityId);
+      }
+      return m.commodities.includes(commodityId);
+    });
   };
 
   const handleAddSource = () => {
@@ -230,6 +374,7 @@ export function SourcesPage() {
       <td className={`text-right px-4 py-2 ${isInSystem ? 'text-progress-complete' : 'text-muted-foreground'}`}>
         {isInSystem ? '0 ly' : s.distance != null ? `${s.distance.toFixed(1)} ly` : '\u2014'}
       </td>
+      <td className="text-right px-4 py-2 text-muted-foreground">{'\u2014'}</td>
       <td className="text-right px-4 py-2">
         <span className={s.stock >= need.remaining ? 'text-progress-complete' : s.stock > 0 ? 'text-foreground' : 'text-red-400'}>
           {s.stock.toLocaleString()}
@@ -264,6 +409,145 @@ export function SourcesPage() {
             Search All
           </button>
         </div>
+      </div>
+
+      {/* Browse Market Data — search stored snapshots + journal history */}
+      <div className="bg-card border border-border rounded-lg p-4 mb-6">
+        <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+          <div>
+            <h3 className="text-lg font-bold">{'\u{1F50D}'} Browse Market Data</h3>
+            <p className="text-xs text-muted-foreground">
+              Snapshots + journal history · sorted by distance from {commanderPosition?.systemName || 'unknown'}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {(['system', 'station', 'commodity'] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setBrowseMode(mode)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                  browseMode === mode
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-muted-foreground hover:bg-muted/70'
+                }`}
+              >
+                {mode[0].toUpperCase() + mode.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <input
+          type="text"
+          value={browseQuery}
+          onChange={(e) => setBrowseQuery(e.target.value)}
+          placeholder={
+            browseMode === 'system' ? 'Search systems (e.g. HIP 47126)…'
+              : browseMode === 'station' ? 'Search stations (e.g. Ma Gateway)…'
+              : 'Search commodities (e.g. water)…'
+          }
+          className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-primary"
+        />
+        {browseResults && (
+          <div className="mt-3">
+            {browseResults.rows.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No matches.</p>
+            ) : browseResults.mode === 'commodity' ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-xs uppercase text-muted-foreground">
+                    <tr>
+                      <th className="text-left py-1 pr-3">Commodity</th>
+                      <th className="text-left py-1 pr-3">Station</th>
+                      <th className="text-left py-1 pr-3">System</th>
+                      <th className="text-right py-1 pr-3">Dist</th>
+                      <th className="text-right py-1 pr-3">Stock</th>
+                      <th className="text-right py-1 pr-3">Buy</th>
+                      <th className="text-left py-1">Src · Updated</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(browseResults.rows as Array<{
+                      marketId: number; stationName: string; systemName: string;
+                      commodityName: string; buyPrice: number; stock: number | null; updatedAt: string;
+                      source: 'snapshot' | 'journal'; distance: number;
+                    }>).slice(0, 100).map((r, i) => (
+                      <tr key={`${r.marketId}-${r.commodityName}-${i}`} className="border-t border-border/30">
+                        <td className="py-1 pr-3 text-foreground">{r.commodityName}</td>
+                        <td className="py-1 pr-3 text-foreground">{r.stationName}</td>
+                        <td className="py-1 pr-3 text-muted-foreground">{r.systemName}</td>
+                        <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">
+                          {Number.isFinite(r.distance) ? `${r.distance.toFixed(1)} ly` : '—'}
+                        </td>
+                        <td className="py-1 pr-3 text-right tabular-nums">
+                          {r.stock == null ? <span className="text-muted-foreground/50">—</span> : r.stock.toLocaleString()}
+                        </td>
+                        <td className="py-1 pr-3 text-right tabular-nums">{r.buyPrice > 0 ? `${r.buyPrice.toLocaleString()} cr` : '—'}</td>
+                        <td className="py-1 text-xs">
+                          <span className={r.source === 'snapshot' ? 'text-green-400' : 'text-amber-400'}>
+                            {r.source === 'snapshot' ? 'Market' : 'Journal'}
+                          </span>
+                          <span className="text-muted-foreground/70 ml-1">· {new Date(r.updatedAt).toLocaleDateString()}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {browseResults.rows.length > 100 && (
+                  <p className="text-xs text-muted-foreground mt-2">Showing nearest 100 of {browseResults.rows.length}</p>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {(browseResults.rows as Array<{
+                  marketId: number; stationName: string; systemName: string; stationType: string;
+                  commodities: { commodityId: string; name: string; buyPrice: number; stock: number | null }[];
+                  updatedAt: string; source: 'snapshot' | 'journal'; distance: number;
+                }>).map((s) => (
+                  <details key={s.marketId} className="rounded-lg border border-border bg-muted/30">
+                    <summary className="cursor-pointer px-3 py-2 flex items-center justify-between text-sm gap-3 flex-wrap">
+                      <span className="flex items-center gap-2 min-w-0">
+                        <span>{stationTypeIcon(s.stationType)}</span>
+                        <span className="font-semibold text-foreground truncate">{s.stationName}</span>
+                        <span className="text-muted-foreground truncate">{s.systemName}</span>
+                      </span>
+                      <span className="text-xs text-muted-foreground flex items-center gap-2 shrink-0">
+                        <span className="tabular-nums">{Number.isFinite(s.distance) ? `${s.distance.toFixed(1)} ly` : '—'}</span>
+                        <span>·</span>
+                        <span>{s.commodities.length} items</span>
+                        <span>·</span>
+                        <span className={s.source === 'snapshot' ? 'text-green-400' : 'text-amber-400'}>{s.source === 'snapshot' ? 'Market' : 'Journal'}</span>
+                        <span>·</span>
+                        <span>{new Date(s.updatedAt).toLocaleDateString()}</span>
+                      </span>
+                    </summary>
+                    <div className="px-3 py-2 border-t border-border/30 overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="text-xs uppercase text-muted-foreground">
+                          <tr>
+                            <th className="text-left py-1 pr-3">Commodity</th>
+                            <th className="text-right py-1 pr-3">Stock</th>
+                            <th className="text-right py-1">Buy</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[...s.commodities].sort((a, b) => (b.stock ?? 0) - (a.stock ?? 0)).map((c) => (
+                            <tr key={c.commodityId} className="border-t border-border/20">
+                              <td className="py-1 pr-3 text-foreground">{COMMODITY_BY_ID[c.commodityId]?.name || c.name}</td>
+                              <td className="py-1 pr-3 text-right tabular-nums">
+                                {c.stock == null ? <span className="text-muted-foreground/50">—</span> : c.stock.toLocaleString()}
+                              </td>
+                              <td className="py-1 text-right tabular-nums">{c.buyPrice > 0 ? `${c.buyPrice.toLocaleString()} cr` : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </details>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Compact sources indicator + sync */}
@@ -525,8 +809,59 @@ export function SourcesPage() {
               {/* Unified results: visited/pinned + API merged */}
               {(() => {
                 // Build local source rows from visited markets + custom sources
-                const localRows: { stationName: string; systemName: string; stationType: string; isInSystem: boolean; tag: string; notes?: string; distFromStarLS?: number | null; buyPrice?: number; priceSeen?: string }[] = [];
+                const localRows: {
+                  stationName: string;
+                  systemName: string;
+                  stationType: string;
+                  isInSystem: boolean;
+                  tag: string;
+                  notes?: string;
+                  distFromStarLS?: number | null;
+                  buyPrice?: number;
+                  priceSeen?: string;
+                  distance?: number | null;  // ly from the reference system
+                  stock?: number | null;      // from market snapshot if available
+                  travel?: { avgSeconds: number; tripCount: number } | null; // journal-derived travel stat for current ship
+                }[] = [];
                 const refLower = refSystem.toLowerCase();
+                // Distance anchor is the commander's CURRENT location (so you can
+                // see how far you have to fly to get each source), NOT the
+                // project's delivery system. In-system detection still uses the
+                // project's refSystem (since that's where the goods are going).
+                const here = commanderPosition?.coordinates;
+                const computeDistanceLy = (sysName: string): number | null => {
+                  if (!here) return null;
+                  const target = knownSystems[sysName.toLowerCase()];
+                  if (!target?.coordinates) return null;
+                  const dx = target.coordinates.x - here.x;
+                  const dy = target.coordinates.y - here.y;
+                  const dz = target.coordinates.z - here.z;
+                  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+                };
+                // Travel-time lookup — from user's currently-docked station (if any)
+                // to a source station, for the currently active ship.
+                const fromMarketId = (() => {
+                  if (!commanderPosition?.systemAddress) return null;
+                  const here = Object.values(knownStations).find(
+                    (s) => s.systemAddress === commanderPosition.systemAddress && s.lastDocked,
+                  );
+                  return here?.marketId ?? null;
+                })();
+                const shipId = currentShip?.shipId ?? null;
+                const travelStatFor = (toMarketId: number): { avgSeconds: number; tripCount: number } | null => {
+                  if (!fromMarketId || shipId == null) return null;
+                  const key = `${fromMarketId}:${toMarketId}:${shipId}`;
+                  const stat = stationTravelTimes[key];
+                  return stat ? { avgSeconds: stat.recentAvgSeconds, tripCount: stat.tripCount } : null;
+                };
+                // Stock lookup for a station + commodity (only available in marketSnapshots)
+                const findStock = (marketId: number | undefined, commodityId: string): number | null => {
+                  if (!marketId) return null;
+                  const snap = marketSnapshots[marketId];
+                  if (!snap) return null;
+                  const c = snap.commodities.find((x) => x.commodityId === commodityId);
+                  return c ? c.stock : null;
+                };
 
                 // Helper to look up known station metadata by name + system
                 const findKnownStation = (stationName: string, systemName: string) => {
@@ -546,19 +881,22 @@ export function SourcesPage() {
                   return known?.stationType || fallback;
                 };
 
-                // Only show in-system visited sources — out-of-system ones appear in API results with distance data
+                // Visited sources (journal-derived) — include all, compute distance via knownSystems
                 for (const vm of visitedSources) {
-                  if (vm.systemName.toLowerCase() !== refLower) continue;
                   const priceInfo = vm.commodityPrices?.[need.commodityId];
+                  const isInSystem = vm.systemName.toLowerCase() === refLower;
                   localRows.push({
                     stationName: vm.stationName,
                     systemName: vm.systemName,
                     stationType: resolveStationType(vm.stationName, vm.systemName, vm.stationType || (vm.isPlanetary ? 'CraterPort' : 'Coriolis')),
-                    isInSystem: true,
+                    isInSystem,
                     tag: 'visited',
                     distFromStarLS: findStationLs(vm.stationName, vm.systemName),
                     buyPrice: priceInfo?.buyPrice,
                     priceSeen: priceInfo?.lastSeen,
+                    distance: computeDistanceLy(vm.systemName),
+                    stock: findStock(vm.marketId, need.commodityId),
+                    travel: travelStatFor(vm.marketId),
                   });
                 }
                 // Persisted market snapshots — show ALL (in-system and out-of-system) since these are
@@ -568,45 +906,57 @@ export function SourcesPage() {
                   // Don't duplicate if already in visited sources
                   if (localRows.some((r) => r.stationName === ms.stationName && r.systemName.toLowerCase() === ms.systemName.toLowerCase())) continue;
                   const commodity = ms.commodities.find((c) => c.commodityId === need.commodityId);
+                  const isInSystem = ms.systemName.toLowerCase() === refLower;
                   localRows.push({
                     stationName: ms.stationName,
                     systemName: ms.systemName,
                     stationType: resolveStationType(ms.stationName, ms.systemName, ms.stationType || (ms.isPlanetary ? 'CraterPort' : 'Coriolis')),
-                    isInSystem: ms.systemName.toLowerCase() === refLower,
+                    isInSystem,
                     tag: 'market',
                     distFromStarLS: findStationLs(ms.stationName, ms.systemName),
                     buyPrice: commodity?.buyPrice,
                     priceSeen: ms.updatedAt,
+                    distance: computeDistanceLy(ms.systemName),
+                    stock: commodity?.stock ?? null,
+                    travel: travelStatFor(ms.marketId),
                   });
                 }
                 for (const cs of pinnedSources) {
                   // Don't duplicate if already in visited
                   if (localRows.some((r) => r.stationName === cs.stationName && r.systemName.toLowerCase() === cs.systemName.toLowerCase())) continue;
+                  const isInSystem = cs.systemName.toLowerCase() === refLower;
                   localRows.push({
                     stationName: cs.stationName,
                     systemName: cs.systemName,
                     stationType: cs.isPlanetary ? 'CraterPort' : 'Coriolis',
-                    isInSystem: cs.systemName.toLowerCase() === refLower,
+                    isInSystem,
                     tag: 'pinned',
                     notes: cs.notes,
                     distFromStarLS: findStationLs(cs.stationName, cs.systemName),
+                    distance: computeDistanceLy(cs.systemName),
+                    stock: null,
                   });
                 }
 
-                // Filter out player's own fleet carrier — it's not a material source
+                // Filter out player's own fleet carrier — it's not a material source.
+                // Also apply max-distance filter when we have a computed distance
+                // (rows with unknown distance are kept — per the no-coord policy).
                 const myFC = settings.myFleetCarrier?.toLowerCase();
                 const squadronFCs = new Set(settings.squadronCarrierCallsigns.map((c) => c.toLowerCase()));
                 const filteredRows = localRows.filter((r) => {
                   const nameLower = r.stationName.toLowerCase();
                   if (myFC && nameLower === myFC) return false;
                   if (squadronFCs.has(nameLower)) return false;
+                  if (r.distance != null && r.distance > maxDistance) return false;
                   return true;
                 });
 
-                // Sort: in-system first
+                // Sort: in-system first, then by computed distance (nulls last)
                 filteredRows.sort((a, b) => {
                   if (a.isInSystem !== b.isInSystem) return a.isInSystem ? -1 : 1;
-                  return 0;
+                  const da = a.distance ?? Number.POSITIVE_INFINITY;
+                  const db = b.distance ?? Number.POSITIVE_INFINITY;
+                  return da - db;
                 });
 
                 const hasLocalRows = filteredRows.length > 0;
@@ -632,6 +982,7 @@ export function SourcesPage() {
                           <th className="text-left px-4 py-2 font-medium">System</th>
                           <th className="text-right px-4 py-2 font-medium">Type</th>
                           <th className="text-right px-4 py-2 font-medium">Dist</th>
+                          <th className="text-right px-4 py-2 font-medium" title="Avg travel time from your current station for your current ship">Travel</th>
                           <th className="text-right px-4 py-2 font-medium">Stock</th>
                           <th className="text-right px-4 py-2 font-medium">Price</th>
                           <th className="text-right px-4 py-2 font-medium">Ls</th>
@@ -656,9 +1007,18 @@ export function SourcesPage() {
                               </span>
                             </td>
                             <td className={`text-right px-4 py-2 ${r.isInSystem ? 'text-progress-complete' : 'text-muted-foreground'}`}>
-                              {r.isInSystem ? '0 ly' : '\u2014'}
+                              {r.distance != null ? `${r.distance.toFixed(1)} ly` : '\u2014'}
                             </td>
-                            <td className="text-right px-4 py-2 text-muted-foreground">&mdash;</td>
+                            <td className="text-right px-4 py-2 text-muted-foreground">
+                              {r.travel ? (
+                                <span title={`${r.travel.tripCount} trips`}>
+                                  {Math.floor(r.travel.avgSeconds / 60)}m {Math.round(r.travel.avgSeconds % 60)}s
+                                </span>
+                              ) : '\u2014'}
+                            </td>
+                            <td className="text-right px-4 py-2 text-muted-foreground">
+                              {r.stock != null ? r.stock.toLocaleString() : '\u2014'}
+                            </td>
                             <td className="text-right px-4 py-2 text-muted-foreground">
                               {r.buyPrice != null ? `${r.buyPrice.toLocaleString()} cr` : '\u2014'}
                             </td>

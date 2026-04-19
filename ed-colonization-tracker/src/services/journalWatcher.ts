@@ -15,15 +15,21 @@ import {
   getJournalFolderHandle,
   parseJournalLines,
   extractKnowledgeBaseFromEvents,
+  extractExplorationData,
   readShipCargo,
   readMarketJson,
+  readMarketSnapshot,
+  readNavRouteJson,
+  isFleetCarrier,
   isFleetCarrierMarketId,
+  isEphemeralStation,
   isColonisationShip,
   isConstructionStationName,
   resourceToCommodity,
 } from './journalReader';
+import { resolveSystemName } from './spanshApi';
 import { findCommodityByJournalName } from '@/data/commodities';
-import { handleFSDJump, handleDocked, handleScanEvent, handleFSSAllBodiesFound, handleChatCommand, handleConstructionComplete, postCompanionEvent } from './overlayService';
+import { handleFSDJump, handleDocked, handleScanEvent, handleFSSAllBodiesFound, handleChatCommand, handleConstructionComplete, handleStationDockSummary, emitNpcThreatOverlay, postCompanionEvent } from './overlayService';
 
 const POLL_INTERVAL_MS = 2000;
 const DEBOUNCE_MS = 500;
@@ -320,6 +326,26 @@ function processCargoUpdates(parsed: ReturnType<typeof parseJournalLines>): void
         store.updateSettings({ cargoCapacity: latest.CargoCapacity });
       }
     }
+    // Track the active ship so Sources page can show travel-time stats for it.
+    if (latest.ShipID != null && latest.Ship) {
+      useAppStore.getState().setCurrentShip({
+        shipId: latest.ShipID,
+        type: latest.Ship,
+        name: latest.ShipName,
+        ident: latest.ShipIdent,
+        cargoCapacity: latest.CargoCapacity,
+      });
+    }
+  }
+  // ShipyardSwap also switches the active ship
+  if (parsed.shipyardSwapEvents.length > 0) {
+    const sw = parsed.shipyardSwapEvents[parsed.shipyardSwapEvents.length - 1];
+    if (sw.ShipID != null && sw.ShipType) {
+      useAppStore.getState().setCurrentShip({
+        shipId: sw.ShipID,
+        type: sw.ShipType,
+      });
+    }
   }
 }
 
@@ -351,6 +377,11 @@ function processExplorationUpdates(parsed: ReturnType<typeof parseJournalLines>)
       cacheChanged = true;
     }
   }
+  // Honk — schedule a full journal re-parse so we catch the main star AutoScan
+  // (and any FSS-scanned bodies) that may have been missed by the incremental poller.
+  if (parsed.fssDiscoveryScanEvents.length > 0) {
+    scheduleExplorationBackfill();
+  }
 
   // Scan events — add body data to cache in real-time
   for (const ev of parsed.scanEvents) {
@@ -381,6 +412,9 @@ function processExplorationUpdates(parsed: ReturnType<typeof parseJournalLines>)
       distanceToArrival: ev.DistanceFromArrivalLS,
       starType: ev.StarType,
       stellarMass: ev.StellarMass,
+      absoluteMagnitude: ev.AbsoluteMagnitude,
+      luminosityClass: ev.Luminosity,
+      ageMy: ev.Age_MY,
       isLandable: ev.Landable,
       earthMasses: ev.MassEM,
       gravity: ev.SurfaceGravity,
@@ -486,25 +520,26 @@ function processExplorationUpdates(parsed: ReturnType<typeof parseJournalLines>)
 function processOverlayUpdates(parsed: ReturnType<typeof parseJournalLines>): void {
   // Location — update commander position on game load / after death
   for (const ev of parsed.locationEvents) {
-    if (ev.StarPos) {
-      useAppStore.getState().setCommanderPosition({
-        systemName: ev.StarSystem,
-        systemAddress: ev.SystemAddress,
-        coordinates: { x: ev.StarPos[0], y: ev.StarPos[1], z: ev.StarPos[2] },
-      });
+    if (ev.StarSystem && ev.SystemAddress) {
+      syncCommanderPosition(
+        'Location',
+        ev.StarSystem,
+        ev.SystemAddress,
+        ev.StarPos ? { x: ev.StarPos[0], y: ev.StarPos[1], z: ev.StarPos[2] } : null,
+      );
     }
   }
 
   // FSDJump — score overlay, market relevance, missing images
   for (const ev of parsed.fsdJumpEvents) {
     handleFSDJump(ev);
-    // Update commander position in store
-    if (ev.StarPos) {
-      useAppStore.getState().setCommanderPosition({
-        systemName: ev.StarSystem,
-        systemAddress: ev.SystemAddress,
-        coordinates: { x: ev.StarPos[0], y: ev.StarPos[1], z: ev.StarPos[2] },
-      });
+    if (ev.StarSystem && ev.SystemAddress) {
+      syncCommanderPosition(
+        'FSDJump',
+        ev.StarSystem,
+        ev.SystemAddress,
+        ev.StarPos ? { x: ev.StarPos[0], y: ev.StarPos[1], z: ev.StarPos[2] } : null,
+      );
     }
     broadcastCompanionEvent({
       type: 'fsd_jump',
@@ -513,16 +548,15 @@ function processOverlayUpdates(parsed: ReturnType<typeof parseJournalLines>): vo
       population: ev.Population,
       starPos: ev.StarPos,
     });
+    // Safety net: schedule a full journal re-parse to backfill exploration data
+    // if the incremental poller misses scan events (Chrome FSA stale file.size).
+    scheduleExplorationBackfill();
   }
 
   // CarrierJump — treat like FSDJump for system view updates
   for (const ev of parsed.carrierJumpEvents) {
     if (ev.StarSystem) {
-      useAppStore.getState().setCommanderPosition({
-        systemName: ev.StarSystem,
-        systemAddress: ev.SystemAddress,
-        coordinates: { x: 0, y: 0, z: 0 }, // CarrierJump doesn't have StarPos
-      });
+      syncCommanderPosition('CarrierJump', ev.StarSystem, ev.SystemAddress);
       broadcastCompanionEvent({
         type: 'fsd_jump',
         system: ev.StarSystem,
@@ -556,11 +590,7 @@ function processOverlayUpdates(parsed: ReturnType<typeof parseJournalLines>): vo
   }
 
   // CarrierStats — FC free cargo sync (fires on opening Carrier Management)
-  if (parsed.carrierStatsEvents.length > 0) {
-    console.log(`[Watcher] CarrierStats events received: ${parsed.carrierStatsEvents.length}`);
-  }
   for (const ev of parsed.carrierStatsEvents) {
-    console.log('[Watcher] CarrierStats:', ev.Callsign, 'SpaceUsage=', ev.SpaceUsage);
     if (!ev.Callsign) continue;
     // Some journal variants nest differently; guard each field.
     const spaceUsage = ev.SpaceUsage;
@@ -579,9 +609,41 @@ function processOverlayUpdates(parsed: ReturnType<typeof parseJournalLines>): vo
     });
   }
 
+  // DockingGranted — fire welcome overlay EARLY (must run BEFORE Docked loop
+  // so the suppression flag is set before Docked's welcome check).
+  for (const ev of parsed.dockingGrantedEvents) {
+    if (!ev.MarketID) continue;
+    if (isEphemeralStation(ev.StationName, ev.StationType, ev.MarketID)) continue;
+    handleDockingGranted(ev);
+  }
+
   // Docked — FC load, station needs, missing image prompt
   for (const ev of parsed.dockedEvents) {
+    if (ev.StarSystem && ev.SystemAddress) {
+      syncCommanderPosition('Docked', ev.StarSystem, ev.SystemAddress);
+    }
     handleDocked(ev);
+
+    // Station dossier: record the dock, compute deltas, build welcome overlay
+    // Skip fleet carriers — they aren't "places" in the narrative sense.
+    // Use isFleetCarrier (stationType + marketId) rather than marketId alone —
+    // colonized stations share the FC MarketID range, so the numeric check
+    // alone over-rejects.
+    if (!isEphemeralStation(ev.StationName, ev.StationType, ev.MarketID)) {
+      // Record the dock (increments count, tracks faction/state history).
+      // We deliberately do NOT fire the welcome overlay or summary broadcast
+      // from Docked — that's DockingGranted's job (happens at approach).
+      // Ephemeral stations (FCs, Trailblazers, construction sites) skipped.
+      useAppStore.getState().recordStationDock(ev.MarketID, {
+        stationName: ev.StationName,
+        systemName: ev.StarSystem,
+        systemAddress: ev.SystemAddress,
+        timestamp: ev.timestamp,
+        faction: ev.StationFaction?.Name,
+        factionState: ev.StationFaction?.FactionState,
+      });
+    }
+
     broadcastCompanionEvent({
       type: 'docked',
       station: ev.StationName,
@@ -624,6 +686,9 @@ function processOverlayUpdates(parsed: ReturnType<typeof parseJournalLines>): vo
       system: ev.SystemName,
       bodyCount: ev.Count,
     });
+    // Safety net: re-parse journals so SystemView picks up any scan events
+    // the incremental poller may have missed between the jump and the honk.
+    scheduleExplorationBackfill();
   }
 
   // ColonisationContribution — broadcast progress updates
@@ -653,12 +718,406 @@ function processOverlayUpdates(parsed: ReturnType<typeof parseJournalLines>): vo
   }
 
   // SendText — chat commands (!colony needs, !colony score, etc.)
-  if (parsed.sendTextEvents.length > 0) {
-    console.log('[JournalWatcher] SendText events:', parsed.sendTextEvents.length);
-  }
   for (const ev of parsed.sendTextEvents) {
     handleChatCommand(ev);
   }
+
+  // FSDTarget — galaxy-map target alerts (visited? spansh?)
+  if (parsed.fsdTargetEvents.length > 0) {
+    // Only process the most recent; stale targets don't matter
+    const latest = parsed.fsdTargetEvents[parsed.fsdTargetEvents.length - 1];
+    void handleTargetSelected(latest);
+  }
+
+  // NavRoute — fires when player plots a multi-jump route
+  if (parsed.navRouteEvents.length > 0) {
+    void handleNavRoutePlotted();
+  }
+
+  // NavRouteClear — route was cleared
+  if (parsed.navRouteClearEvents.length > 0) {
+    broadcastCompanionEvent({ type: 'nav_route_cleared' });
+  }
+
+  // SupercruiseExit — track current body for "you are here" marker on system view.
+  // If we dropped at a station, resolve to the body it orbits (System View renders
+  // bodies, not stations, so the marker needs to attach to the orbit body).
+  for (const ev of parsed.supercruiseExitEvents) {
+    if (!ev.SystemAddress) continue;
+    if (ev.StarSystem) {
+      syncCommanderPosition('SupercruiseExit', ev.StarSystem, ev.SystemAddress);
+    }
+    let bodyName = ev.Body;
+    let bodyId = ev.BodyID;
+    if (ev.BodyType === 'Station') {
+      // Find the station by name in this system, read its orbit body
+      const stations = useAppStore.getState().knownStations;
+      const match = Object.values(stations).find(
+        (s) => s.stationName === ev.Body && s.systemAddress === ev.SystemAddress,
+      );
+      if (match?.body) {
+        bodyName = match.body; // e.g. "HIP 47126 ABCD 1 f"
+        bodyId = -1; // unknown — we'll match by name on the canvas
+      }
+    }
+    useAppStore.getState().setCurrentBody({
+      systemAddress: ev.SystemAddress,
+      bodyId,
+      bodyName,
+      bodyType: ev.BodyType,
+      at: ev.timestamp,
+    });
+    broadcastCompanionEvent({
+      type: 'supercruise_exit',
+      system: ev.StarSystem,
+      systemAddress: ev.SystemAddress,
+      body: ev.Body,
+      bodyResolved: bodyName,
+      bodyId,
+      bodyType: ev.BodyType,
+    });
+  }
+
+  // SupercruiseEntry — back in supercruise, clear "you are here"
+  if (parsed.supercruiseEntryEvents.length > 0) {
+    useAppStore.getState().setCurrentBody(null);
+  }
+
+  // Undocked / FSDJump — left the body / system, clear "you are here"
+  if (parsed.undockedEvents.length > 0 || parsed.fsdJumpEvents.length > 0) {
+    if (useAppStore.getState().currentBody) {
+      useAppStore.getState().setCurrentBody(null);
+    }
+  }
+
+  // ReceiveText — detect criminal threats / NPC interdiction demands
+  for (const ev of parsed.receiveTextEvents) {
+    handleReceiveText(ev);
+  }
+}
+
+// ─── DockingGranted: welcome overlay (before touchdown) ──────────
+// Suppress duplicate renders per marketId within this window
+const DOCK_GRANT_SUPPRESSION_MS = 60_000;
+const lastDockGrantAt = new Map<number, number>();
+
+function handleDockingGranted(ev: { MarketID: number; StationName: string; LandingPad: number; timestamp: string }): void {
+  const now = Date.now();
+  const last = lastDockGrantAt.get(ev.MarketID);
+  if (last && now - last < DOCK_GRANT_SUPPRESSION_MS) return;
+  lastDockGrantAt.set(ev.MarketID, now);
+
+  const store = useAppStore.getState();
+  const station = store.knownStations[ev.MarketID];
+  if (!station) return; // No history yet — let Docked handle first-time welcome
+
+  // Display the visit-number we're about to complete (pre-increment + 1).
+  const aboutToBe = (station.dockedCount ?? 0) + 1;
+  // Compute rank for what it'll become: how many stations have >= aboutToBe
+  const counts = Object.values(store.knownStations)
+    .map((s) => s.dockedCount ?? 0)
+    .filter((c) => c > 0);
+  const higherOrEqual = counts.filter((c) => c >= aboutToBe).length;
+  // This station counted at its CURRENT count (pre-increment), so bump by 1
+  const rankRaw = higherOrEqual + 1;
+  const rank = rankRaw <= 20 ? rankRaw : null;
+
+  const summary = {
+    marketId: ev.MarketID,
+    stationName: ev.StationName,
+    systemName: station.systemName,
+    isFirstVisit: !station.firstDocked,
+    dockedCount: aboutToBe,
+    milestone: null,
+    anniversary: null,
+    factionChanged: false,
+    previousFaction: null,
+    currentFaction: station.faction ?? null,
+    stateChanged: false,
+    previousState: null,
+    currentState: station.factionState ?? null,
+    influenceDelta: null,
+    currentInfluence: null,
+    rank,
+  };
+  handleStationDockSummary(summary);
+  broadcastCompanionEvent({
+    type: 'station_dock_summary',
+    marketId: summary.marketId,
+    station: summary.stationName,
+    system: summary.systemName,
+    dockedCount: summary.dockedCount,
+    isFirstVisit: summary.isFirstVisit,
+    milestone: null,
+    anniversary: null,
+    factionChanged: false,
+    previousFaction: null,
+    currentFaction: summary.currentFaction,
+    stateChanged: false,
+    previousState: null,
+    currentState: summary.currentState,
+    landingPad: ev.LandingPad,
+    trigger: 'docking_granted',
+    rank,
+  });
+}
+
+// ─── ReceiveText: NPC threat detection ──────────
+function handleReceiveText(ev: { From: string; From_Localised?: string; Message: string; Message_Localised?: string; Channel: string; timestamp: string }): void {
+  if (ev.Channel !== 'npc') return;
+  const msg = ev.Message || '';
+  // Threat indicators — message identifiers for pirate/interdictor NPC lines
+  const isPirate = /^\$Pirate_/i.test(msg);
+  const isInterdictor = /^\$InterdictorNPC_/i.test(msg) || /^\$NPC_.*Interdict/i.test(msg);
+  const isDemand = /^\$.*_OnStartScanCargo|^\$.*_Stop_|^\$.*_Attack_/i.test(msg);
+  if (!isPirate && !isInterdictor && !isDemand) return;
+
+  const fromName = ev.From_Localised || ev.From;
+  const messageText = ev.Message_Localised || ev.Message;
+  emitNpcThreatOverlay(fromName, messageText);
+  broadcastCompanionEvent({
+    type: 'npc_threat',
+    from: fromName,
+    message: messageText,
+    channel: ev.Channel,
+    threatClass: isPirate ? 'pirate' : isInterdictor ? 'interdictor' : 'demand',
+  });
+}
+
+/**
+ * SINGLE ENTRY POINT for updating commanderPosition. Every event that reveals
+ * location (FSDJump, Location, CarrierJump, Docked, SupercruiseExit, manual
+ * Journal Read) goes through here. Stamps source + updatedAt. Broadcasts an
+ * SSE `commander_position` event so every connected client refreshes.
+ *
+ * Coordinates are optional — if not provided (Docked/SupercruiseExit have no
+ * StarPos), we look them up in knownSystems so Colony Map distances stay correct.
+ */
+function syncCommanderPosition(
+  source: import('@/store').PositionSource,
+  systemName: string,
+  systemAddress: number,
+  coords?: { x: number; y: number; z: number } | null,
+): void {
+  if (!systemName || !systemAddress) return;
+  const store = useAppStore.getState();
+  const current = store.commanderPosition;
+  const sameSystem = current && current.systemAddress === systemAddress && current.systemName === systemName;
+  // Resolve coordinates
+  let nextCoords = coords ?? current?.coordinates;
+  if (!nextCoords) {
+    const ks = store.knownSystems[systemName.toLowerCase()];
+    if (ks?.coordinates) nextCoords = ks.coordinates;
+  }
+  if (!nextCoords) {
+    const found = Object.values(store.knownSystems).find((s) => s.systemAddress === systemAddress);
+    if (found?.coordinates) nextCoords = found.coordinates;
+  }
+  const updatedAt = new Date().toISOString();
+  store.setCommanderPosition({
+    systemName,
+    systemAddress,
+    coordinates: nextCoords ?? { x: 0, y: 0, z: 0 },
+    source,
+    updatedAt,
+  });
+  const line = `[Position] ${source}: ${systemName}${sameSystem ? ' (unchanged)' : ''}`;
+  console.log(line);
+  // Mirror to server terminal
+  try {
+    const token = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
+    const url = token ? `/api/log?token=${token}` : '/api/log';
+    fetch(url, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tag: 'Position', message: `${source}: ${systemName}${sameSystem ? ' (unchanged)' : ''}` }),
+    }).catch(() => {});
+  } catch { /* ignore */ }
+  // Broadcast to Companion (and all other listeners) so UIs update everywhere.
+  broadcastCompanionEvent({
+    type: 'commander_position',
+    systemName,
+    systemAddress,
+    coordinates: nextCoords ?? { x: 0, y: 0, z: 0 },
+    source,
+    updatedAt,
+  });
+}
+
+// De-dupe: don't re-alert the same target we just alerted on
+let lastTargetAddress: number | null = null;
+
+// Debounced backfill: re-read full journal exploration data after jumps.
+// The incremental poller sometimes misses scan events when the FSA file.size
+// reports stale values. This acts as a safety net — 5s after the last FSDJump
+// (or CarrierJump), do a full re-parse and merge any new body data into the cache.
+let pendingBackfillTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleExplorationBackfill(): void {
+  if (pendingBackfillTimer) clearTimeout(pendingBackfillTimer);
+  pendingBackfillTimer = setTimeout(async () => {
+    pendingBackfillTimer = null;
+    try {
+      const dirHandle = await getJournalFolderHandle();
+      if (!dirHandle) return;
+      const data = await extractExplorationData(dirHandle);
+      const store = useAppStore.getState();
+      const cache = { ...store.journalExplorationCache };
+      let changed = false;
+      // Also build KnownSystem entries so the SystemView name→address lookup works
+      // even if the live incremental watcher missed the FSDJump due to NotReadableError.
+      const knownSystemUpserts: {
+        systemName: string;
+        systemAddress: number;
+        coordinates?: { x: number; y: number; z: number };
+        bodyCount?: number;
+        population: number;
+        economy: string;
+        economyLocalised: string;
+        lastSeen: string;
+      }[] = [];
+      for (const [addr, sys] of data) {
+        const existing = cache[addr];
+        const newCount = sys.scannedBodies?.length || 0;
+        const existingCount = existing?.scannedBodies?.length || 0;
+        // Only overwrite if new data has more bodies OR marks fssAllBodiesFound
+        if (!existing || newCount > existingCount || (sys.fssAllBodiesFound && !existing.fssAllBodiesFound)) {
+          cache[addr] = sys;
+          changed = true;
+        }
+        // Contribute a minimal KnownSystem entry (upsert merges, preserves richer fields)
+        if (sys.systemName && !sys.systemName.startsWith('Unknown')) {
+          knownSystemUpserts.push({
+            systemName: sys.systemName,
+            systemAddress: addr,
+            coordinates: sys.coordinates || undefined,
+            bodyCount: sys.bodyCount,
+            population: 0,
+            economy: 'Unknown',
+            economyLocalised: 'Unknown',
+            lastSeen: sys.lastSeen,
+          });
+        }
+      }
+      if (changed) {
+        store.setJournalExplorationCache(cache);
+        console.log('[Watcher] Exploration backfill merged new system data into cache');
+      }
+      if (knownSystemUpserts.length > 0) {
+        store.upsertKnownSystems(knownSystemUpserts);
+      }
+    } catch (e) {
+      console.warn('[Watcher] Exploration backfill failed:', e);
+    }
+  }, 5000);
+}
+
+/**
+ * FSDTarget handler — checks whether the targeted system was previously
+ * visited (knownSystems) and whether Spansh has it (cached or live lookup).
+ */
+async function handleTargetSelected(ev: {
+  Name: string;
+  SystemAddress: number;
+  StarClass?: string;
+  RemainingJumpsInRoute?: number;
+}): Promise<void> {
+  if (!ev.SystemAddress || !ev.Name) return;
+  if (ev.SystemAddress === lastTargetAddress) return; // same target, skip
+  lastTargetAddress = ev.SystemAddress;
+
+  const store = useAppStore.getState();
+  // knownSystems is keyed by systemName.toLowerCase(), not by systemAddress.
+  // Fall back to scanning for matching systemAddress in case the target name
+  // differs slightly from the stored one.
+  const nameKey = ev.Name.toLowerCase();
+  const byName = store.knownSystems[nameKey];
+  const byAddr = byName
+    ? null
+    : Object.values(store.knownSystems).find((s) => s.systemAddress === ev.SystemAddress);
+  const visited = !!(byName || byAddr);
+  const scouted = store.scoutedSystems?.[ev.SystemAddress];
+
+  // Spansh state: 'cached' (in scoutedSystems with bodies), 'cached-empty' (0 bodies),
+  //               'unknown' (not cached yet — we'll try a live lookup),
+  //               'yes' / 'no' (after live lookup)
+  let spansh: 'yes' | 'no' | 'empty' | 'unknown' = 'unknown';
+  let bodyCount: number | undefined;
+
+  if (scouted) {
+    if (typeof scouted.spanshBodyCount === 'number') {
+      if (scouted.spanshBodyCount > 0) {
+        spansh = 'yes';
+        bodyCount = scouted.spanshBodyCount;
+      } else {
+        spansh = 'empty';
+      }
+    }
+  }
+
+  // If not cached, do a live Spansh name lookup
+  if (spansh === 'unknown') {
+    try {
+      const result = await resolveSystemName(ev.Name);
+      spansh = result ? 'yes' : 'no';
+    } catch (e) {
+      console.warn('[Watcher] Spansh lookup failed for', ev.Name, e);
+      spansh = 'unknown';
+    }
+  }
+
+  broadcastCompanionEvent({
+    type: 'target_selected',
+    system: ev.Name,
+    systemAddress: ev.SystemAddress,
+    starClass: ev.StarClass || '',
+    remainingJumps: ev.RemainingJumpsInRoute || 0,
+    visited,
+    spansh,
+    bodyCount,
+    wasColonised: scouted?.isColonised || false,
+    // Surface the stored score (if any) so Companion target alert can show it
+    score: scouted?.score?.total ?? null,
+    bodyString: scouted?.bodyString ?? null,
+    scoreSource: scouted ? (scouted.fromJournal ? 'Journal' : 'Spansh') : null,
+  });
+}
+
+/**
+ * NavRoute handler — reads NavRoute.json and broadcasts a summary
+ * of the plotted route (visited + Spansh-cached counts).
+ */
+async function handleNavRoutePlotted(): Promise<void> {
+  const dirHandle = await getJournalFolderHandle();
+  if (!dirHandle) return;
+  const nav = await readNavRouteJson(dirHandle);
+  if (!nav || nav.route.length === 0) return;
+
+  const store = useAppStore.getState();
+  // Build a systemAddress → true map once for O(1) visited lookups
+  const addrVisited = new Set<number>();
+  for (const ks of Object.values(store.knownSystems)) {
+    if (ks.systemAddress) addrVisited.add(ks.systemAddress);
+  }
+  let visitedCount = 0;
+  let spanshCached = 0;
+  for (const stop of nav.route) {
+    if (addrVisited.has(stop.SystemAddress) || store.knownSystems[stop.StarSystem.toLowerCase()]) visitedCount++;
+    const sc = store.scoutedSystems?.[stop.SystemAddress];
+    if (sc && typeof sc.spanshBodyCount === 'number' && sc.spanshBodyCount > 0) spanshCached++;
+  }
+
+  broadcastCompanionEvent({
+    type: 'nav_route_plotted',
+    hops: nav.route.length,
+    destination: nav.route[nav.route.length - 1]?.StarSystem || '',
+    destinationAddress: nav.route[nav.route.length - 1]?.SystemAddress || null,
+    visitedCount,
+    spanshCached,
+    systems: nav.route.map((s) => ({
+      name: s.StarSystem,
+      systemAddress: s.SystemAddress,
+      starClass: s.StarClass,
+    })),
+  });
 }
 
 /** Broadcast an event to all Companion page clients via SSE */
@@ -694,6 +1153,21 @@ async function pollCompanionFiles(dirHandle: FileSystemDirectoryHandle): Promise
       if (market) {
         const store = useAppStore.getState();
         store.setLatestMarket(market);
+
+        // Auto-persist a PersistedMarketSnapshot so the Sources page + Browse
+        // Market Data always have fresh stock/price data. Skip FCs and
+        // ephemeral stations (construction sites, colonisation ships).
+        if (!isFleetCarrierMarketId(market.marketId)) {
+          try {
+            const snap = await readMarketSnapshot(dirHandle);
+            if (snap && !isEphemeralStation(snap.stationName, snap.stationType, snap.marketId)) {
+              store.upsertMarketSnapshot(snap);
+              console.log(`[JournalWatcher] Auto-persisted market snapshot for ${snap.stationName} (${snap.commodities.length} items)`);
+            }
+          } catch (e) {
+            console.warn('[JournalWatcher] Market snapshot persist failed:', e);
+          }
+        }
 
         // Auto-update carrierCargo when Market.json is from the user's FC
         if (isFleetCarrierMarketId(market.marketId)) {

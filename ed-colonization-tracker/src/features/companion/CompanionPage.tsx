@@ -49,6 +49,12 @@ function eventIcon(type: string): string {
     case 'first_footfall': return '\u{1F9B6}'; // foot
     case 'score_update': return '\u{1F3AF}'; // target
     case 'distance_info': return '\u{1F4CD}'; // pin
+    case 'target_selected': return '\u{1F3AF}'; // target (bullseye)
+    case 'nav_route_plotted': return '\u{1F5FA}'; // world map
+    case 'nav_route_cleared': return '\u274C'; // red x
+    case 'station_dock_summary': return '\u{1F3DB}'; // classical building
+    case 'npc_threat': return '\u{1F6A8}'; // rotating red siren
+    case 'supercruise_exit': return '\u{1F6F0}\uFE0F'; // satellite
     default: return '\u25C9';
   }
 }
@@ -65,6 +71,12 @@ function eventColor(type: string): string {
     case 'first_footfall': return 'text-purple-400';
     case 'score_update': return 'text-sky-400';
     case 'distance_info': return 'text-slate-400';
+    case 'target_selected': return 'text-amber-400';
+    case 'nav_route_plotted': return 'text-indigo-400';
+    case 'nav_route_cleared': return 'text-slate-400';
+    case 'station_dock_summary': return 'text-blue-300';
+    case 'npc_threat': return 'text-red-400';
+    case 'supercruise_exit': return 'text-cyan-400';
     default: return 'text-muted-foreground';
   }
 }
@@ -91,6 +103,42 @@ function eventSummary(ev: CompanionEvent): string {
       return `Action: ${ev.action}`;
     case 'connected':
       return 'Connected to event stream';
+    case 'target_selected': {
+      const visited = ev.visited ? '\u2713 Visited' : 'New';
+      const spanshStr = ev.spansh === 'yes'
+        ? `\u2713 Spansh${ev.bodyCount ? ` (${ev.bodyCount} bodies)` : ''}`
+        : ev.spansh === 'empty'
+        ? 'Spansh: empty'
+        : ev.spansh === 'no'
+        ? '\u2717 Not in Spansh'
+        : 'Spansh: unknown';
+      const col = ev.wasColonised ? ' \u2014 colonised' : '';
+      const scoreStr = typeof ev.score === 'number' ? ` | Score: ${ev.score}` : '';
+      return `Targeting ${ev.system} \u2014 ${visited} | ${spanshStr}${col}${scoreStr}`;
+    }
+    case 'nav_route_plotted':
+      return `Route plotted: ${ev.hops} hops \u2192 ${ev.destination} (visited ${ev.visitedCount}/${ev.hops}, Spansh ${ev.spanshCached}/${ev.hops})`;
+    case 'npc_threat':
+      return `\u{1F6A8} ${ev.from}: "${ev.message}"`;
+    case 'supercruise_exit':
+      return `Dropped at ${ev.body}`;
+    case 'station_dock_summary': {
+      const ord = (n: number) => {
+        if (n >= 11 && n <= 13) return `${n}th`;
+        const s = n % 10;
+        return s === 1 ? `${n}st` : s === 2 ? `${n}nd` : s === 3 ? `${n}rd` : `${n}th`;
+      };
+      const count = ev.dockedCount as number;
+      const label = ev.isFirstVisit ? 'first visit' : `${ord(count)} visit`;
+      const extras: string[] = [];
+      if (ev.milestone && ev.milestone !== 1) extras.push(`\u{1F3C6} ${ev.milestone}-visit milestone`);
+      if (ev.factionChanged) extras.push(`\u26A0 New faction: ${ev.currentFaction}`);
+      if (ev.stateChanged) extras.push(`\u2192 ${ev.currentState} (was ${ev.previousState})`);
+      const body = `${ev.station} \u2014 ${label}${extras.length ? ' \u2014 ' + extras.join(' | ') : ''}`;
+      return body;
+    }
+    case 'nav_route_cleared':
+      return 'Route cleared';
     case 'heartbeat':
       return '';
     default:
@@ -100,6 +148,7 @@ function eventSummary(ev: CompanionEvent): string {
 
 export function CompanionPage() {
   const overlayEnabled = useAppStore((s) => s.settings.overlayEnabled);
+  const commanderPosition = useAppStore((s) => s.commanderPosition);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const sessions = useAppStore((s) => s.sessions);
   const projects = useAppStore((s) => s.projects);
@@ -116,6 +165,10 @@ export function CompanionPage() {
   const [connected, setConnected] = useState(false);
   const [actionResult, setActionResult] = useState<CompanionContent | null>(null);
   const [actionLabel, setActionLabel] = useState('');
+  const [lastTarget, setLastTarget] = useState<CompanionEvent | null>(null);
+  const [lastDockSummary, setLastDockSummary] = useState<CompanionEvent | null>(null);
+  const [threatAlert, setThreatAlert] = useState<CompanionEvent | null>(null);
+  const threatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -138,19 +191,51 @@ export function CompanionPage() {
         // Track current system so "Show Score" works on iPad/remote devices
         if (ev.type === 'fsd_jump' && ev.systemAddress && ev.system) {
           setLastSystem(ev.systemAddress as number, ev.system as string);
-          // Update commander position for map
-          if (ev.starPos) {
-            const pos = ev.starPos as [number, number, number];
-            useAppStore.getState().setCommanderPosition({
-              systemName: ev.system as string,
-              systemAddress: ev.systemAddress as number,
-              coordinates: { x: pos[0], y: pos[1], z: pos[2] },
-            });
-          }
+          // commanderPosition is handled via the dedicated 'commander_position'
+          // event (below). Nothing else to do here.
+        }
+        // commander_position — authoritative location update from watcher
+        if (ev.type === 'commander_position' && ev.systemName) {
+          useAppStore.getState().setCommanderPosition({
+            systemName: ev.systemName as string,
+            systemAddress: ev.systemAddress as number,
+            coordinates: ev.coordinates as { x: number; y: number; z: number },
+            source: (ev.source as import('@/store').PositionSource) || 'Server',
+            updatedAt: ev.updatedAt as string,
+          });
+          // Log to server terminal so we can see the pipeline
+          try {
+            const tk = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
+            fetch(tk ? `/api/log?token=${tk}` : '/api/log', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ tag: 'Companion', message: `Received commander_position ${ev.systemName} via ${ev.source}` }),
+            }).catch(() => {});
+          } catch { /* ignore */ }
         }
         // Track docked station for "Buy Here" button
         if (ev.type === 'docked' && ev.marketId && ev.station && ev.system) {
           setLastDocked(ev.marketId as number, ev.station as string, ev.system as string);
+        }
+        // Persist the most recent target alert in its own banner
+        if (ev.type === 'target_selected') {
+          setLastTarget(ev);
+        }
+        if (ev.type === 'nav_route_cleared') {
+          setLastTarget(null);
+        }
+        // Persist the most recent dock welcome as a banner until next jump or new dock
+        if (ev.type === 'station_dock_summary') {
+          setLastDockSummary(ev);
+        }
+        // NPC threat — flash a red banner for 15 seconds then auto-dismiss
+        if (ev.type === 'npc_threat') {
+          setThreatAlert(ev);
+          if (threatTimerRef.current) clearTimeout(threatTimerRef.current);
+          threatTimerRef.current = setTimeout(() => setThreatAlert(null), 15000);
+        }
+        if (ev.type === 'fsd_jump') {
+          // Left the system — dock welcome is now stale, clear banner
+          setLastDockSummary(null);
         }
         setEvents((prev) => [ev, ...prev].slice(0, 50));
       } catch { /* ignore parse errors */ }
@@ -214,6 +299,31 @@ export function CompanionPage() {
         </div>
       </div>
 
+      {/* Commander Position — authoritative location + how we determined it */}
+      <div className="bg-card border border-border rounded-lg px-4 py-2 mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <span className="text-lg">{'\u{1F4CD}'}</span>
+          <div className="min-w-0">
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Current System</div>
+            <div className="text-base font-bold text-foreground truncate">
+              {commanderPosition?.systemName || 'Unknown — no position events seen yet'}
+            </div>
+          </div>
+        </div>
+        <div className="text-right text-xs text-muted-foreground shrink-0">
+          {commanderPosition?.source ? (
+            <div>
+              via <span className="text-foreground font-medium">{commanderPosition.source}</span>
+            </div>
+          ) : null}
+          {commanderPosition?.updatedAt ? (
+            <div className="opacity-70">
+              {new Date(commanderPosition.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
       {/* FC Free Space — computed live from settings + journal cargo */}
       {myFleetCarrier && (
         <div className="bg-card border border-border rounded-lg px-4 py-3 mb-4 flex items-center justify-between">
@@ -257,6 +367,209 @@ export function CompanionPage() {
           </div>
         </div>
       )}
+
+      {/* NPC Threat Alert — flashing red banner, auto-dismisses after 15s */}
+      {threatAlert && (
+        <div
+          className="bg-red-500/20 border-2 border-red-500 rounded-lg px-4 py-3 mb-4 flex items-start justify-between gap-3 shadow-lg"
+          style={{ animation: 'threat-pulse 1s ease-in-out infinite' }}
+        >
+          <div className="flex items-start gap-3 flex-1 min-w-0">
+            <span className="text-2xl">{'\u{1F6A8}'}</span>
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-bold text-red-300 uppercase tracking-widest">
+                {String(threatAlert.threatClass || 'threat').toUpperCase()} DETECTED
+              </div>
+              <div className="text-base font-bold text-red-100 truncate">
+                {String(threatAlert.from)}
+              </div>
+              <div className="text-sm text-red-200 mt-0.5">
+                {String(threatAlert.message)}
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => { setThreatAlert(null); if (threatTimerRef.current) clearTimeout(threatTimerRef.current); }}
+            className="text-xs text-red-300 hover:text-red-100 shrink-0"
+            aria-label="Dismiss"
+          >
+            {'\u2715'}
+          </button>
+          <style>{`@keyframes threat-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.5); } 50% { box-shadow: 0 0 16px 4px rgba(239,68,68,0.8); } }`}</style>
+        </div>
+      )}
+
+      {/* Target Alert — persistent banner for the most recent FSDTarget */}
+      {lastTarget && (
+        <div
+          className={`border rounded-lg px-4 py-3 mb-4 ${
+            lastTarget.visited && lastTarget.spansh === 'yes'
+              ? 'bg-green-500/10 border-green-500/40'
+              : (lastTarget.visited || lastTarget.spansh === 'yes')
+              ? 'bg-amber-500/10 border-amber-500/40'
+              : 'bg-red-500/10 border-red-500/40'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3 flex-1 min-w-0">
+              <span className="text-2xl">{'\u{1F3AF}'}</span>
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  Target Alert
+                </div>
+                <div className="text-lg font-bold text-foreground truncate">
+                  {String(lastTarget.system)}
+                  {lastTarget.starClass ? (
+                    <span className="ml-2 text-sm font-normal text-muted-foreground">
+                      [{String(lastTarget.starClass)}]
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap items-center gap-3 mt-1 text-sm">
+                  <span className={lastTarget.visited ? 'text-green-400' : 'text-slate-400'}>
+                    {lastTarget.visited ? '\u2713 Visited' : '\u2717 Never been there'}
+                  </span>
+                  <span
+                    className={
+                      lastTarget.spansh === 'yes'
+                        ? 'text-green-400'
+                        : lastTarget.spansh === 'empty'
+                        ? 'text-yellow-400'
+                        : lastTarget.spansh === 'no'
+                        ? 'text-red-400'
+                        : 'text-slate-400'
+                    }
+                  >
+                    {lastTarget.spansh === 'yes'
+                      ? `\u2713 In Spansh${lastTarget.bodyCount ? ` (${lastTarget.bodyCount} bodies)` : ''}`
+                      : lastTarget.spansh === 'empty'
+                      ? 'Spansh has the system (no body data)'
+                      : lastTarget.spansh === 'no'
+                      ? '\u2717 Not in Spansh'
+                      : 'Spansh lookup unavailable'}
+                  </span>
+                  {lastTarget.wasColonised ? (
+                    <span className="text-amber-400">{'\u2605 Colonised'}</span>
+                  ) : null}
+                  {typeof lastTarget.score === 'number' ? (
+                    <span
+                      className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                        (lastTarget.score as number) >= 100
+                          ? 'bg-amber-500/30 text-amber-200'
+                          : (lastTarget.score as number) >= 60
+                          ? 'bg-green-500/30 text-green-200'
+                          : 'bg-sky-500/30 text-sky-200'
+                      }`}
+                    >
+                      Score: {String(lastTarget.score)}{lastTarget.scoreSource ? ` [${String(lastTarget.scoreSource)}]` : ''}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-slate-500">unscored</span>
+                  )}
+                  {typeof lastTarget.remainingJumps === 'number' && (lastTarget.remainingJumps as number) > 0 ? (
+                    <span className="text-slate-400 text-xs">
+                      {String(lastTarget.remainingJumps)} jumps remaining in route
+                    </span>
+                  ) : null}
+                </div>
+                {lastTarget.bodyString ? (
+                  <div className="text-xs text-slate-300 mt-1 font-mono truncate">
+                    {String(lastTarget.bodyString)}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+            <button
+              onClick={() => setLastTarget(null)}
+              className="text-xs text-muted-foreground hover:text-foreground shrink-0"
+              aria-label="Dismiss"
+            >
+              {'\u2715'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Dock Welcome banner — persistent until next jump */}
+      {lastDockSummary && (() => {
+        const ord = (n: number) => {
+          if (n >= 11 && n <= 13) return `${n}th`;
+          const s = n % 10;
+          return s === 1 ? `${n}st` : s === 2 ? `${n}nd` : s === 3 ? `${n}rd` : `${n}th`;
+        };
+        const milestone = lastDockSummary.milestone as number | null;
+        const isMilestone = milestone && milestone >= 10;
+        const isFirst = !!lastDockSummary.isFirstVisit;
+        const count = lastDockSummary.dockedCount as number;
+        const borderCls = isFirst || isMilestone
+          ? 'bg-amber-500/10 border-amber-500/40'
+          : lastDockSummary.factionChanged
+          ? 'bg-red-500/10 border-red-500/40'
+          : 'bg-blue-500/10 border-blue-500/40';
+        return (
+          <div className={`border rounded-lg px-4 py-3 mb-4 ${borderCls}`}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3 flex-1 min-w-0">
+                <span className="text-2xl">{'\u{1F3DB}'}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    {isFirst ? 'First Visit' : isMilestone ? `${milestone}-Visit Milestone` : 'Welcome Back'}
+                  </div>
+                  <div className="text-lg font-bold text-foreground truncate">
+                    {String(lastDockSummary.station)}
+                    <span className="ml-2 text-sm font-normal text-muted-foreground">
+                      {isFirst ? '\u2014 first visit' : `\u2014 ${ord(count)} visit`}
+                    </span>
+                    {lastDockSummary.rank && !isFirst ? (
+                      <span className={`ml-2 text-xs px-2 py-0.5 rounded-full font-semibold ${
+                        (lastDockSummary.rank as number) <= 3
+                          ? 'bg-amber-500/30 text-amber-200'
+                          : 'bg-slate-500/30 text-slate-300'
+                      }`}>
+                        {'#'}{String(lastDockSummary.rank)}{' most-visited'}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1 text-sm">
+                    {lastDockSummary.currentFaction ? (
+                      <span className="text-slate-300">
+                        {String(lastDockSummary.currentFaction)}
+                      </span>
+                    ) : null}
+                    {lastDockSummary.currentState && lastDockSummary.currentState !== 'None' ? (
+                      <span className="text-slate-400">
+                        {String(lastDockSummary.currentState)}
+                      </span>
+                    ) : null}
+                    {lastDockSummary.factionChanged && lastDockSummary.previousFaction ? (
+                      <span className="text-red-400">
+                        {'\u26A0 Was '}{String(lastDockSummary.previousFaction)}{' last visit'}
+                      </span>
+                    ) : null}
+                    {lastDockSummary.stateChanged && lastDockSummary.previousState ? (
+                      <span className="text-amber-300">
+                        {'State shifted from '}{String(lastDockSummary.previousState)}
+                      </span>
+                    ) : null}
+                    {lastDockSummary.anniversary === 'year' ? (
+                      <span className="text-amber-300">{'\u{1F382} One year anniversary'}</span>
+                    ) : lastDockSummary.anniversary === 'month' ? (
+                      <span className="text-purple-300">{'\u{1F4C5} Months of loyalty'}</span>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => setLastDockSummary(null)}
+                className="text-xs text-muted-foreground hover:text-foreground shrink-0"
+                aria-label="Dismiss"
+              >
+                {'\u2715'}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Quick Action Buttons */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">

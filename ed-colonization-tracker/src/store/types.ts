@@ -48,6 +48,15 @@ export interface KnownStation {
   faction?: string;
   visitCount?: number; // how many times commander has docked at this station
   lastSeen: string; // ISO timestamp
+
+  // --- Visit dossier (populated only on Docked events) ---
+  firstDocked?: string;    // ISO timestamp of first Docked event here
+  lastDocked?: string;     // ISO timestamp of most recent Docked event (distinct from lastSeen, which may be a flyby)
+  dockedCount?: number;    // count of Docked events specifically (visitCount is any sighting)
+  factionState?: string;   // most-recent FactionState seen for the controlling faction at this station
+  factionHistory?: { name: string; changedAt: string }[]; // recent controlling-faction changes (cap 5)
+  stateHistory?: { state: string; changedAt: string }[]; // recent FactionState changes (cap 10)
+  influenceHistory?: { ts: string; influence: number }[]; // influence snapshots at dock time (cap 10)
 }
 
 export interface MarketItem {

@@ -6,8 +6,8 @@
 import { useAppStore } from '@/store';
 import { useGalleryStore, galleryKey } from '@/store/galleryStore';
 import { fetchSystemDump } from '@/services/spanshApi';
-import { scoreSystem, buildBodyString } from '@/lib/scoutingScorer';
-import { isFleetCarrier, journalBodiesToSpanshFormat, mapStarType } from '@/services/journalReader';
+import { scoreSystem, buildBodyString, classifyStars, filterQualifyingBodies } from '@/lib/scoutingScorer';
+import { isFleetCarrier, journalBodiesToSpanshFormat, mapStarType, extractExplorationData, getJournalFolderHandle } from '@/services/journalReader';
 import type { JournalScannedBody } from '@/services/journalReader';
 
 // --- Types ---
@@ -29,6 +29,8 @@ const Y_MARKET = 80;
 const Y_SCAN = 120;
 const Y_IMAGE = 160;
 const Y_DISTANCE = 200;
+const Y_DOCK = 240; // "welcome back" dossier stack on dock
+const Y_THREAT = 280; // NPC pirate/interdictor threat alerts
 
 // Max items to show per overlay line (keep it readable)
 const MAX_OVERLAY_ITEMS = 6;
@@ -47,6 +49,10 @@ function formatCommodityList(items: { name: string; count: number }[]): string {
 
 // --- Pending system state for unknown system scanning ---
 let pendingSystemAddress: number | null = null;
+// Accumulated first-footfall opportunities for the current system.
+// Cleared on FSDJump. Rendered as a single consolidated overlay message.
+let pendingFootfallBodies: { bodyName: string; distance: number }[] = [];
+
 let pendingSystemName: string | null = null;
 // Accumulate scan events for the pending system so we can score from journal data
 let pendingScanBodies: JournalScannedBody[] = [];
@@ -135,6 +141,7 @@ export async function handleFSDJump(event: {
 
   // Reset pending scan state for the new system — always set so scans accumulate
   pendingScanBodies = [];
+  pendingFootfallBodies = [];
   pendingSystemAddress = event.SystemAddress;
   pendingSystemName = event.StarSystem;
   lastSystemAddress = event.SystemAddress;
@@ -318,6 +325,156 @@ export async function handleFSDJump(event: {
 
   // 3. Missing images in colonised system
   checkMissingImages(event.StarSystem);
+}
+
+/**
+ * Handle a StationDockSummary produced by the store — render the personal
+ * "welcome back" overlay with visit count, milestones, and faction/state
+ * deltas. Uses a vertical stack of messages anchored at Y_SCORE with
+ * deterministic IDs so repeated docks overwrite cleanly.
+ */
+/**
+ * Fire an in-game overlay alert when an NPC threat (pirate / interdictor)
+ * sends hostile chatter. Pairs with the Companion red banner so the pilot
+ * sees the threat without alt-tabbing.
+ */
+export function emitNpcThreatOverlay(from: string, message: string): void {
+  if (!isEnabled()) return;
+  const text = `\u{1F6A8} ${from}: "${message}"`;
+  sendOverlay({
+    id: 'edcolony_npc_threat',
+    text,
+    color: '#f87171',
+    x: X_LEFT,
+    y: Y_THREAT,
+    ttl: 10,
+  });
+}
+
+export function handleStationDockSummary(summary: import('@/store').StationDockSummary): void {
+  if (!isEnabled()) return;
+
+  const store = useAppStore.getState();
+  const station = store.knownStations[summary.marketId];
+  const firstDocked = station?.firstDocked;
+
+  // State style tables
+  const STATE_STYLES: Record<string, { emoji: string; color: string; label?: string }> = {
+    Boom: { emoji: '\u{1F4C8}', color: '#4ade80', label: 'Booming' },
+    Bust: { emoji: '\u{1F4C9}', color: '#f87171', label: 'In Bust' },
+    War: { emoji: '\u2694\uFE0F', color: '#f87171', label: 'At War' },
+    CivilWar: { emoji: '\u2694\uFE0F', color: '#f87171', label: 'Civil War' },
+    Election: { emoji: '\u{1F5F3}\uFE0F', color: '#60a5fa', label: 'Election' },
+    Expansion: { emoji: '\u{1F680}', color: '#fcd34d', label: 'Expanding' },
+    Lockdown: { emoji: '\u{1F512}', color: '#f87171', label: 'Lockdown' },
+    Famine: { emoji: '\u{1F35A}', color: '#fbbf24', label: 'Famine' },
+    Outbreak: { emoji: '\u{1F9A0}', color: '#fbbf24', label: 'Outbreak' },
+    Investment: { emoji: '\u{1F4B0}', color: '#fcd34d', label: 'Investment' },
+    Retreat: { emoji: '\u{1F3F3}\uFE0F', color: '#f87171', label: 'In Retreat' },
+  };
+
+  const lines: { text: string; color: string }[] = [];
+
+  const ord = (n: number) => {
+    if (n >= 11 && n <= 13) return `${n}th`;
+    const s = n % 10;
+    return s === 1 ? `${n}st` : s === 2 ? `${n}nd` : s === 3 ? `${n}rd` : `${n}th`;
+  };
+
+  // Relative-time label for firstDocked
+  let historyLabel = '';
+  if (firstDocked) {
+    const days = Math.floor((Date.now() - new Date(firstDocked).getTime()) / 86400000);
+    if (days >= 365) historyLabel = `${Math.floor(days / 365)}y of history`;
+    else if (days >= 60) historyLabel = `${Math.floor(days / 30)} months of history`;
+    else if (days >= 14) historyLabel = `${Math.floor(days / 7)} weeks of history`;
+    else if (days >= 1) historyLabel = `${days}d of history`;
+  }
+
+  // --- LINE 1: Welcome header (plus milestone burst if applicable) ---
+  if (summary.isFirstVisit) {
+    lines.push({
+      text: `\u2728 First time at ${summary.stationName} \u2014 welcome!`,
+      color: '#fcd34d',
+    });
+  } else if (summary.milestone && summary.milestone >= 10) {
+    // Milestone takes the header slot for emphasis
+    lines.push({
+      text: `\u{1F3C6} ${summary.milestone}-VISIT MILESTONE \u2014 ${summary.stationName}`,
+      color: '#fcd34d',
+    });
+  } else {
+    const rankBadge = summary.rank ? ` \u00B7 #${summary.rank} most-visited` : '';
+    lines.push({
+      text: `\u{1F3DB} Welcome back to ${summary.stationName} \u2014 ${ord(summary.dockedCount)} visit${rankBadge}`,
+      color: summary.rank && summary.rank <= 3 ? '#fcd34d' : '#93c5fd',
+    });
+  }
+
+  // --- LINE 2: History line (days/months/years since first visit) ---
+  if (historyLabel && !summary.isFirstVisit) {
+    lines.push({
+      text: `\u{1F4C5} ${historyLabel}`,
+      color: '#94a3b8',
+    });
+  }
+
+  // --- Anniversaries (own line, celebratory) ---
+  if (summary.anniversary === 'year') {
+    lines.push({ text: '\u{1F382} One year anniversary here!', color: '#fcd34d' });
+  } else if (summary.anniversary === 'month') {
+    lines.push({ text: '\u{1F4C5} Months of loyalty milestone', color: '#c084fc' });
+  }
+
+  // --- Faction change (higher priority than state change) ---
+  if (summary.factionChanged && summary.previousFaction && summary.currentFaction) {
+    lines.push({
+      text: `\u26A0 Power shift: ${summary.currentFaction} has taken control`,
+      color: '#f87171',
+    });
+    lines.push({
+      text: `   (${summary.previousFaction} ran this place during your last visit)`,
+      color: '#94a3b8',
+    });
+  }
+
+  // --- Faction state (current or changed) ---
+  const state = summary.currentState;
+  if (state && state !== 'None') {
+    const style = STATE_STYLES[state] ?? { emoji: '\u26A1', color: '#94a3b8', label: state };
+    if (summary.stateChanged && summary.previousState) {
+      lines.push({
+        text: `${style.emoji} Now ${style.label} \u2014 was ${summary.previousState} last visit`,
+        color: style.color,
+      });
+    } else if (!summary.factionChanged) {
+      // Passive status line
+      lines.push({
+        text: `${style.emoji} ${style.label}${summary.currentFaction ? ` \u2014 ${summary.currentFaction}` : ''}`,
+        color: style.color,
+      });
+    }
+  }
+
+  // --- Render (stacked, deterministic IDs so re-docks overwrite) ---
+  const LINE_HEIGHT = 26;
+  const MAX_LINES = 6;
+  for (let i = 0; i < MAX_LINES; i++) {
+    const id = `edcolony_dock_welcome_${i}`;
+    if (i < lines.length) {
+      sendOverlay({
+        id,
+        text: lines[i].text,
+        color: lines[i].color,
+        x: X_LEFT,
+        y: Y_DOCK + i * LINE_HEIGHT,
+        ttl: 12,
+      });
+    } else {
+      // Clear stale slots from a previous dock that had more lines
+      sendOverlay({ id, text: '', color: '#ffffff', x: X_LEFT, y: Y_DOCK + i * LINE_HEIGHT, ttl: 1 });
+    }
+  }
 }
 
 /**
@@ -506,26 +663,91 @@ export function handleScanEvent(event: {
   }
 
   // First footfall opportunity — landable body that was discovered by someone else
-  // but never footfalled, and within reasonable distance (< 60,000 Ls)
+  // but never footfalled, and within reasonable distance (< 60,000 Ls).
+  // Accumulate across the whole system, then render as ONE consolidated overlay
+  // message so we never stack individual alerts on top of each other.
   if (
     event.Landable &&
     event.WasDiscovered === true &&
     event.WasFootfalled === false &&
     event.DistanceFromArrivalLS < 60000
   ) {
-    const distLabel = event.DistanceFromArrivalLS < 10
-      ? `${event.DistanceFromArrivalLS.toFixed(1)} Ls`
-      : `${Math.round(event.DistanceFromArrivalLS).toLocaleString()} Ls`;
-    // Use unique Y offset per body to prevent overlap (cycle through 4 slots)
-    const footfallSlot = event.BodyID % 4;
-    const footfallY = Y_IMAGE + footfallSlot * 30;
+    // Dedupe by body name
+    if (!pendingFootfallBodies.some((b) => b.bodyName === event.BodyName)) {
+      pendingFootfallBodies.push({ bodyName: event.BodyName, distance: event.DistanceFromArrivalLS });
+    }
+    emitFootfallOverlay();
+  }
+}
+
+/**
+ * Render the accumulated first-footfall list as stacked overlay lines with
+ * deterministic IDs. Each re-emit overwrites existing lines (by ID) rather
+ * than stacking new ones on top. Limited to 5 visible entries plus a footer.
+ */
+const FOOTFALL_MAX_VISIBLE = 5;
+const FOOTFALL_LINE_HEIGHT = 28;
+
+function emitFootfallOverlay(): void {
+  const sysPrefix = pendingSystemName ? pendingSystemName + ' ' : '';
+  const sorted = [...pendingFootfallBodies].sort((a, b) => a.distance - b.distance);
+  const visible = sorted.slice(0, FOOTFALL_MAX_VISIBLE);
+
+  // Header
+  sendOverlay({
+    id: 'edcolony_footfall_header',
+    text: `\u{1F9B6} First footfall (${sorted.length}):`,
+    color: '#c084fc',
+    x: X_LEFT,
+    y: Y_IMAGE,
+    ttl: 25,
+  });
+
+  // Body lines — fixed IDs so re-emits overwrite in place
+  for (let i = 0; i < FOOTFALL_MAX_VISIBLE; i++) {
+    const id = `edcolony_footfall_${i}`;
+    if (i < visible.length) {
+      const { bodyName, distance } = visible[i];
+      const short = sysPrefix && bodyName.startsWith(sysPrefix) ? bodyName.slice(sysPrefix.length) : bodyName;
+      const d = distance < 10
+        ? `${distance.toFixed(1)} Ls`
+        : `${Math.round(distance).toLocaleString()} Ls`;
+      sendOverlay({
+        id,
+        text: `   ${short} (${d})`,
+        color: '#c084fc',
+        x: X_LEFT,
+        y: Y_IMAGE + (i + 1) * FOOTFALL_LINE_HEIGHT,
+        ttl: 25,
+      });
+    } else {
+      // Clear unused slots with blank text so stale lines vanish
+      sendOverlay({
+        id,
+        text: '',
+        color: '#c084fc',
+        x: X_LEFT,
+        y: Y_IMAGE + (i + 1) * FOOTFALL_LINE_HEIGHT,
+        ttl: 1,
+      });
+    }
+  }
+
+  // Overflow footer ("…and N more")
+  const overflowId = 'edcolony_footfall_more';
+  if (sorted.length > FOOTFALL_MAX_VISIBLE) {
     sendOverlay({
-      id: `edcolony_scan_footfall_${event.BodyName}`,
-      text: `\u{1F9B6} First footfall available \u2014 ${event.BodyName} (${distLabel})`,
+      id: overflowId,
+      text: `   \u2026and ${sorted.length - FOOTFALL_MAX_VISIBLE} more`,
       color: '#c084fc',
       x: X_LEFT,
-      y: footfallY,
-      ttl: 15,
+      y: Y_IMAGE + (FOOTFALL_MAX_VISIBLE + 1) * FOOTFALL_LINE_HEIGHT,
+      ttl: 25,
+    });
+  } else {
+    sendOverlay({
+      id: overflowId, text: '', color: '#c084fc',
+      x: X_LEFT, y: Y_IMAGE + (FOOTFALL_MAX_VISIBLE + 1) * FOOTFALL_LINE_HEIGHT, ttl: 1,
     });
   }
 }
@@ -559,7 +781,7 @@ export async function handleFSSAllBodiesFound(event: {
     const dump = await fetchSystemDump(event.SystemAddress);
     if (dump && dump.bodies && dump.bodies.length > 0) {
       const score = scoreSystem(dump.bodies);
-      const bodyString = buildBodyString(dump.bodies);
+      const bodyString = buildBodyString(filterQualifyingBodies(dump.bodies), classifyStars(dump.bodies));
       const store = useAppStore.getState();
       store.upsertScoutedSystem({
         id64: event.SystemAddress,
@@ -605,12 +827,42 @@ export async function handleFSSAllBodiesFound(event: {
     // Spansh failed — fall through to journal scoring
   }
 
-  // Spansh doesn't have it — score from accumulated journal scan data
+  // Spansh doesn't have it — score from accumulated journal scan data.
+  // If live watcher missed scans (NotReadableError), fall back to
+  // journalExplorationCache (populated by the backfill) and if even that is
+  // empty, synchronously re-read the journals to backfill inline.
+  if (pendingScanBodies.length === 0) {
+    const storeNow = useAppStore.getState();
+    const cached = storeNow.journalExplorationCache[event.SystemAddress];
+    if (cached?.scannedBodies?.length) {
+      pendingScanBodies = cached.scannedBodies;
+      if (!pendingSystemName) pendingSystemName = cached.systemName;
+    } else {
+      // Inline backfill — try one full re-parse before giving up
+      try {
+        const dirHandle = await getJournalFolderHandle();
+        if (dirHandle) {
+          const data = await extractExplorationData(dirHandle);
+          const sys = data.get(event.SystemAddress);
+          if (sys?.scannedBodies?.length) {
+            pendingScanBodies = sys.scannedBodies;
+            if (!pendingSystemName) pendingSystemName = sys.systemName;
+            // Also merge into the cache so SystemView benefits
+            const merged = { ...storeNow.journalExplorationCache, [event.SystemAddress]: sys };
+            storeNow.setJournalExplorationCache(merged);
+          }
+        }
+      } catch (e) {
+        console.warn('[Overlay] Inline exploration backfill failed:', e);
+      }
+    }
+  }
+
   if (pendingScanBodies.length > 0 && pendingSystemName) {
     try {
       const spanshBodies = journalBodiesToSpanshFormat(pendingScanBodies, pendingSystemName);
       const score = scoreSystem(spanshBodies);
-      const bodyString = buildBodyString(spanshBodies);
+      const bodyString = buildBodyString(filterQualifyingBodies(spanshBodies), classifyStars(spanshBodies));
       const store = useAppStore.getState();
       store.upsertScoutedSystem({
         id64: event.SystemAddress,
@@ -818,7 +1070,7 @@ async function scoreUnknownSystem(systemAddress: number, systemName: string): Pr
     }
 
     const score = scoreSystem(dump.bodies);
-    const bodyString = buildBodyString(dump.bodies);
+    const bodyString = buildBodyString(filterQualifyingBodies(dump.bodies), classifyStars(dump.bodies));
 
     const store = useAppStore.getState();
     store.upsertScoutedSystem({
@@ -1272,18 +1524,34 @@ export function computeBuyHereContent(): CompanionContent {
   const fcItems = fcCargo?.items || [];
 
   const matches: { name: string; available: number; needToBuy: number; onFC: number; buyPrice: number }[] = [];
+  const logLines: string[] = [];
   for (const c of project.commodities) {
     const remaining = c.requiredQuantity - c.providedQuantity;
     if (remaining <= 0) continue;
     // Subtract what's already on the FC
     const onFC = fcItems.find((i) => i.commodityId === c.commodityId)?.count || 0;
     const needToBuy = Math.max(0, remaining - onFC);
-    if (needToBuy <= 0) continue;
     const item = snapshot.commodities.find((m) => m.commodityId === c.commodityId);
+    const stock = item?.stock ?? 0;
+    const included = needToBuy > 0 && item && item.stock > 0 && item.buyPrice > 0;
+    logLines.push(`${c.name} (${c.commodityId}) remaining=${remaining} onFC=${onFC} needToBuy=${needToBuy} stock=${stock} ${included ? 'INCLUDED' : 'skipped'}`);
+    if (needToBuy <= 0) continue;
     if (item && item.stock > 0 && item.buyPrice > 0) {
       matches.push({ name: c.name, available: item.stock, needToBuy, onFC, buyPrice: item.buyPrice });
     }
   }
+  // Diagnostic — print to server terminal so we can see which entries included
+  // themselves and why. Useful when the Buy Here overlay shows items that
+  // should have been filtered out by FC subtraction.
+  try {
+    const token = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
+    const url = token ? `/api/log?token=${token}` : '/api/log';
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tag: 'BuyHere', message: `${docked.stationName} | project=${project.name} fcCallsign=${fcCallsign || '(none)'} fcItemsCount=${fcItems.length}\n  ${logLines.join('\n  ')}` }),
+    }).catch(() => {});
+  } catch { /* ignore */ }
 
   if (matches.length === 0) {
     return { lines: [{ text: `${docked.stationName}: nothing needed here (FC has the rest)`, color: '#94a3b8' }] };
@@ -1310,17 +1578,26 @@ export function computeStatusContent(): CompanionContent {
 
 /** Send computed content to the in-game overlay */
 export function sendContentToOverlay(content: CompanionContent): void {
-  const yPositions = [Y_SCORE, Y_MARKET, Y_SCAN, Y_IMAGE];
-  content.lines.forEach((line, i) => {
-    sendOverlay({
-      id: `edcolony_companion_${i}`,
-      text: line.text,
-      color: line.color,
-      x: X_LEFT,
-      y: yPositions[i] ?? Y_IMAGE,
-      ttl: 15,
-    });
-  });
+  // Consistent line spacing across ALL lines — previous version only had 4
+  // slots and dumped the 5th+ lines onto the same Y as line 4, causing overlap.
+  const LINE_HEIGHT = 40;
+  const MAX_LINES = 10;
+  for (let i = 0; i < MAX_LINES; i++) {
+    const id = `edcolony_companion_${i}`;
+    if (i < content.lines.length) {
+      sendOverlay({
+        id,
+        text: content.lines[i].text,
+        color: content.lines[i].color,
+        x: X_LEFT,
+        y: Y_SCORE + i * LINE_HEIGHT,
+        ttl: 15,
+      });
+    } else {
+      // Clear stale slots from a previous send that had more lines
+      sendOverlay({ id, text: '', color: '#ffffff', x: X_LEFT, y: Y_SCORE + i * LINE_HEIGHT, ttl: 1 });
+    }
+  }
 }
 
 /** Post an event to the SSE broadcast endpoint */

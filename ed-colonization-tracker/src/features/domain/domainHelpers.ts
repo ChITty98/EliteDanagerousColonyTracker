@@ -556,6 +556,35 @@ export function computeDomainRecords(
       const hottest = hottestStars.reduce((a, b) => (b.body.surfaceTemperature! > a.body.surfaceTemperature!) ? b : a);
       add('Hottest Star', '\u{1F525}', hottest, `${Math.round(hottest.body.surfaceTemperature!).toLocaleString()} K`, hottest.body.surfaceTemperature!);
     }
+
+    // Brightest star — prefer absolute magnitude (lower = brighter); fall back
+    // to R²×T⁴ (Stefan-Boltzmann luminosity proxy) for bodies without magnitude.
+    const starsWithMag = stars.filter((b) => b.body.absoluteMagnitude != null);
+    if (starsWithMag.length > 0) {
+      const brightest = starsWithMag.reduce((a, b) => (b.body.absoluteMagnitude! < a.body.absoluteMagnitude!) ? b : a);
+      // Display lower-is-brighter as-is so astronomers feel at home
+      add('Brightest Star', '\u{1F31F}', brightest,
+        `mag ${brightest.body.absoluteMagnitude!.toFixed(2)}`,
+        // Sort by "brightness" so bigger rawValue = more notable:
+        // invert magnitude so higher = brighter for consistent ranking
+        -brightest.body.absoluteMagnitude!);
+    } else {
+      // Fallback: relative luminosity from radius + temperature (proportional, not absolute)
+      const starsWithRT = stars.filter((b) => b.body.radius != null && b.body.surfaceTemperature != null);
+      if (starsWithRT.length > 0) {
+        const lum = (b: BodyWithSystem) => {
+          const r = b.body.radius!;
+          const t = b.body.surfaceTemperature!;
+          return r * r * t * t * t * t;
+        };
+        const brightest = starsWithRT.reduce((a, b) => (lum(b) > lum(a)) ? b : a);
+        // Normalize against the Sun (R=6.957e8 m, T=5778 K) for a "solar luminosities" label
+        const solarLum = 6.957e8 * 6.957e8 * 5778 * 5778 * 5778 * 5778;
+        const ratio = lum(brightest) / solarLum;
+        const label = ratio >= 100 ? `${Math.round(ratio).toLocaleString()} L\u{2609}` : `${ratio.toFixed(2)} L\u{2609}`;
+        add('Brightest Star', '\u{1F31F}', brightest, label, ratio);
+      }
+    }
   }
 
   // --- Landable with atmosphere ---
@@ -628,9 +657,11 @@ export function computeDomainRecords(
   }
 
   // --- Largest ring ---
-  const withRings = allBodies.filter((b) => b.body.rings && b.body.rings.length > 0);
+  // Stars can have belt clusters but those are not "rings" in the user-facing
+  // sense. Only consider planet rings.
+  const withRings = allBodies.filter((b) => b.body.type === 'Planet' && b.body.rings && b.body.rings.length > 0);
   if (withRings.length > 0) {
-    let bestRing: { bws: BodyWithSystem; ring: JournalScannedBody['rings'][0]; outerRad: number } | null = null;
+    let bestRing: { bws: BodyWithSystem; ring: NonNullable<JournalScannedBody['rings']>[0]; outerRad: number } | null = null;
     for (const bws of withRings) {
       for (const ring of bws.body.rings!) {
         if (ring.outerRad && (!bestRing || ring.outerRad > bestRing.outerRad)) {
@@ -641,7 +672,19 @@ export function computeDomainRecords(
     if (bestRing) {
       const radiusLS = bestRing.outerRad / 299792458;
       const display = radiusLS < 0.01 ? `${(bestRing.outerRad / 1000).toFixed(0)} km` : `${radiusLS.toFixed(2)} ls`;
-      add('Largest Ring', '\u{1F48D}', bestRing.bws, `${display} (${bestRing.ring.name.split(' ').pop()})`, bestRing.outerRad);
+      const ringClass = bestRing.ring.ringClass?.match(/Ring_(\w+)_\w+$/)?.[1]
+        ?? (/ Belt/i.test(bestRing.ring.name) ? 'Belt' : 'Ring');
+      // Parent body name = ring name with system prefix + trailing ring-type suffix stripped
+      const sys = bestRing.bws.systemName;
+      let parentBody = bestRing.ring.name;
+      if (parentBody.startsWith(sys + ' ')) parentBody = parentBody.slice(sys.length + 1);
+      parentBody = parentBody.replace(/ [A-G] Ring$/i, '').replace(/ Belt Cluster \d+$/i, '').replace(/ Belt$/i, '').trim();
+      // Swap in a fabricated BodyWithSystem using the parent's proper name
+      const labeledBws: BodyWithSystem = {
+        body: { ...bestRing.bws.body, bodyName: parentBody ? `${sys} ${parentBody}` : bestRing.bws.body.bodyName },
+        systemName: sys,
+      };
+      add('Largest Ring', '\u{1F48D}', labeledBws, `${display} (${ringClass})`, bestRing.outerRad);
     }
   }
 

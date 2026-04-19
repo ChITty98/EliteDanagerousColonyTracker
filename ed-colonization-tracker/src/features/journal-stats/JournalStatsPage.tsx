@@ -225,6 +225,19 @@ export function JournalStatsPage() {
             />
           </div>
         )}
+        {stats.topStations && stats.topStations.length > 0 && (
+          <div className="rounded-lg border border-border bg-muted/10 p-4 mt-3">
+            <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Most Visited Stations</h4>
+            <RankList
+              items={stats.topStations.map((s) => ({
+                name: s.name,
+                value: formatNumber(s.visits),
+                sub: `${s.systemName}${s.lastVisited ? ` \u00B7 last ${new Date(s.lastVisited).toLocaleDateString()}` : ''}`,
+              }))}
+              valueLabel="docks"
+            />
+          </div>
+        )}
         {/* System Search */}
         <div className="rounded-lg border border-border bg-muted/10 p-4">
           <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">System Lookup</h4>

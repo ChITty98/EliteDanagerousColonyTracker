@@ -3,6 +3,66 @@ import type { ProjectCommodity, KnownSystem, KnownStation, StationEconomy, Marke
 
 // ===== Journal Event Interfaces =====
 
+// Galaxy-map targeting events
+export interface FSDTargetEvent {
+  timestamp: string;
+  event: 'FSDTarget';
+  Name: string;
+  SystemAddress: number;
+  StarClass?: string;
+  RemainingJumpsInRoute?: number;
+}
+
+export interface NavRouteEvent {
+  timestamp: string;
+  event: 'NavRoute';
+  // Just a signal; full route is in NavRoute.json
+}
+
+export interface NavRouteClearEvent {
+  timestamp: string;
+  event: 'NavRouteClear';
+}
+
+export interface DockingGrantedEvent {
+  timestamp: string;
+  event: 'DockingGranted';
+  MarketID: number;
+  StationName: string;
+  StationType?: string;
+  LandingPad: number;
+}
+
+export interface SupercruiseExitEvent {
+  timestamp: string;
+  event: 'SupercruiseExit';
+  StarSystem: string;
+  SystemAddress: number;
+  Body: string;
+  BodyID: number;
+  BodyType: string; // "Station", "Planet", "Star", "PlanetaryRing", "StellarRing", etc.
+  Taxi?: boolean;
+  Multicrew?: boolean;
+}
+
+export interface UndockedEvent {
+  timestamp: string;
+  event: 'Undocked';
+  StationName: string;
+  StationType?: string;
+  MarketID?: number;
+}
+
+export interface ReceiveTextEvent {
+  timestamp: string;
+  event: 'ReceiveText';
+  From: string;
+  From_Localised?: string;
+  Message: string;
+  Message_Localised?: string;
+  Channel: string; // "npc" | "player" | "local" | "voicechat" | "wing" | "starsystem" | "squadron"
+}
+
 export interface JournalResourceRequired {
   Name: string;
   Name_Localised?: string;
@@ -44,7 +104,7 @@ interface DockedEvent {
   StationEconomy?: string;
   StationEconomy_Localised?: string;
   StationServices?: string[];
-  StationFaction?: { Name: string };
+  StationFaction?: { Name: string; FactionState?: string };
 }
 
 interface LocationEvent {
@@ -230,6 +290,9 @@ interface ScanEvent {
   StarType?: string;
   Subclass?: number;
   StellarMass?: number;
+  AbsoluteMagnitude?: number; // Lower = brighter. Sun ≈ 4.83, supergiants can be < -8
+  Luminosity?: string; // Yerkes luminosity class: "Ia" to "VII"
+  Age_MY?: number; // Age in millions of years
   PlanetClass?: string;
   MassEM?: number;
   Landable?: boolean;
@@ -275,6 +338,7 @@ interface LoadoutEvent {
   timestamp: string;
   event: 'Loadout';
   Ship: string;
+  ShipID?: number;
   ShipName?: string;
   ShipIdent?: string;
   CargoCapacity?: number;
@@ -666,6 +730,14 @@ export function parseJournalLines(lines: string[]) {
   const missionCompletedEvents: MissionCompletedEvent[] = [];
   // Statistics (game-generated lifetime stats)
   const statisticsEvents: StatisticsEvent[] = [];
+  // Galaxy-map targeting
+  const fsdTargetEvents: FSDTargetEvent[] = [];
+  const navRouteEvents: NavRouteEvent[] = [];
+  const navRouteClearEvents: NavRouteClearEvent[] = [];
+  const dockingGrantedEvents: DockingGrantedEvent[] = [];
+  const supercruiseExitEvents: SupercruiseExitEvent[] = [];
+  const receiveTextEvents: ReceiveTextEvent[] = [];
+  const undockedEvents: UndockedEvent[] = [];
 
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -788,6 +860,27 @@ export function parseJournalLines(lines: string[]) {
         case 'Statistics':
           statisticsEvents.push(event as StatisticsEvent);
           break;
+        case 'FSDTarget':
+          fsdTargetEvents.push(event as FSDTargetEvent);
+          break;
+        case 'NavRoute':
+          navRouteEvents.push(event as NavRouteEvent);
+          break;
+        case 'NavRouteClear':
+          navRouteClearEvents.push(event as NavRouteClearEvent);
+          break;
+        case 'DockingGranted':
+          dockingGrantedEvents.push(event as DockingGrantedEvent);
+          break;
+        case 'SupercruiseExit':
+          supercruiseExitEvents.push(event as SupercruiseExitEvent);
+          break;
+        case 'ReceiveText':
+          receiveTextEvents.push(event as ReceiveTextEvent);
+          break;
+        case 'Undocked':
+          undockedEvents.push(event as UndockedEvent);
+          break;
       }
     } catch {
       // Skip malformed lines
@@ -834,6 +927,13 @@ export function parseJournalLines(lines: string[]) {
     multiSellExplorationDataEvents,
     missionCompletedEvents,
     statisticsEvents,
+    fsdTargetEvents,
+    navRouteEvents,
+    navRouteClearEvents,
+    dockingGrantedEvents,
+    supercruiseExitEvents,
+    receiveTextEvents,
+    undockedEvents,
   };
 }
 
@@ -856,6 +956,24 @@ export function isFleetCarrier(stationType?: string, marketId?: number): boolean
   // If we know the station type and it's not a FC, trust that over market ID range
   if (stationType && stationType !== 'FleetCarrier') return false;
   if (marketId && isFleetCarrierMarketId(marketId)) return true;
+  return false;
+}
+
+/**
+ * Ephemeral dock = not a "place you visit" in the narrative sense:
+ *  - Fleet carriers (mobile)
+ *  - Trailblazer ships (NPC colonization helpers)
+ *  - Colonisation ships ($EXT_PANEL_ColonisationShip; prefix or "Colonisation Ship" in name)
+ *  - Construction sites (replaced by the finished station once built)
+ * Excluded from dock dossiers, most-visited stats, and rank computation.
+ */
+export function isEphemeralStation(stationName?: string, stationType?: string, marketId?: number): boolean {
+  if (isFleetCarrier(stationType, marketId)) return true;
+  if (!stationName) return false;
+  if (/^Trailblazer /i.test(stationName)) return true;
+  if (/Colonisation Ship/i.test(stationName)) return true;
+  if (/\$EXT_PANEL_ColonisationShip/i.test(stationName)) return true;
+  if (/Construction Site/i.test(stationName)) return true;
   return false;
 }
 
@@ -1231,6 +1349,35 @@ export async function readMarketJson(
     };
   } catch {
     // Market.json may not exist or may be empty
+    return null;
+  }
+}
+
+/**
+ * Read NavRoute.json — the full plotted route list. Fires whenever the
+ * in-game route plotter completes or updates.
+ */
+export interface NavRouteStop {
+  StarSystem: string;
+  SystemAddress: number;
+  StarPos: [number, number, number];
+  StarClass: string;
+}
+
+export async function readNavRouteJson(
+  dirHandle?: FileSystemDirectoryHandle,
+): Promise<{ timestamp: string; route: NavRouteStop[] } | null> {
+  const handle = dirHandle || journalDirHandle;
+  if (!handle) return null;
+  try {
+    await ensurePermission(handle);
+    const fileHandle = await handle.getFileHandle('NavRoute.json');
+    const file = await fileHandle.getFile();
+    const text = await file.text();
+    const data: { timestamp: string; event: string; Route?: NavRouteStop[] } = JSON.parse(text);
+    if (!data.Route || data.Route.length === 0) return null;
+    return { timestamp: data.timestamp, route: data.Route };
+  } catch {
     return null;
   }
 }
@@ -1958,6 +2105,9 @@ export interface JournalScannedBody {
   // Star fields
   starType?: string;
   stellarMass?: number;
+  absoluteMagnitude?: number; // lower = brighter (Sun ≈ 4.83)
+  luminosityClass?: string; // Yerkes: Ia, Ib, II, III, IV, V, VI, VII
+  ageMy?: number; // age in millions of years
   // Planet fields
   isLandable?: boolean;
   earthMasses?: number;
@@ -2055,6 +2205,278 @@ export function mapStarType(journalCode: string): string {
  * Extract exploration data from journal files: FSSDiscoveryScan (honk) + Scan (body details).
  * Returns a map of systemAddress → exploration data.
  */
+/**
+ * Aggregate dock history from every Journal.*.log file: per MarketID counts
+ * and faction/state transition timelines. Used to retroactively populate
+ * the station dossier (firstDocked / dockedCount / factionHistory / stateHistory)
+ * when the user runs "Sync All".
+ *
+ * Fleet carriers are excluded (they aren't "places" in the dossier sense).
+ */
+export interface DockHistoryEntry {
+  marketId: number;
+  stationName: string;
+  systemName: string;
+  systemAddress: number;
+  firstDocked: string;
+  lastDocked: string;
+  dockedCount: number;
+  currentFaction: string | null;
+  currentFactionState: string | null;
+  factionHistory: { name: string; changedAt: string }[];
+  stateHistory: { state: string; changedAt: string }[];
+}
+
+export interface TravelStat {
+  avgSeconds: number;         // trimmed mean
+  recentAvgSeconds: number;    // last 10 trips, trimmed
+  tripCount: number;           // post-trim
+  lastTripAt: string;          // ISO timestamp
+}
+
+/**
+ * Walk every journal file and build a matrix of station-pair travel times,
+ * segmented by the ship in use at trip time. Only counts "sourcing-relevant"
+ * trips — where the dock window at the from-station included a MarketBuy,
+ * CargoTransfer, or ColonisationContribution event (i.e. you actually loaded
+ * or delivered cargo, not just passed through for a mission).
+ *
+ * Key format: `${fromMarketId}:${toMarketId}:${shipId}` → TravelStat.
+ * Outlier filter: after collecting durations for a pair, trim anything > 2×
+ * the median so AFK outliers don't skew the average.
+ */
+export async function extractStationTravelTimes(
+  dirHandle?: FileSystemDirectoryHandle,
+): Promise<Record<string, TravelStat>> {
+  const handle = dirHandle || journalDirHandle;
+  if (!handle) throw new Error('No journal folder selected');
+  await ensurePermission(handle);
+  const journalFiles = await getJournalFileHandles(handle);
+
+  // Collected trip durations by pair+ship
+  type TripList = { durations: number[]; lastTripAt: string; pair: string };
+  const trips = new Map<string, TripList>();
+
+  let activeShipId: number | null = null;
+  let currentDock: null | {
+    stationName: string;
+    marketId: number;
+    dockedAt: string;
+    sourcingSeen: boolean;
+  } = null;
+
+  for (const jf of journalFiles) {
+    const file = await jf.handle.getFile();
+    const text = await file.text();
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      let ev;
+      try { ev = JSON.parse(line); } catch { continue; }
+      switch (ev.event) {
+        case 'Loadout':
+        case 'ShipyardSwap':
+          if (ev.ShipID != null) activeShipId = ev.ShipID;
+          break;
+        case 'Docked':
+          currentDock = {
+            stationName: ev.StationName,
+            marketId: ev.MarketID,
+            dockedAt: ev.timestamp,
+            sourcingSeen: false,
+          };
+          break;
+        case 'MarketBuy':
+        case 'CargoTransfer':
+        case 'ColonisationContribution':
+        case 'ColonisationFactionContribution':
+          if (currentDock) currentDock.sourcingSeen = true;
+          break;
+        case 'Undocked': {
+          if (!currentDock) break;
+          // Keep a pending "from" reference for pairing with next Docked
+          (extractStationTravelTimes as unknown as { _pendingUndock?: typeof currentDock & { shipId: number | null; undockedAt: string } })._pendingUndock = {
+            ...currentDock,
+            shipId: activeShipId,
+            undockedAt: ev.timestamp,
+          };
+          currentDock = null;
+          break;
+        }
+        case 'FSDJump':
+        case 'CarrierJump':
+          // FSDJump rules out an A→B station pair; discard the pending undock
+          (extractStationTravelTimes as unknown as { _pendingUndock?: unknown })._pendingUndock = null;
+          break;
+      }
+      // After switch: if we just saw a Docked AND have a pending undock, pair them
+      if (ev.event === 'Docked' && currentDock) {
+        const holder = (extractStationTravelTimes as unknown as { _pendingUndock?: {
+          marketId: number; shipId: number | null; undockedAt: string; sourcingSeen: boolean;
+        } })._pendingUndock;
+        if (holder && holder.shipId != null && holder.sourcingSeen && currentDock.marketId && holder.marketId) {
+          const dt = (new Date(ev.timestamp).getTime() - new Date(holder.undockedAt).getTime()) / 1000;
+          if (dt > 0 && dt < 3 * 3600) {
+            const key = `${holder.marketId}:${currentDock.marketId}:${holder.shipId}`;
+            const existing = trips.get(key) ?? { durations: [], lastTripAt: ev.timestamp, pair: key };
+            existing.durations.push(dt);
+            if (ev.timestamp > existing.lastTripAt) existing.lastTripAt = ev.timestamp;
+            trips.set(key, existing);
+          }
+        }
+        (extractStationTravelTimes as unknown as { _pendingUndock?: unknown })._pendingUndock = null;
+      }
+    }
+  }
+
+  // Aggregate with outlier trim (drop > 2× median)
+  const out: Record<string, TravelStat> = {};
+  for (const [key, list] of trips) {
+    if (list.durations.length === 0) continue;
+    const sorted = [...list.durations].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const cap = median * 2;
+    const trimmed = list.durations.filter((d) => d <= cap);
+    if (trimmed.length === 0) continue;
+    const avg = trimmed.reduce((a, b) => a + b, 0) / trimmed.length;
+    // Recent = last 10 trips in chronological order, trimmed the same way
+    const recent = trimmed.slice(-10);
+    const recentAvg = recent.reduce((a, b) => a + b, 0) / recent.length;
+    out[key] = {
+      avgSeconds: avg,
+      recentAvgSeconds: recentAvg,
+      tripCount: trimmed.length,
+      lastTripAt: list.lastTripAt,
+    };
+  }
+  // Clean up static holder
+  (extractStationTravelTimes as unknown as { _pendingUndock?: unknown })._pendingUndock = undefined;
+  return out;
+}
+
+/**
+ * Read the newest journal file and find the most recent position event
+ * (FSDJump, CarrierJump, or Location). Used by System View's "Check journal
+ * now" button to recover from a stuck state when the live watcher didn't
+ * process a jump event.
+ */
+export async function fetchLatestPositionFromJournal(
+  dirHandle?: FileSystemDirectoryHandle,
+): Promise<{ systemName: string; systemAddress: number; coordinates: { x: number; y: number; z: number } | null } | null> {
+  const handle = dirHandle || journalDirHandle;
+  if (!handle) throw new Error('No journal folder selected');
+  await ensurePermission(handle);
+  const journalFiles = await getJournalFileHandles(handle);
+  if (journalFiles.length === 0) return null;
+  // Walk newest-first; break at first match so we always get the latest
+  for (let i = journalFiles.length - 1; i >= 0; i--) {
+    const file = await journalFiles[i].handle.getFile();
+    const text = await file.text();
+    const parsed = parseJournalLines(text.split('\n'));
+    // Collect all position events with timestamps
+    const candidates: { ts: string; systemName: string; systemAddress: number; coords: { x: number; y: number; z: number } | null }[] = [];
+    for (const ev of parsed.fsdJumpEvents) {
+      candidates.push({
+        ts: ev.timestamp, systemName: ev.StarSystem, systemAddress: ev.SystemAddress,
+        coords: ev.StarPos ? { x: ev.StarPos[0], y: ev.StarPos[1], z: ev.StarPos[2] } : null,
+      });
+    }
+    for (const ev of parsed.locationEvents) {
+      if (!ev.StarSystem || !ev.SystemAddress) continue;
+      candidates.push({
+        ts: ev.timestamp, systemName: ev.StarSystem, systemAddress: ev.SystemAddress,
+        coords: ev.StarPos ? { x: ev.StarPos[0], y: ev.StarPos[1], z: ev.StarPos[2] } : null,
+      });
+    }
+    for (const ev of parsed.carrierJumpEvents) {
+      if (!ev.StarSystem || !ev.SystemAddress) continue;
+      candidates.push({
+        ts: ev.timestamp, systemName: ev.StarSystem, systemAddress: ev.SystemAddress,
+        coords: null, // CarrierJump has no StarPos
+      });
+    }
+    if (candidates.length > 0) {
+      candidates.sort((a, b) => b.ts.localeCompare(a.ts));
+      const latest = candidates[0];
+      return { systemName: latest.systemName, systemAddress: latest.systemAddress, coordinates: latest.coords };
+    }
+  }
+  return null;
+}
+
+export async function extractDockHistory(
+  dirHandle?: FileSystemDirectoryHandle
+): Promise<Map<number, DockHistoryEntry>> {
+  const handle = dirHandle || journalDirHandle;
+  if (!handle) throw new Error('No journal folder selected');
+  await ensurePermission(handle);
+  const journalFiles = await getJournalFileHandles(handle);
+
+  const out = new Map<number, DockHistoryEntry>();
+
+  for (const jf of journalFiles) {
+    const file = await jf.handle.getFile();
+    const text = await file.text();
+    const lines = text.split('\n');
+    const parsed = parseJournalLines(lines);
+
+    for (const ev of parsed.dockedEvents) {
+      if (!ev.MarketID) continue;
+      // Skip ephemeral stations (FCs, Trailblazer NPCs, colonisation ships,
+      // construction sites) — they're not "places" for the dossier.
+      if (isEphemeralStation(ev.StationName, ev.StationType, ev.MarketID)) continue;
+
+      const faction = ev.StationFaction?.Name;
+      const state = ev.StationFaction?.FactionState;
+      const existing = out.get(ev.MarketID);
+
+      if (!existing) {
+        out.set(ev.MarketID, {
+          marketId: ev.MarketID,
+          stationName: ev.StationName,
+          systemName: ev.StarSystem,
+          systemAddress: ev.SystemAddress,
+          firstDocked: ev.timestamp,
+          lastDocked: ev.timestamp,
+          dockedCount: 1,
+          currentFaction: faction ?? null,
+          currentFactionState: state ?? null,
+          factionHistory: [],
+          stateHistory: [],
+        });
+        continue;
+      }
+
+      existing.dockedCount += 1;
+      if (ev.timestamp > existing.lastDocked) {
+        existing.lastDocked = ev.timestamp;
+        // Prefer the newest StationName — handles renames and lifecycle
+        // (construction depot → colonisation ship → completed station).
+        // Skip obvious construction-site placeholders so the live name wins.
+        if (ev.StationName && !/\$EXT_PANEL_ColonisationShip|Construction Site/i.test(ev.StationName)) {
+          existing.stationName = ev.StationName;
+        }
+      }
+      if (ev.timestamp < existing.firstDocked) existing.firstDocked = ev.timestamp;
+
+      // Faction transition
+      if (faction && existing.currentFaction && faction !== existing.currentFaction) {
+        existing.factionHistory.push({ name: existing.currentFaction, changedAt: ev.timestamp });
+        if (existing.factionHistory.length > 5) existing.factionHistory.shift();
+      }
+      if (faction) existing.currentFaction = faction;
+
+      // State transition
+      if (state && existing.currentFactionState && state !== existing.currentFactionState) {
+        existing.stateHistory.push({ state, changedAt: ev.timestamp });
+        if (existing.stateHistory.length > 10) existing.stateHistory.shift();
+      }
+      if (state) existing.currentFactionState = state;
+    }
+  }
+
+  return out;
+}
+
 export async function extractExplorationData(
   dirHandle?: FileSystemDirectoryHandle
 ): Promise<Map<number, JournalExplorationSystem>> {
@@ -2168,6 +2590,9 @@ export async function extractExplorationData(
         distanceToArrival: ev.DistanceFromArrivalLS,
         starType: ev.StarType,
         stellarMass: ev.StellarMass,
+        absoluteMagnitude: ev.AbsoluteMagnitude,
+        luminosityClass: ev.Luminosity,
+        ageMy: ev.Age_MY,
         isLandable: ev.Landable,
         earthMasses: ev.MassEM,
         gravity: ev.SurfaceGravity,
@@ -2618,6 +3043,10 @@ export interface JournalHistoryStats {
   topSystems: { name: string; visits: number; lastVisited: string }[];
   /** All system visits — full dataset for search/filter */
   allSystemVisits: { name: string; visits: number; firstVisited: string; lastVisited: string }[];
+  /** Top stations by dock count (per system:station composite) */
+  topStations: { name: string; systemName: string; visits: number; firstVisited: string; lastVisited: string }[];
+  /** All station visits — full dataset for search/filter */
+  allStationVisits: { name: string; systemName: string; visits: number; firstVisited: string; lastVisited: string }[];
 
   // Exploration
   bodiesScanned: number;
@@ -2723,6 +3152,11 @@ export async function scanJournalHistory(
   const systemFirstVisited = new Map<string, string>();
   const systemLastVisited = new Map<string, string>();
   const stationSet = new Set<string>();
+  // Per-station visit tracking — keyed by "system:station" to disambiguate
+  const stationVisits = new Map<string, number>();
+  const stationSystems = new Map<string, string>(); // key → system name
+  const stationFirstSeen = new Map<string, string>();
+  const stationLastSeen = new Map<string, string>();
   const commoditiesBought = new Map<string, number>();
   const commoditiesSold = new Map<string, number>();
   let firstTimestamp: string | null = null;
@@ -2819,9 +3253,19 @@ export async function scanJournalHistory(
       }
     }
 
-    // Docking
+    // Docking — skip ephemeral stations (FCs, Trailblazers, construction sites)
     for (const e of parsed.dockedEvents) {
-      stationSet.add(`${e.StarSystem}:${e.StationName}`);
+      if (isEphemeralStation(e.StationName, e.StationType, e.MarketID)) continue;
+      const key = `${e.StarSystem}:${e.StationName}`;
+      stationSet.add(key);
+      stationVisits.set(key, (stationVisits.get(key) ?? 0) + 1);
+      stationSystems.set(key, e.StarSystem);
+      if (!stationFirstSeen.has(key) || e.timestamp < stationFirstSeen.get(key)!) {
+        stationFirstSeen.set(key, e.timestamp);
+      }
+      if (!stationLastSeen.has(key) || e.timestamp > stationLastSeen.get(key)!) {
+        stationLastSeen.set(key, e.timestamp);
+      }
     }
 
     // Exploration
@@ -2936,6 +3380,20 @@ export async function scanJournalHistory(
 
   const topSystems = allSystemVisits.slice(0, 20);
 
+  const allStationVisits = [...stationVisits.entries()]
+    .map(([key, visits]) => {
+      const stationName = key.substring(key.indexOf(':') + 1);
+      return {
+        name: stationName,
+        systemName: stationSystems.get(key) ?? '',
+        visits,
+        firstVisited: stationFirstSeen.get(key) ?? '',
+        lastVisited: stationLastSeen.get(key) ?? '',
+      };
+    })
+    .sort((a, b) => b.visits - a.visits);
+  const topStations = allStationVisits.slice(0, 20);
+
   const topCommoditiesBought = [...commoditiesBought.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10)
@@ -2956,6 +3414,8 @@ export async function scanJournalHistory(
     uniqueStationsDocked: stationSet.size,
     topSystems,
     allSystemVisits,
+    topStations,
+    allStationVisits,
     bodiesScanned,
     bodiesDiscovered,
     surfaceMapped,

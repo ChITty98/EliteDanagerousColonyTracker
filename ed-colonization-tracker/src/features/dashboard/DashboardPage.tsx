@@ -19,6 +19,8 @@ import {
   scanSessionStats,
   extractLatestCargoCapacity,
   extractExplorationData,
+  extractDockHistory,
+  extractStationTravelTimes,
   journalBodiesToSpanshFormat,
   type RecentContributionSummary,
   type SessionStats,
@@ -436,6 +438,21 @@ export function DashboardPage() {
   }, [colonizedSystems, upsertScoutedSystem]);
 
   const handleSyncAll = async () => {
+    // Mirror client logs to the server terminal so they're visible in the exe
+    // window, not just DevTools. Fire-and-forget.
+    const serverLog = (message: string) => {
+      console.log('[SyncAll] ' + message);
+      try {
+        const token = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
+        const url = token ? `/api/log?token=${token}` : '/api/log';
+        fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tag: 'SyncAll', message }),
+        }).catch(() => {});
+      } catch { /* ignore */ }
+    };
+    serverLog('Starting — handleSyncAll invoked');
     setSyncing(true);
     setSyncMessage('');
     try {
@@ -486,6 +503,26 @@ export function DashboardPage() {
         }
       } catch (kbErr) {
         console.error('[KB Sync] Knowledge base extraction FAILED:', kbErr);
+      }
+
+      // Station dossier backfill — tally historical Docked events per station
+      try {
+        const dockHistory = await extractDockHistory();
+        if (dockHistory.size > 0) {
+          useAppStore.getState().applyDockHistoryBackfill(Array.from(dockHistory.values()));
+          serverLog(`Backfilled dossier for ${dockHistory.size} stations`);
+        }
+      } catch (dhErr) {
+        serverLog(`Dock history backfill failed: ${dhErr instanceof Error ? dhErr.message : String(dhErr)}`);
+      }
+
+      // Travel-time matrix — per ship, sourcing-relevant trips only
+      try {
+        const stats = await extractStationTravelTimes();
+        useAppStore.getState().setStationTravelTimes(stats);
+        serverLog(`Travel-time matrix: ${Object.keys(stats).length} station pairs`);
+      } catch (ttErr) {
+        serverLog(`Travel-time scan failed: ${ttErr instanceof Error ? ttErr.message : String(ttErr)}`);
       }
 
       // Read market.json

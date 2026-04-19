@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/store';
 import { classifyStar, classifyAtmo, classifyPlanet, atmoStyle, formatAtmoRaw } from '@/features/domain/domainHelpers';
 import { startJournalWatcher, isWatcherRunning } from '@/services/journalWatcher';
-import { selectJournalFolder, getJournalFolderHandle, extractExplorationData } from '@/services/journalReader';
+import { selectJournalFolder, getJournalFolderHandle, extractExplorationData, fetchLatestPositionFromJournal } from '@/services/journalReader';
 import type { JournalScannedBody } from '@/services/journalReader';
 import { fetchSystemDump, resolveSystemName } from '@/services/spanshApi';
 import { buildSourceTag } from '@/services/overlayService';
@@ -56,7 +56,7 @@ interface SystemViewBody {
 
 // ─── System View Canvas (pan/zoom, horizontal layout) ─────────────
 
-function SystemViewCanvas({ systemData, flash, relativeSizes }: { systemData: NonNullable<ReturnType<typeof useSystemViewData>>; flash: boolean; relativeSizes: boolean }) {
+function SystemViewCanvas({ systemData, flash, relativeSizes, focusBodyName, currentBodyName }: { systemData: NonNullable<ReturnType<typeof useSystemViewData>>; flash: boolean; relativeSizes: boolean; focusBodyName?: string | null; currentBodyName?: string | null }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [vb, setVb] = useState({ x: 0, y: 0, w: 1200, h: 600 });
   const [isPanning, setIsPanning] = useState(false);
@@ -320,6 +320,19 @@ function SystemViewCanvas({ systemData, flash, relativeSizes }: { systemData: No
     setVb({ x: minX - pad, y: minY - pad, w: Math.max(w, maxX - minX + pad * 2), h });
   }, [nodeData]);
 
+  // Focus on a specific body (from left-nav highlight clicks)
+  useEffect(() => {
+    if (!focusBodyName) return;
+    const match = nodeData.nodes.find((n) => n.body.body.bodyName === focusBodyName);
+    if (!match) return;
+    const rect = svgRef.current?.getBoundingClientRect();
+    const aspect = rect ? rect.width / rect.height : 2;
+    // Frame the body with some padding on both axes; picking a tight viewBox
+    const frameH = 220;
+    const frameW = frameH * aspect;
+    setVb({ x: match.x - frameW / 2, y: match.y - frameH / 2, w: frameW, h: frameH });
+  }, [focusBodyName, nodeData]);
+
   // Pan handlers
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     setIsPanning(true);
@@ -335,11 +348,20 @@ function SystemViewCanvas({ systemData, flash, relativeSizes }: { systemData: No
   const onMouseUp = useCallback(() => setIsPanning(false), []);
   const onWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
+    if (!svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    // Cursor position as fraction of the SVG viewport (0..1)
+    const fx = (e.clientX - rect.left) / rect.width;
+    const fy = (e.clientY - rect.top) / rect.height;
     const f = e.deltaY > 0 ? 1.12 : 0.89;
     setVb(v => {
-      const cx = v.x + v.w / 2, cy = v.y + v.h / 2;
-      const nw = v.w * f, nh = v.h * f;
-      return { x: cx - nw / 2, y: cy - nh / 2, w: nw, h: nh };
+      // Cursor position in world (viewBox) coordinates BEFORE zoom
+      const wx = v.x + fx * v.w;
+      const wy = v.y + fy * v.h;
+      const nw = v.w * f;
+      const nh = v.h * f;
+      // Keep the world point under the cursor anchored: new origin = world_point - cursor_fraction * new_size
+      return { x: wx - fx * nw, y: wy - fy * nh, w: nw, h: nh };
     });
   }, []);
 
@@ -561,8 +583,26 @@ function SystemViewCanvas({ systemData, flash, relativeSizes }: { systemData: No
           const colors = isStar ? (STAR_COLORS[ob.starCls || ''] || STAR_COLORS['G-class']) : null;
           const label = ob.body.bodyName.replace(systemData.name + ' ', '').toUpperCase();
 
+          const isYouAreHere = !!currentBodyName && ob.body.bodyName === currentBodyName;
           return (
             <g key={`node-${i}`} style={{ animation: `systemview-body-pop 0.5s cubic-bezier(0.34,1.56,0.64,1) ${0.1 + i * 0.03}s both` }}>
+              {/* "You are here" marker — pulsing cyan ring around the body you dropped at */}
+              {isYouAreHere && (
+                <>
+                  <circle cx={x} cy={y} r={size + Math.max(6, scale * 8)} fill="none"
+                    stroke="#22d3ee" strokeWidth={Math.max(2, scale * 2.5)} opacity={0.9}>
+                    <animate attributeName="r"
+                      values={`${size + Math.max(6, scale * 8)};${size + Math.max(10, scale * 14)};${size + Math.max(6, scale * 8)}`}
+                      dur="1.8s" repeatCount="indefinite" />
+                    <animate attributeName="opacity" values="0.9;0.3;0.9" dur="1.8s" repeatCount="indefinite" />
+                  </circle>
+                  <text x={x} y={y - size - Math.max(12, scale * 16)} textAnchor="middle"
+                    fill="#22d3ee" fontSize={Math.max(11, scale * 11)} fontWeight="bold" style={{ textShadow: '0 0 4px #000' }}>
+                    {'\u25C9 YOU ARE HERE'}
+                  </text>
+                </>
+              )}
+
               {/* Star glow — compact for normal stars, intense for neutron/black hole */}
               {isStar && colors && (
                 <circle cx={x} cy={y} r={ob.starCls === 'Neutron Star' || ob.starCls === 'Black Hole' ? size * 2.5 : size * 1.3}
@@ -665,21 +705,34 @@ function SystemViewCanvas({ systemData, flash, relativeSizes }: { systemData: No
           // For now, show CMDR at any station in the system, and FC at FC stations
           for (const station of systemData.stations) {
             const stDist = station.distFromStarLS || 0;
-            // Find nearest system-view node to this distance
-            let nearestNode = nodeData.nodes[0];
-            let nearestDelta = Infinity;
-            for (const n of nodeData.nodes) {
-              const d = Math.abs((n.body.body.distanceToArrival || 0) - stDist);
-              if (d < nearestDelta) { nearestDelta = d; nearestNode = n; }
+            // Anchor the marker to the station's orbit body by NAME when we know it.
+            // Falls back to nearest-by-distance with a tolerance so filtered/focused
+            // views don't paint the marker on a wildly wrong body.
+            let anchorNode: typeof nodeData.nodes[0] | null = null;
+            if (station.body) {
+              anchorNode = nodeData.nodes.find((n) => n.body.body.bodyName === station.body) || null;
             }
+            if (!anchorNode) {
+              let nearest = nodeData.nodes[0];
+              let nearestDelta = Infinity;
+              for (const n of nodeData.nodes) {
+                const d = Math.abs((n.body.body.distanceToArrival || 0) - stDist);
+                if (d < nearestDelta) { nearestDelta = d; nearest = n; }
+              }
+              // Require a reasonable match — within 25% or 500ls of the station distance.
+              // When focused to a small subtree, a bad nearest match is common; skip it.
+              const tolerance = Math.max(500, stDist * 0.25);
+              if (nearest && nearestDelta <= tolerance) anchorNode = nearest;
+            }
+            if (!anchorNode) continue;
             const isFC = station.stationType?.toLowerCase().includes('fleetcarrier') ||
               (systemData.myFcCallsign && station.stationName.toUpperCase().includes(systemData.myFcCallsign.toUpperCase()));
             if (isFC) {
               markers.push(
                 <g key={`fc-${station.marketId}`}>
-                  <rect x={nearestNode.x + nearestNode.size + 5} y={nearestNode.y - 8} width={16} height={16} rx={3}
+                  <rect x={anchorNode.x + anchorNode.size + 5} y={anchorNode.y - 8} width={16} height={16} rx={3}
                     fill="rgba(251,146,60,0.3)" stroke="#fb923c" strokeWidth={1} />
-                  <text x={nearestNode.x + nearestNode.size + 13} y={nearestNode.y + 4} fontSize={9} fill="#fb923c" textAnchor="middle" fontWeight="bold">FC</text>
+                  <text x={anchorNode.x + anchorNode.size + 13} y={anchorNode.y + 4} fontSize={9} fill="#fb923c" textAnchor="middle" fontWeight="bold">FC</text>
                 </g>
               );
             }
@@ -795,6 +848,7 @@ export function SystemViewPage() {
   const knownStations = useAppStore((s) => s.knownStations);
   const journalExplorationCache = useAppStore((s) => s.journalExplorationCache);
   const commanderPosition = useAppStore((s) => s.commanderPosition);
+  const currentBody = useAppStore((s) => s.currentBody);
   const scoutedSystems = useAppStore((s) => s.scoutedSystems);
   const settings = useAppStore((s) => s.settings);
   const fleetCarriers = useAppStore((s) => s.fleetCarriers);
@@ -809,6 +863,24 @@ export function SystemViewPage() {
   const [spanshBodies, setSpanshBodies] = useState<JournalScannedBody[] | null>(null);
   const [spanshLoading, setSpanshLoading] = useState(false);
   const [relativeSizes, setRelativeSizes] = useState(false);
+
+  // Focus state — scopes the canvas to a star's barycenter group, or frames a single body
+  const [focusedStarIds, setFocusedStarIds] = useState<Set<number> | null>(null);
+  const [focusedStarLabel, setFocusedStarLabel] = useState<string | null>(null);
+  // `focusBodyName` is a "ping" — setting it with a different token triggers a reframe in the canvas
+  const [focusBody, setFocusBody] = useState<{ name: string; token: number } | null>(null);
+
+  // Keyboard: Esc clears focus
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setFocusedStarIds(null);
+        setFocusedStarLabel(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Fetch Spansh data when toggled
   const fetchSpansh = useCallback(async () => {
@@ -859,6 +931,83 @@ export function SystemViewPage() {
     setWatcherStatus('running');
   }, []);
 
+  // Manual "Check journal now" — read the latest position event from journal
+  // and update systemName + commanderPosition. Used when the live watcher
+  // missed the FSDJump for any reason.
+  const [checkingPosition, setCheckingPosition] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
+  const handleCheckPosition = useCallback(async () => {
+    setCheckingPosition(true);
+    setCheckError(null);
+    try {
+      // Path 1: direct journal read — PC with watcher already started
+      if (getJournalFolderHandle()) {
+        const pos = await fetchLatestPositionFromJournal();
+        if (pos) {
+          setSystemName(pos.systemName);
+          useAppStore.getState().setCommanderPosition({
+            systemName: pos.systemName,
+            systemAddress: pos.systemAddress,
+            coordinates: pos.coordinates ?? { x: 0, y: 0, z: 0 },
+            source: 'Journal Read',
+            updatedAt: new Date().toISOString(),
+          });
+          return;
+        }
+        setCheckError('No position event found in any journal file');
+        return;
+      }
+
+      // Path 2: fetch server state — works on network devices (iPad) and
+      // before the journal folder has been selected this session
+      const token = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
+      const url = token ? `/api/state?token=${token}` : '/api/state';
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) {
+        setCheckError(`Server returned HTTP ${res.status} — can't fetch state`);
+        return;
+      }
+      const data = await res.json();
+      if (data?.commanderPosition?.systemName) {
+        setSystemName(data.commanderPosition.systemName);
+        useAppStore.getState().setCommanderPosition({
+          ...data.commanderPosition,
+          source: data.commanderPosition.source || 'Server',
+        });
+        return;
+      }
+      // Server had no position. Tell user what to do about it.
+      const hasData = data && Object.keys(data).length > 0;
+      if (!hasData) {
+        setCheckError('Server state is empty — the watcher hasn\'t run yet on any device');
+        return;
+      }
+
+      // Path 3: Last resort — offer folder picker on desktop browsers only
+      if (typeof window !== 'undefined' && 'showDirectoryPicker' in window) {
+        const handle = await selectJournalFolder();
+        if (!handle) return;
+        const pos = await fetchLatestPositionFromJournal();
+        if (pos) {
+          setSystemName(pos.systemName);
+          useAppStore.getState().setCommanderPosition({
+            systemName: pos.systemName,
+            systemAddress: pos.systemAddress,
+            coordinates: pos.coordinates ?? { x: 0, y: 0, z: 0 },
+          });
+          return;
+        }
+        setCheckError('No position event found in any journal file');
+      } else {
+        setCheckError('Server has data but no commanderPosition yet — start the journal watcher on the machine that has the game journals so it can push FSDJump events here');
+      }
+    } catch (e) {
+      setCheckError(e instanceof Error ? e.message : 'Position check failed');
+    } finally {
+      setCheckingPosition(false);
+    }
+  }, []);
+
   // Auto-start watcher if not running and journal folder available
   useEffect(() => {
     if (!isWatcherRunning() && getJournalFolderHandle()) {
@@ -872,12 +1021,15 @@ export function SystemViewPage() {
     return () => clearInterval(t);
   }, []);
 
-  // Load current system from commanderPosition if we don't have one
+  // Follow commanderPosition — unless the URL has pinned a specific system
+  // (e.g. user navigated from a link with ?system=X). Pinning respects the URL;
+  // otherwise the page tracks the commander wherever they are.
   useEffect(() => {
-    if (!systemName && commanderPosition?.systemName) {
+    if (urlSystem) return; // URL-pinned
+    if (commanderPosition?.systemName && commanderPosition.systemName !== systemName) {
       setSystemName(commanderPosition.systemName);
     }
-  }, [commanderPosition?.systemName, systemName]);
+  }, [commanderPosition?.systemName, systemName, urlSystem]);
 
   // Poll for commander position on remote devices (every 3s)
   const lastSSEJump = useRef(0);
@@ -931,15 +1083,22 @@ export function SystemViewPage() {
         if (ev.type === 'fsd_jump' && ev.system) {
           lastSSEJump.current = Date.now(); // suppress polling for 15s
           setSystemName(ev.system as string);
-          // Update commanderPosition on remote devices
-          if (ev.systemAddress && ev.starPos) {
-            const pos = ev.starPos as [number, number, number];
-            useAppStore.getState().setCommanderPosition({
-              systemName: ev.system as string,
-              systemAddress: ev.systemAddress as number,
-              coordinates: { x: pos[0], y: pos[1], z: pos[2] },
-            });
-          }
+          // commanderPosition is updated via the dedicated 'commander_position'
+          // event (handled below) — we don't need to duplicate it here.
+        }
+        // commander_position — broadcast from the watcher on ANY location event.
+        // Remote clients update their local commanderPosition + systemName here.
+        if (ev.type === 'commander_position' && ev.systemName) {
+          setSystemName(ev.systemName as string);
+          useAppStore.getState().setCommanderPosition({
+            systemName: ev.systemName as string,
+            systemAddress: ev.systemAddress as number,
+            coordinates: ev.coordinates as { x: number; y: number; z: number },
+            source: 'Server',
+            updatedAt: ev.updatedAt as string,
+          });
+        }
+        if (ev.type === 'fsd_jump' && ev.system) {
           // Start polling for body data on remote devices (watcher doesn't run there)
           if (ev.systemAddress) {
             const addr = ev.systemAddress as number;
@@ -1141,36 +1300,109 @@ export function SystemViewPage() {
     };
   }, [systemName, knownSystems, knownStations, journalExplorationCache, dataSource, spanshBodies, settings.myFleetCarrier, relativeSizes]);
 
+  // When focusedStarIds is set, narrow systemData to just those stars + bodies under them
+  const displaySystemData = useMemo(() => {
+    if (!systemData || !focusedStarIds) return systemData;
+    const allBodies = [...systemData.stars.map((s) => s.body), ...systemData.planets.map((p) => p.body)];
+    const isUnderFocused = (body: JournalScannedBody): boolean => {
+      if (!body.parents) return false;
+      for (const p of body.parents) {
+        if ('Star' in p && focusedStarIds.has(p.Star)) return true;
+        if ('Planet' in p) {
+          const parent = allBodies.find((b) => b.bodyId === p.Planet);
+          if (parent) return isUnderFocused(parent);
+        }
+      }
+      return false;
+    };
+    const focusedStars = systemData.stars.filter((s) => focusedStarIds.has(s.body.bodyId));
+    const focusedPlanets = systemData.planets.filter((p) => isUnderFocused(p.body));
+    return {
+      ...systemData,
+      stars: focusedStars,
+      planets: focusedPlanets,
+      allBodies: [...focusedStars, ...focusedPlanets],
+    };
+  }, [systemData, focusedStarIds]);
+
+  // Single-star focus — only the clicked star and bodies under it.
+  const getStarGroup = useCallback((starBodyId: number): { ids: Set<number>; label: string } => {
+    if (!systemData) return { ids: new Set([starBodyId]), label: '' };
+    const clicked = systemData.stars.find((s) => s.body.bodyId === starBodyId);
+    if (!clicked) return { ids: new Set([starBodyId]), label: '' };
+    const shortName = clicked.body.bodyName.replace(systemData.name + ' ', '');
+    return { ids: new Set([starBodyId]), label: shortName };
+  }, [systemData]);
+
+  const handleStarClick = useCallback((starBodyId: number) => {
+    // Toggle: if already focused on this group, clear
+    if (focusedStarIds && focusedStarIds.has(starBodyId)) {
+      setFocusedStarIds(null);
+      setFocusedStarLabel(null);
+      return;
+    }
+    const { ids, label } = getStarGroup(starBodyId);
+    setFocusedStarIds(ids);
+    setFocusedStarLabel(label);
+  }, [focusedStarIds, getStarGroup]);
+
+  const handleHighlightClick = useCallback((bodyName: string) => {
+    setFocusBody({ name: bodyName, token: Date.now() });
+  }, []);
+
   // ─── Render ────────────────────────────────────────────────────────
 
   if (!systemName) {
     return (
       <div className="flex items-center justify-center h-screen bg-black text-muted-foreground">
-        <div className="text-center">
+        <div className="text-center max-w-md px-4">
           <div className="text-4xl mb-4">&#x1F52D;</div>
           <div className="text-lg">Waiting for FSD Jump...</div>
           <div className="text-sm mt-2">Start the journal watcher and jump to a system</div>
-          {watcherStatus === 'stopped' && (
-            <div className="mt-3">
-              <button onClick={handleStartWatcher} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium">
-                Select Journal Folder & Start Watcher
-              </button>
-              <div className="text-xs text-slate-500 mt-1">Or scan from another device — data syncs automatically</div>
-            </div>
-          )}
+          <div className="mt-4 flex flex-col items-center gap-2">
+            <button
+              onClick={handleCheckPosition}
+              disabled={checkingPosition}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-600 text-white rounded-lg text-sm font-medium"
+            >
+              {checkingPosition ? 'Checking...' : `${'\u{1F50D}'} Check journal for current system`}
+            </button>
+            {checkError && (
+              <div className="text-xs text-red-400 mt-1">{checkError}</div>
+            )}
+            {watcherStatus === 'stopped' && (
+              <>
+                <button onClick={handleStartWatcher} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium mt-2">
+                  Select Journal Folder &amp; Start Watcher
+                </button>
+                <div className="text-xs text-slate-500 mt-1">Or scan from another device — data syncs automatically</div>
+              </>
+            )}
+          </div>
         </div>
       </div>
     );
   }
 
   if (!systemData) {
+    // Context-aware prompt: has the user honked? Do we have bodyCount but no body details?
+    const kbEntry = knownSystems[systemName.toLowerCase()];
+    const cacheEntry = kbEntry?.systemAddress ? journalExplorationCache[kbEntry.systemAddress] : null;
+    const honked = cacheEntry && (cacheEntry.bodyCount || 0) > 0;
+    const scannedNonBary = cacheEntry?.scannedBodies?.filter((b) => !b.bodyName.toLowerCase().includes('barycentre')).length || 0;
+    const hint = honked
+      ? `Honked — ${cacheEntry?.bodyCount} bodies detected. FSS-scan bodies to populate the view.`
+      : 'Honk the system to start scanning';
+    const sub = honked
+      ? `${scannedNonBary} / ${cacheEntry?.bodyCount || 0} scanned. Open the FSS and scan each body.`
+      : 'Fire the Discovery Scanner to detect bodies';
     return (
       <div className="flex items-center justify-center h-screen bg-black text-muted-foreground">
         <div className="text-center">
           <div className="text-4xl mb-4">&#x1F30C;</div>
           <div className="text-2xl font-bold text-foreground mb-2">{systemName}</div>
-          <div className="text-sm">Honk the system to start scanning</div>
-          <div className="text-xs text-muted-foreground/60 mt-2">Fire the Discovery Scanner to detect bodies</div>
+          <div className="text-sm">{hint}</div>
+          <div className="text-xs text-muted-foreground/60 mt-2">{sub}</div>
           {watcherStatus === 'stopped' && (
             <div className="mt-3">
               <button onClick={handleStartWatcher} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium">
@@ -1295,8 +1527,17 @@ export function SystemViewPage() {
             <div className="text-[10px] text-slate-500 uppercase tracking-widest mb-2">Stars</div>
             {systemData.stars.map((s, i) => {
               const colors = STAR_COLORS[s.starCls || ''] || STAR_COLORS['G-class'];
+              const isFocused = focusedStarIds?.has(s.body.bodyId) ?? false;
               return (
-                <div key={i} className="flex items-center gap-2 mb-2">
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => handleStarClick(s.body.bodyId)}
+                  className={`flex items-center gap-2 mb-2 w-full text-left rounded-md px-1.5 py-1 transition-colors ${
+                    isFocused ? 'bg-blue-500/20 ring-1 ring-blue-400/50' : 'hover:bg-white/5'
+                  }`}
+                  title={isFocused ? 'Click to clear focus' : 'Click to focus this star'}
+                >
                   <div className="w-6 h-6 rounded-full shrink-0" style={{
                     background: colors.fill,
                     boxShadow: `0 0 ${colors.glowSize / 2}px ${colors.glow}`,
@@ -1307,7 +1548,7 @@ export function SystemViewPage() {
                       {s.starCls}{s.body.stellarMass ? ` \u00B7 ${s.body.stellarMass.toFixed(2)} M\u2609` : ''}
                     </div>
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -1323,7 +1564,13 @@ export function SystemViewPage() {
               const atmo = p.atmoType ? atmoStyle(p.atmoType) : null;
               const isTight = p.body.semiMajorAxis && p.body.semiMajorAxis < 50000000;
               return (
-                <div key={i} className="rounded-lg border px-3 py-2 mb-2" style={{
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => handleHighlightClick(p.body.bodyName)}
+                  className="rounded-lg border px-3 py-2 mb-2 w-full text-left hover:brightness-125 transition-all cursor-pointer block"
+                  title="Click to zoom to this body"
+                  style={{
                   borderColor: atmo ? ATMO_GLOW_COLORS[p.atmoType || ''] || 'rgba(100,116,139,0.3)' : p.cls.hasRings ? 'rgba(236,72,153,0.3)' : 'rgba(59,130,246,0.3)',
                   background: atmo ? (ATMO_GLOW_COLORS[p.atmoType || ''] || 'rgba(30,41,59,0.5)').replace(/[\d.]+\)$/, '0.08)') : 'rgba(30,41,59,0.5)',
                 }}>
@@ -1365,7 +1612,7 @@ export function SystemViewPage() {
                       </span>
                     )}
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -1395,7 +1642,31 @@ export function SystemViewPage() {
 
       {/* Right: System View SVG with pan/zoom + overlays — must fill all vertical space */}
       <div className="flex-1 flex flex-col relative overflow-hidden">
-        <SystemViewCanvas systemData={systemData} flash={flash} relativeSizes={relativeSizes} />
+        {/* Focus pill — shows when scoped to a star. Placed center-top so it
+            doesn't collide with the Menu / Refresh buttons in the left corner. */}
+        {focusedStarLabel && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 bg-blue-500/20 border border-blue-400/50 rounded-full px-3 py-1 text-xs text-blue-200">
+            <span>{'\u{1F50D}'} Focus: {focusedStarLabel}</span>
+            <button
+              onClick={() => { setFocusedStarIds(null); setFocusedStarLabel(null); }}
+              className="ml-1 hover:text-white"
+              title="Clear focus (Esc)"
+            >
+              {'\u2715'}
+            </button>
+          </div>
+        )}
+        <SystemViewCanvas
+          systemData={displaySystemData || systemData}
+          flash={flash}
+          relativeSizes={relativeSizes}
+          focusBodyName={focusBody?.name ?? null}
+          currentBodyName={
+            currentBody && systemData && currentBody.systemAddress === (knownSystems[systemName.toLowerCase()]?.systemAddress ?? 0)
+              ? currentBody.bodyName
+              : null
+          }
+        />
 
         {/* Back to app */}
         <Link to="/" className="absolute top-3 left-3 bg-slate-800/80 hover:bg-slate-700/80 border border-slate-600/40 rounded-lg px-3 py-1.5 text-xs text-slate-300 hover:text-white transition-colors z-20">

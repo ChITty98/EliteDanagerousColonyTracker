@@ -691,6 +691,126 @@ const faqItems: FaqItem[] = [
     ),
   },
 
+  // --- Station Dossier / Visit Tracking ---
+  {
+    category: 'Station Dossier',
+    question: 'What is the dock welcome overlay? When does it fire?',
+    answer: (
+      <>
+        <p>
+          On DockingGranted (during approach &mdash; not after touchdown), the
+          overlay fires a personal welcome for the station. It shows:
+        </p>
+        <ul className="list-disc ml-5 mt-2 space-y-1">
+          <li>The visit number you&rsquo;re about to complete (e.g. &ldquo;180th visit&rdquo;)</li>
+          <li>A rank badge when the station is in your top 20 most-visited (&ldquo;#3 most-visited&rdquo;)</li>
+          <li>How long you&rsquo;ve been visiting this station (&ldquo;4 months of history&rdquo;)</li>
+          <li>Faction-change alert if the controlling faction changed since your last visit</li>
+          <li>Current faction state &mdash; Boom / Bust / War / Expansion / Election etc.</li>
+          <li>Milestone bursts at 10, 25, 50, 100, 250, 500 visits</li>
+          <li>Month and year anniversaries of your first dock</li>
+        </ul>
+        <p className="mt-2">
+          Fleet carriers, colonisation ships, Trailblazer NPCs, and construction
+          sites are excluded &mdash; they&rsquo;re not &ldquo;places&rdquo; for
+          dossier purposes.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Station Dossier',
+    question: 'Why does the visit count sometimes look wrong?',
+    answer: (
+      <>
+        <p>
+          Visit count is keyed by MarketID. Frontier reuses the same MarketID
+          across a station&rsquo;s full lifecycle: construction depot &rarr;
+          colonisation ship &rarr; finished station. So your &ldquo;180 docks at
+          Ma Gateway&rdquo; count includes every dock at that MarketID, including
+          the ones that happened while it was still called &ldquo;Planetary
+          Construction Site: Vidal Cultivations&rdquo;.
+        </p>
+        <p className="mt-2">
+          The station name shown is always the most recent one &mdash; if you
+          renamed a station, or the construction site completed and became a
+          real station, the dossier updates to the new name automatically after
+          the next Sync All.
+        </p>
+      </>
+    ),
+  },
+
+  // --- Target Alerts / Position ---
+  {
+    category: 'Target Alerts & Position',
+    question: 'How does the Companion target alert work?',
+    answer: (
+      <>
+        <p>
+          When you target a system in the galaxy map (FSDTarget event), the
+          Companion page banner updates with:
+        </p>
+        <ul className="list-disc ml-5 mt-2 space-y-1">
+          <li><strong>Visited</strong> &mdash; whether you&rsquo;ve jumped to this system before (from knownSystems)</li>
+          <li><strong>Spansh</strong> &mdash; whether Spansh has body data for it (body count shown if yes)</li>
+          <li><strong>Score</strong> &mdash; the cached scouting score if you&rsquo;ve scored it before</li>
+          <li><strong>Colonised</strong> &mdash; if the system is flagged as colonised</li>
+          <li><strong>Body string</strong> &mdash; highlights from the scoring run if available</li>
+        </ul>
+        <p className="mt-2">
+          Route plotted via NavRoute? The banner summarises the whole route
+          (hop count, destination, how many stops you&rsquo;ve visited, how many
+          Spansh has).
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Target Alerts & Position',
+    question: 'What does the &ldquo;via&rdquo; tag next to Current System mean?',
+    answer: (
+      <>
+        <p>
+          Every time your location is updated, it&rsquo;s tagged with how the
+          app figured it out:
+        </p>
+        <ul className="list-disc ml-5 mt-2 space-y-1">
+          <li><code>FSDJump</code> &mdash; supercruise jump to the system</li>
+          <li><code>CarrierJump</code> &mdash; fleet carrier jump</li>
+          <li><code>Location</code> &mdash; on game load / spawn</li>
+          <li><code>Docked</code> &mdash; self-heal from a dock event</li>
+          <li><code>SupercruiseExit</code> &mdash; self-heal from supercruise drop</li>
+          <li><code>Journal Read</code> &mdash; manual System View &ldquo;Check journal&rdquo; button</li>
+          <li><code>Server</code> &mdash; SSE update from another device</li>
+        </ul>
+        <p className="mt-2">
+          This is diagnostic. If you see an old source and a recent timestamp,
+          something unusual is going on &mdash; useful evidence when reporting
+          issues.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Target Alerts & Position',
+    question: 'What is the NPC threat alert?',
+    answer: (
+      <>
+        <p>
+          When a pirate or interdictor NPC sends threatening chatter (events
+          matching <code>$Pirate_*</code>, <code>$InterdictorNPC_*</code>, or
+          known attack/demand phrases), the app fires:
+        </p>
+        <ul className="list-disc ml-5 mt-2 space-y-1">
+          <li>A red overlay message in-game (10 second TTL)</li>
+          <li>A flashing red banner at the top of the Companion page (auto-dismiss after 15s)</li>
+          <li>A feed entry with 🚨 icon</li>
+        </ul>
+      </>
+    ),
+  },
+
   // --- APIs & External Services ---
   {
     category: 'APIs & External Services',

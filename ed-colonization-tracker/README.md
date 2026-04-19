@@ -37,9 +37,22 @@ Integrates with [EDMCModernOverlay](https://github.com/) for heads-up display wh
 ### Companion Page (iPad Second Screen)
 Designed for an iPad propped up next to your monitor:
 - **Live event feed** via Server-Sent Events — see jumps, docks, scans, contributions in real-time
-- **Remote control buttons** — trigger "Show Score", "Show Needs", "Show Haul", "Show Status" on the overlay without alt-tabbing
-- **FC Free Cargo widget** — at-a-glance free space on your Fleet Carrier, computed live as `25,000 − Modules − Current Cargo`. Color-coded (green/yellow/red) so you know at a glance whether you have room for one more haul.
+- **Current System banner** — always shows where the app thinks you are, how it figured it out (`via FSDJump` / `Docked` / `Server` / etc.), and when it last updated
+- **Target Alert banner** — on FSDTarget in galaxy map, shows visited status, Spansh data availability, cached score, and `#N most-visited` rank if applicable
+- **Dock Welcome banner** — on DockingGranted (during approach), shows visit number, history duration, faction state, and milestone badges
+- **NPC Threat Alert** — flashing red banner on pirate / interdictor chatter (also fires in-game overlay)
+- **FC Free Cargo widget** — live: `25,000 − Modules − Current Cargo` with color coding
+- **Remote control buttons** — trigger "Show Score", "Show Needs", "Show Haul", "Show Status", "Buy Here" on the overlay without alt-tabbing
 - Works from any device on your local network
+
+### Station Dossier
+Every station keeps a dossier tracking:
+- Visit count + first/last dock timestamps
+- Faction and faction-state history (Boom/Bust/War/etc. transitions)
+- Rank among your most-visited stations
+- Per-ship average travel time to the station (from journal history, sourcing-relevant trips only, outlier-trimmed)
+
+The overlay welcome on dock pulls from this dossier for personalised messages.
 
 ### Fleet Carrier Management
 Track cargo across your fleet carrier and squadron carriers. Auto-detects carrier callsign and market ID from journal events. Monitor commodity stock levels and plan deliveries. Set your installed Modules tonnage once in Settings and the app will keep your free space accurate as you load and unload.

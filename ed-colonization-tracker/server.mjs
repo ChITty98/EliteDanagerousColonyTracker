@@ -109,6 +109,67 @@ function readStateFile() {
   }
 }
 
+function readStateFile() {
+  try {
+    if (fs.existsSync(STATE_FILE)) {
+      const txt = fs.readFileSync(STATE_FILE, 'utf8');
+      return JSON.parse(txt);
+    }
+  } catch (e) {
+    console.error('[State] Read error:', e.message);
+  }
+  return {};
+}
+
+// Sparse per-key merge. Incoming values can be marker objects with:
+//   { __upsert: {...}, __remove: [...], __idKey?: string } — map / array-by-id
+//   { __add: [...], __remove: [...] }                       — primitive set
+// Any other value is treated as a wholesale replace.
+function mergeStatePatch(existing, incoming) {
+  const out = { ...existing };
+  for (const key of Object.keys(incoming)) {
+    const val = incoming[key];
+    if (val && typeof val === 'object' && !Array.isArray(val) && ('__upsert' in val || '__remove' in val || '__add' in val)) {
+      const hasUpsert = val.__upsert && typeof val.__upsert === 'object';
+      const hasIdKey = typeof val.__idKey === 'string';
+      const removeList = Array.isArray(val.__remove) ? val.__remove : [];
+      const addList = Array.isArray(val.__add) ? val.__add : [];
+      if (hasIdKey) {
+        // Array-by-id — convert existing to map, apply ops, convert back
+        const idKey = val.__idKey;
+        const curArr = Array.isArray(existing[key]) ? existing[key] : [];
+        const map = {};
+        for (const item of curArr) {
+          if (item && item[idKey] != null) map[String(item[idKey])] = item;
+        }
+        if (hasUpsert) {
+          for (const id of Object.keys(val.__upsert)) map[id] = val.__upsert[id];
+        }
+        for (const id of removeList) delete map[String(id)];
+        out[key] = Object.values(map);
+      } else if (addList.length > 0 || (removeList.length > 0 && !hasUpsert)) {
+        // Primitive set
+        const curArr = Array.isArray(existing[key]) ? existing[key] : [];
+        const removeSet = new Set(removeList);
+        const next = curArr.filter((x) => !removeSet.has(x));
+        for (const x of addList) if (!next.includes(x)) next.push(x);
+        out[key] = next;
+      } else {
+        // Map (Record<id, value>)
+        const cur = (existing[key] && typeof existing[key] === 'object' && !Array.isArray(existing[key])) ? existing[key] : {};
+        const merged = { ...cur };
+        if (hasUpsert) for (const k of Object.keys(val.__upsert)) merged[k] = val.__upsert[k];
+        for (const k of removeList) delete merged[k];
+        out[key] = merged;
+      }
+    } else {
+      // Wholesale replace (scalar, object, or legacy-format full value)
+      out[key] = val;
+    }
+  }
+  return out;
+}
+
 function writeStateDebounced(data) {
   pendingState = data;
   if (stateWriteTimer) clearTimeout(stateWriteTimer);
@@ -320,14 +381,15 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // State API: PATCH /api/state
+  // State API: PATCH /api/state — sparse diff merge (per-key strategy)
   if (pathname === '/api/state' && req.method === 'PATCH') {
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
       try {
         const incoming = JSON.parse(body);
-        writeStateDebounced(incoming);
+        const merged = mergeStatePatch(readStateFile(), incoming);
+        writeStateDebounced(merged);
         // Broadcast state_updated to all other devices so they re-fetch
         const sourceIp = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString();
         broadcastEvent({ type: 'state_updated', source: sourceIp, timestamp: new Date().toISOString() });
@@ -337,6 +399,22 @@ const server = http.createServer((req, res) => {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: e.message }));
       }
+    });
+    return;
+  }
+
+  // Log API: POST /api/log — print client log messages to the server terminal
+  if (pathname === '/api/log' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const { tag, message } = JSON.parse(body);
+        const t = new Date().toISOString().substring(11, 19);
+        console.log(`[${t}] [${tag || 'Client'}] ${message}`);
+      } catch { /* ignore bad payloads */ }
+      res.writeHead(204);
+      res.end();
     });
     return;
   }

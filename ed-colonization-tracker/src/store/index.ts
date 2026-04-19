@@ -105,6 +105,150 @@ async function checkServerStorage(): Promise<boolean> {
 
 let hydrationComplete = false;
 
+// Option B — sparse PATCH with per-field merge strategy.
+// Each top-level state key has a declared merge strategy. On setItem we diff
+// the current state against a baseline (last thing we loaded from/pushed to
+// the server) and emit a sparse patch payload. The server merges that into
+// the stored state file per key. This lets read-only tabs (iPad Companion)
+// mutate specific fields without clobbering others.
+//
+// Strategy encoding on the wire:
+//   key: { __upsert: {...}, __remove: [...] }          — map / array-by-id
+//   key: { __add: [...], __remove: [...] }              — primitive set
+//   key: value                                         — full replace (scalar/object)
+type MergeStrategy =
+  | { kind: 'map' }
+  | { kind: 'arrayById'; idKey: string }
+  | { kind: 'stringSet' }
+  | { kind: 'numberSet' }
+  | { kind: 'replace' };
+
+const MERGE_STRATEGIES: Record<string, MergeStrategy> = {
+  // Record<id, entity>
+  knownSystems: { kind: 'map' },
+  knownStations: { kind: 'map' },
+  systemAddressMap: { kind: 'map' },
+  marketSnapshots: { kind: 'map' },
+  carrierCargo: { kind: 'map' },
+  journalExplorationCache: { kind: 'map' },
+  scoutedSystems: { kind: 'map' },
+  bodyVisits: { kind: 'map' },
+  bodyNotes: { kind: 'map' },
+  fleetCarrierSpaceUsage: { kind: 'map' },
+  // Array with id field
+  projects: { kind: 'arrayById', idKey: 'id' },
+  sessions: { kind: 'arrayById', idKey: 'id' },
+  customSources: { kind: 'arrayById', idKey: 'id' },
+  fleetCarriers: { kind: 'arrayById', idKey: 'callsign' },
+  manualInstallations: { kind: 'arrayById', idKey: 'id' },
+  visitedMarkets: { kind: 'arrayById', idKey: 'marketId' },
+  // Sets
+  manualColonizedSystems: { kind: 'stringSet' },
+  hiddenInstallations: { kind: 'stringSet' },
+  dismissedMarketIds: { kind: 'numberSet' },
+  // Scalars / objects / no-good-id arrays — wholesale replace
+  settings: { kind: 'replace' },
+  commanderPosition: { kind: 'replace' },
+  currentBody: { kind: 'replace' },
+  currentShip: { kind: 'replace' },
+  activeSessionId: { kind: 'replace' },
+  fssSignals: { kind: 'replace' }, // no canonical unique id
+  // Travel-time matrix — map of "from:to:shipId" → stat
+  stationTravelTimes: { kind: 'map' },
+};
+
+// Baseline = last-known server state. Populated on hydrate + after each PATCH.
+// Used to compute sparse diffs so we only send what actually changed.
+let stateBaseline: Record<string, unknown> = {};
+
+function setBaseline(fullState: Record<string, unknown>): void {
+  // Shallow clone at top level. Inner values reused — safe because we only
+  // read from baseline, never mutate it in place.
+  stateBaseline = { ...fullState };
+}
+
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a == null || b == null) return false;
+  if (typeof a !== 'object' || typeof b !== 'object') return false;
+  try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; }
+}
+
+function computeKeyDiff(key: string, current: unknown, base: unknown): unknown {
+  const strat = MERGE_STRATEGIES[key] ?? { kind: 'replace' };
+  if (strat.kind === 'replace') {
+    return deepEqual(current, base) ? undefined : current;
+  }
+  if (strat.kind === 'map') {
+    const curMap = (current ?? {}) as Record<string, unknown>;
+    const baseMap = (base ?? {}) as Record<string, unknown>;
+    const upsert: Record<string, unknown> = {};
+    const remove: string[] = [];
+    for (const [k, v] of Object.entries(curMap)) {
+      if (!deepEqual(v, baseMap[k])) upsert[k] = v;
+    }
+    for (const k of Object.keys(baseMap)) {
+      if (!(k in curMap)) remove.push(k);
+    }
+    if (Object.keys(upsert).length === 0 && remove.length === 0) return undefined;
+    const out: Record<string, unknown> = { __upsert: upsert };
+    if (remove.length > 0) out.__remove = remove;
+    return out;
+  }
+  if (strat.kind === 'arrayById') {
+    const curArr = (current ?? []) as Array<Record<string, unknown>>;
+    const baseArr = (base ?? []) as Array<Record<string, unknown>>;
+    const idKey = strat.idKey;
+    const curById = new Map<string, Record<string, unknown>>();
+    for (const item of curArr) curById.set(String(item[idKey]), item);
+    const baseById = new Map<string, Record<string, unknown>>();
+    for (const item of baseArr) baseById.set(String(item[idKey]), item);
+    const upsert: Record<string, unknown> = {};
+    const remove: string[] = [];
+    for (const [id, item] of curById) {
+      if (!deepEqual(item, baseById.get(id))) upsert[id] = item;
+    }
+    for (const id of baseById.keys()) {
+      if (!curById.has(id)) remove.push(id);
+    }
+    if (Object.keys(upsert).length === 0 && remove.length === 0) return undefined;
+    const out: Record<string, unknown> = { __upsert: upsert, __idKey: idKey };
+    if (remove.length > 0) out.__remove = remove;
+    return out;
+  }
+  if (strat.kind === 'stringSet' || strat.kind === 'numberSet') {
+    const curArr = (current ?? []) as unknown[];
+    const baseArr = (base ?? []) as unknown[];
+    const baseSet = new Set(baseArr);
+    const curSet = new Set(curArr);
+    const add = curArr.filter((x) => !baseSet.has(x));
+    const remove = baseArr.filter((x) => !curSet.has(x));
+    if (add.length === 0 && remove.length === 0) return undefined;
+    const out: Record<string, unknown> = {};
+    if (add.length > 0) out.__add = add;
+    if (remove.length > 0) out.__remove = remove;
+    return out;
+  }
+  return undefined;
+}
+
+function computeStateDiff(current: Record<string, unknown>): Record<string, unknown> | null {
+  const patch: Record<string, unknown> = {};
+  const keys = new Set([...Object.keys(current), ...Object.keys(stateBaseline)]);
+  for (const key of keys) {
+    const d = computeKeyDiff(key, current[key], stateBaseline[key]);
+    if (d !== undefined) patch[key] = d;
+  }
+  return Object.keys(patch).length === 0 ? null : patch;
+}
+
+function advanceBaseline(sent: Record<string, unknown>, current: Record<string, unknown>): void {
+  // After a successful PATCH, baseline catches up to what the server now has.
+  // Simplest safe path: baseline = current (everything the server just accepted).
+  void sent; // retained for future refinement if we need key-level advance
+  setBaseline(current);
+}
+
 const serverStorage: StateStorage = {
   getItem: async (name: string) => {
     const available = await checkServerStorage();
@@ -114,7 +258,9 @@ const serverStorage: StateStorage = {
       if (!res.ok) { hydrationComplete = true; return null; }
       const data = await res.json();
       hydrationComplete = true;
-      if (!data || Object.keys(data).length === 0) return null;
+      if (!data || Object.keys(data).length === 0) { setBaseline({}); return null; }
+      // Capture baseline so subsequent setItem calls can diff against it.
+      setBaseline(data);
       return JSON.stringify({ state: data, version: 20 });
     } catch {
       hydrationComplete = true;
@@ -124,18 +270,23 @@ const serverStorage: StateStorage = {
   setItem: async (name: string, value: string) => {
     const available = await checkServerStorage();
     if (!available) { localStorage.setItem(name, value); return; }
-    // Don't PATCH empty/default state to server before hydration completes
     if (!hydrationComplete) return;
     if (setItemDebounceTimer) clearTimeout(setItemDebounceTimer);
     setItemDebounceTimer = setTimeout(async () => {
       try {
-        markOwnPatch();
         const parsed = JSON.parse(value);
-        await fetch(apiUrl('/api/state'), {
+        const current = parsed.state as Record<string, unknown>;
+        const patch = computeStateDiff(current);
+        if (!patch) return; // nothing changed
+        markOwnPatch();
+        const res = await fetch(apiUrl('/api/state'), {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(parsed.state),
+          body: JSON.stringify(patch),
         });
+        if (res.ok) {
+          advanceBaseline(patch, current);
+        }
       } catch (e) {
         console.error('[Store] Failed to save state to server:', e);
       }
@@ -217,6 +368,40 @@ import type {
 } from './types';
 import { generateId } from '@/lib/utils';
 
+// How commanderPosition was last determined — drives the Companion position badge
+export type PositionSource =
+  | 'FSDJump'
+  | 'Location'
+  | 'CarrierJump'
+  | 'Docked'
+  | 'SupercruiseExit'
+  | 'Journal Read'
+  | 'Server';
+
+// Returned from recordStationDock — summarises what's new since the last visit
+// so the overlay / companion can render a personalised "welcome back" message.
+export interface StationDockSummary {
+  marketId: number;
+  stationName: string;
+  systemName: string;
+  isFirstVisit: boolean;
+  dockedCount: number;               // including this visit
+  milestone: number | null;          // e.g. 10, 25, 50, 100, 250, 500 — null if not a milestone
+  anniversary: 'month' | 'year' | null; // triggered once per station per period
+  factionChanged: boolean;
+  previousFaction: string | null;    // non-null when factionChanged === true
+  currentFaction: string | null;
+  stateChanged: boolean;
+  previousState: string | null;
+  currentState: string | null;
+  influenceDelta: number | null;     // change since last docked visit, fraction points (e.g. 0.03 = +3%)
+  currentInfluence: number | null;
+  rank: number | null;               // 1-indexed position among all visited stations by dockedCount (null if not in top 20)
+}
+
+const DOCK_MILESTONES = [1, 10, 25, 50, 100, 250, 500, 1000];
+const DOCK_HISTORY_CAP = 10;
+
 interface AppState {
   // Projects
   projects: ColonizationProject[];
@@ -238,6 +423,38 @@ interface AppState {
   knownStations: Record<number, KnownStation>;
   upsertKnownStation: (station: KnownStation) => void;
   upsertKnownStations: (stations: KnownStation[]) => void;
+  /**
+   * Record a Docked event: increments dockedCount, tracks faction/state
+   * changes, and returns a summary of what changed so the overlay can
+   * render a consolidated "welcome back" message. MUST be called exactly
+   * once per Docked event.
+   */
+  recordStationDock: (
+    marketId: number,
+    payload: {
+      stationName: string;
+      systemName: string;
+      systemAddress: number;
+      timestamp: string;
+      faction?: string;
+      factionState?: string;
+      influence?: number; // controlling faction influence fraction (0..1)
+    },
+  ) => StationDockSummary;
+  /**
+   * Retroactively populate dock dossier fields from a full-journal scan.
+   * Merges with existing data — takes the MAX of dockedCount (so live
+   * increments aren't lost), MIN of firstDocked, MAX of lastDocked, and
+   * keeps whichever history list is longer.
+   */
+  applyDockHistoryBackfill: (
+    entries: { marketId: number; stationName: string; systemName: string; systemAddress: number;
+      firstDocked: string; lastDocked: string; dockedCount: number;
+      currentFaction: string | null; currentFactionState: string | null;
+      factionHistory: { name: string; changedAt: string }[];
+      stateHistory: { state: string; changedAt: string }[];
+    }[],
+  ) => void;
   updateStationBody: (marketId: number, body: string) => void;
   updateStationType: (marketId: number, stationType: string, fallback?: { stationName: string; systemName: string; systemAddress: number }) => void;
   // Body overrides for stations without marketId (keyed by "systemName|stationName" lowercase)
@@ -254,10 +471,19 @@ interface AppState {
   setLatestMarket: (market: MarketSnapshot) => void;
 
   // Commander position (live-updated by journal watcher on FSDJump)
-  commanderPosition: { systemName: string; systemAddress: number; coordinates: { x: number; y: number; z: number } } | null;
+  commanderPosition: { systemName: string; systemAddress: number; coordinates: { x: number; y: number; z: number }; source?: PositionSource; updatedAt?: string } | null;
+  // Current body/location at drop-out of supercruise — used by System View to mark "you are here"
+  currentBody: { systemAddress: number; bodyId: number; bodyName: string; bodyType: string; at: string } | null;
+  setCurrentBody: (body: { systemAddress: number; bodyId: number; bodyName: string; bodyType: string; at: string } | null) => void;
+  // Current ship context (updated by live watcher on Loadout / ShipyardSwap events)
+  currentShip: { shipId: number; type: string; name?: string; ident?: string; cargoCapacity?: number } | null;
+  setCurrentShip: (ship: { shipId: number; type: string; name?: string; ident?: string; cargoCapacity?: number } | null) => void;
+  // Travel-time matrix (keyed "fromMarketId:toMarketId:shipId" → TravelStat)
+  stationTravelTimes: Record<string, import('@/services/journalReader').TravelStat>;
+  setStationTravelTimes: (stats: Record<string, import('@/services/journalReader').TravelStat>) => void;
   carrierJumpCountdown: { destination: string; departureTime: string; systemAddress: number } | null;
   setCarrierJumpCountdown: (countdown: { destination: string; departureTime: string; systemAddress: number } | null) => void;
-  setCommanderPosition: (pos: { systemName: string; systemAddress: number; coordinates: { x: number; y: number; z: number } }) => void;
+  setCommanderPosition: (pos: { systemName: string; systemAddress: number; coordinates: { x: number; y: number; z: number }; source?: PositionSource; updatedAt?: string }) => void;
 
   // Ship cargo (live-updated by journal watcher)
   liveShipCargo: ShipCargo | null;
@@ -375,7 +601,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 export const useAppStore = create<AppState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       // Projects
       projects: [],
       addProject: (project) => {
@@ -560,8 +786,219 @@ export const useAppStore = create<AppState>()(
               const stationType = (existing?.stationType?.includes('_') && !station.stationType?.includes('_'))
                 ? existing.stationType
                 : station.stationType;
-              updated[station.marketId] = { ...station, body, stationType };
+              // Preserve dock dossier fields — populated by recordStationDock and the
+              // Sync All backfill; upserts must NOT wipe them.
+              updated[station.marketId] = {
+                ...station,
+                body,
+                stationType,
+                firstDocked: existing?.firstDocked,
+                lastDocked: existing?.lastDocked,
+                dockedCount: existing?.dockedCount,
+                factionState: existing?.factionState,
+                factionHistory: existing?.factionHistory,
+                stateHistory: existing?.stateHistory,
+                influenceHistory: existing?.influenceHistory,
+              };
             }
+          }
+          return { knownStations: updated };
+        }),
+
+      recordStationDock: (marketId, payload) => {
+        // Compute deltas against the current state, persist the update,
+        // return a summary for the caller to render.
+        const state = get();
+        const existing = state.knownStations[marketId];
+        const now = payload.timestamp;
+
+        // De-dupe guard: if the exact same dock timestamp was already recorded,
+        // skip to avoid double-counting (same event re-read after NotReadableError).
+        if (existing?.lastDocked === now && (existing.dockedCount ?? 0) > 0) {
+          return {
+            marketId,
+            stationName: payload.stationName,
+            systemName: payload.systemName,
+            isFirstVisit: false,
+            dockedCount: existing.dockedCount ?? 0,
+            milestone: null,
+            anniversary: null,
+            factionChanged: false,
+            previousFaction: null,
+            currentFaction: existing.faction ?? null,
+            stateChanged: false,
+            previousState: null,
+            currentState: existing.factionState ?? null,
+            influenceDelta: null,
+            currentInfluence: null,
+            rank: null,
+          };
+        }
+
+        const prevDockedCount = existing?.dockedCount ?? 0;
+        const newDockedCount = prevDockedCount + 1;
+
+        const isFirstVisit = !existing?.firstDocked;
+        const milestone = DOCK_MILESTONES.includes(newDockedCount) ? newDockedCount : null;
+
+        // Anniversary check (year or month since firstDocked)
+        let anniversary: 'month' | 'year' | null = null;
+        if (existing?.firstDocked && existing.lastDocked) {
+          const first = new Date(existing.firstDocked);
+          const nowDate = new Date(now);
+          const last = new Date(existing.lastDocked);
+          // Year: crossed a year boundary since firstDocked between last and now
+          const yearsBefore = Math.floor((last.getTime() - first.getTime()) / (365.25 * 86400_000));
+          const yearsNow = Math.floor((nowDate.getTime() - first.getTime()) / (365.25 * 86400_000));
+          if (yearsNow > yearsBefore && yearsNow >= 1) anniversary = 'year';
+          else {
+            const monthsBefore = Math.floor((last.getTime() - first.getTime()) / (30 * 86400_000));
+            const monthsNow = Math.floor((nowDate.getTime() - first.getTime()) / (30 * 86400_000));
+            // Only signal 'month' at 1-month, 6-month — not every month
+            if ((monthsNow === 1 || monthsNow === 6) && monthsNow > monthsBefore) anniversary = 'month';
+          }
+        }
+
+        const prevFaction = existing?.faction ?? null;
+        const currentFaction = payload.faction ?? prevFaction;
+        const factionChanged = !!(prevFaction && payload.faction && prevFaction !== payload.faction);
+
+        const prevState = existing?.factionState ?? null;
+        const currentState = payload.factionState ?? prevState;
+        const stateChanged = !!(prevState && payload.factionState && prevState !== payload.factionState);
+
+        // Influence delta: compare against last influence snapshot (NOT all-time)
+        const influenceHistory = existing?.influenceHistory ?? [];
+        const lastInfluence = influenceHistory.length > 0
+          ? influenceHistory[influenceHistory.length - 1].influence
+          : null;
+        const influenceDelta = (payload.influence !== undefined && lastInfluence !== null)
+          ? payload.influence - lastInfluence
+          : null;
+
+        // Build updated histories (bounded)
+        const newFactionHistory = [...(existing?.factionHistory ?? [])];
+        if (factionChanged && prevFaction) {
+          newFactionHistory.push({ name: prevFaction, changedAt: now });
+          if (newFactionHistory.length > 5) newFactionHistory.shift();
+        }
+        const newStateHistory = [...(existing?.stateHistory ?? [])];
+        if (stateChanged && payload.factionState) {
+          newStateHistory.push({ state: payload.factionState, changedAt: now });
+          if (newStateHistory.length > DOCK_HISTORY_CAP) newStateHistory.shift();
+        }
+        const newInfluenceHistory = [...influenceHistory];
+        if (payload.influence !== undefined) {
+          newInfluenceHistory.push({ ts: now, influence: payload.influence });
+          if (newInfluenceHistory.length > DOCK_HISTORY_CAP) newInfluenceHistory.shift();
+        }
+
+        // Persist. If no existing entry, create a minimal one so dock-tracking
+        // works even before upsertKnownStations fires (race with KB updates).
+        set((s) => {
+          const base: KnownStation = existing ?? {
+            stationName: payload.stationName,
+            stationType: '',
+            marketId,
+            systemName: payload.systemName,
+            systemAddress: payload.systemAddress,
+            distFromStarLS: null,
+            landingPads: null,
+            economies: [],
+            services: [],
+            lastSeen: now,
+          };
+          const updated: KnownStation = {
+            ...base,
+            faction: currentFaction ?? base.faction,
+            factionState: currentState ?? base.factionState,
+            firstDocked: existing?.firstDocked ?? now,
+            lastDocked: now,
+            dockedCount: newDockedCount,
+            factionHistory: newFactionHistory,
+            stateHistory: newStateHistory,
+            influenceHistory: newInfluenceHistory,
+          };
+          return { knownStations: { ...s.knownStations, [marketId]: updated } };
+        });
+
+        // Compute rank: count stations with dockedCount >= newDockedCount
+        const allCounts = Object.values(state.knownStations)
+          .map((s) => s.dockedCount ?? 0)
+          .filter((c) => c > 0);
+        const higherOrEqual = allCounts.filter((c) => c >= newDockedCount).length;
+        // Include THIS station if its previous dockedCount was < newDockedCount
+        // (otherwise it's already counted in allCounts at its new value)
+        const thisWasCountedAsIs = (existing?.dockedCount ?? 0) >= newDockedCount;
+        const rankRaw = thisWasCountedAsIs ? higherOrEqual : higherOrEqual + 1;
+        const rank = rankRaw <= 20 ? rankRaw : null;
+
+        return {
+          marketId,
+          stationName: payload.stationName,
+          systemName: payload.systemName,
+          isFirstVisit,
+          dockedCount: newDockedCount,
+          milestone,
+          anniversary,
+          factionChanged,
+          previousFaction: factionChanged ? prevFaction : null,
+          currentFaction,
+          stateChanged,
+          previousState: stateChanged ? prevState : null,
+          currentState,
+          influenceDelta,
+          currentInfluence: payload.influence ?? lastInfluence,
+          rank,
+        };
+      },
+
+      applyDockHistoryBackfill: (entries) =>
+        set((state) => {
+          const updated = { ...state.knownStations };
+          for (const e of entries) {
+            const existing = updated[e.marketId];
+            const base: KnownStation = existing ?? {
+              stationName: e.stationName,
+              stationType: '',
+              marketId: e.marketId,
+              systemName: e.systemName,
+              systemAddress: e.systemAddress,
+              distFromStarLS: null,
+              landingPads: null,
+              economies: [],
+              services: [],
+              lastSeen: e.lastDocked,
+            };
+            // Journal is authoritative — trust the backfill count directly.
+            // Math.max preserves over-counts from past bugs, which can't self-correct.
+            // First/last timestamps still use the broader range between sources.
+            const mergedCount = e.dockedCount;
+            const mergedFirst = existing?.firstDocked
+              ? (existing.firstDocked < e.firstDocked ? existing.firstDocked : e.firstDocked)
+              : e.firstDocked;
+            const mergedLast = existing?.lastDocked
+              ? (existing.lastDocked > e.lastDocked ? existing.lastDocked : e.lastDocked)
+              : e.lastDocked;
+            const mergedFactionHistory =
+              (existing?.factionHistory?.length ?? 0) >= e.factionHistory.length
+                ? existing?.factionHistory ?? []
+                : e.factionHistory;
+            const mergedStateHistory =
+              (existing?.stateHistory?.length ?? 0) >= e.stateHistory.length
+                ? existing?.stateHistory ?? []
+                : e.stateHistory;
+            updated[e.marketId] = {
+              ...base,
+              faction: existing?.faction ?? e.currentFaction ?? base.faction,
+              factionState: existing?.factionState ?? e.currentFactionState ?? base.factionState,
+              firstDocked: mergedFirst,
+              lastDocked: mergedLast,
+              dockedCount: mergedCount,
+              factionHistory: mergedFactionHistory,
+              stateHistory: mergedStateHistory,
+              influenceHistory: existing?.influenceHistory ?? [],
+            };
           }
           return { knownStations: updated };
         }),
@@ -625,6 +1062,12 @@ export const useAppStore = create<AppState>()(
       // Commander position
       commanderPosition: null,
       setCommanderPosition: (pos) => set({ commanderPosition: pos }),
+      currentBody: null,
+      setCurrentBody: (body) => set({ currentBody: body }),
+      currentShip: null,
+      setCurrentShip: (ship) => set({ currentShip: ship }),
+      stationTravelTimes: {},
+      setStationTravelTimes: (stats) => set({ stationTravelTimes: stats }),
       carrierJumpCountdown: null,
       setCarrierJumpCountdown: (countdown) => set({ carrierJumpCountdown: countdown }),
 
@@ -945,6 +1388,9 @@ export const useAppStore = create<AppState>()(
         lastSessionSummaryShown: state.lastSessionSummaryShown,
         stationBodyOverrides: state.stationBodyOverrides,
         commanderPosition: state.commanderPosition,
+        currentBody: state.currentBody,
+        currentShip: state.currentShip,
+        stationTravelTimes: state.stationTravelTimes,
         fleetCarrierSpaceUsage: state.fleetCarrierSpaceUsage,
       }),
       migrate: (persistedState: unknown, version: number) => {

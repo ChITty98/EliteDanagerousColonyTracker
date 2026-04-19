@@ -63,6 +63,82 @@ interface ScoutedSystem {
 
 type SearchPhase = 'idle' | 'resolving' | 'searching' | 'done' | 'error';
 
+/**
+ * Scan local journal data (knownSystems + journalExplorationCache) for systems
+ * with known coordinates within `radius` ly of `coords`. Returns entries shaped
+ * like SpanshSearchSystem so they can be merged with Spansh results. Systems
+ * without coordinates are excluded — nothing we can do about those offline.
+ */
+function searchLocalJournal(
+  coords: { x: number; y: number; z: number },
+  radius: number,
+  knownSystems: Record<string, import('@/store/types').KnownSystem>,
+  cache: Record<number, import('@/services/journalReader').JournalExplorationSystem>,
+): SpanshSearchSystem[] {
+  const out: SpanshSearchSystem[] = [];
+  const seenAddr = new Set<number>();
+
+  const pushEntry = (
+    addr: number,
+    name: string,
+    c: { x: number; y: number; z: number },
+    bodyCount: number,
+    population: number,
+    economy: string,
+    secondaryEconomy: string,
+  ) => {
+    if (seenAddr.has(addr)) return;
+    const dx = c.x - coords.x;
+    const dy = c.y - coords.y;
+    const dz = c.z - coords.z;
+    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (distance > radius) return;
+    seenAddr.add(addr);
+    out.push({
+      id64: addr,
+      name,
+      distance,
+      x: c.x, y: c.y, z: c.z,
+      bodies: [],
+      body_count: bodyCount,
+      stations: [],
+      population,
+      primary_economy: economy || 'Unknown',
+      secondary_economy: secondaryEconomy || '',
+    });
+  };
+
+  for (const ks of Object.values(knownSystems)) {
+    if (!ks.coordinates || !ks.systemAddress) continue;
+    const cached = cache[ks.systemAddress];
+    pushEntry(
+      ks.systemAddress,
+      ks.systemName,
+      ks.coordinates,
+      cached?.bodyCount ?? ks.bodyCount ?? 0,
+      ks.population ?? 0,
+      ks.economyLocalised ?? ks.economy ?? 'Unknown',
+      ks.secondEconomyLocalised ?? ks.secondEconomy ?? '',
+    );
+  }
+
+  // Include any cache-only systems (scanned from a location we haven't jumped into via FSDJump)
+  for (const sys of Object.values(cache)) {
+    if (!sys.coordinates || !sys.systemAddress) continue;
+    pushEntry(
+      sys.systemAddress,
+      sys.systemName,
+      sys.coordinates,
+      sys.bodyCount ?? 0,
+      0,
+      'Unknown',
+      '',
+    );
+  }
+
+  return out.sort((a, b) => a.distance - b.distance);
+}
+
 export function ScoutingPage() {
   const settings = useAppStore((s) => s.settings);
   const projects = useAppStore((s) => s.projects);
@@ -108,6 +184,7 @@ export function ScoutingPage() {
   const [systems, setSystems] = useState<ScoutedSystem[]>([]);
   const [searchPhase, setSearchPhase] = useState<SearchPhase>('idle');
   const [searchError, setSearchError] = useState('');
+  const [searchWarning, setSearchWarning] = useState('');
   const [totalCount, setTotalCount] = useState(0);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [scoutAllProgress, setScoutAllProgress] = useState<{ done: number; total: number } | null>(null);
@@ -160,24 +237,61 @@ export function ScoutingPage() {
     if (!refSystem.trim()) return;
     setSearchPhase('resolving');
     setSearchError('');
+    setSearchWarning('');
     setSystems([]);
     setExpandedId(null);
 
     try {
-      const resolved = await resolveSystemName(refSystem.trim());
+      // Resolve the reference system: try Spansh first, fall back to local knownSystems
+      let resolved: { x: number; y: number; z: number } | null = null;
+      try {
+        const spanshResolved = await resolveSystemName(refSystem.trim());
+        if (spanshResolved) resolved = { x: spanshResolved.x, y: spanshResolved.y, z: spanshResolved.z };
+      } catch {
+        // Spansh unreachable — fall through to local
+      }
       if (!resolved) {
-        setSearchError(`System "${refSystem}" not found in Spansh database`);
+        const localRef = knownSystems[refSystem.trim().toLowerCase()];
+        if (localRef?.coordinates) {
+          resolved = localRef.coordinates;
+        }
+      }
+      if (!resolved) {
+        setSearchError(`System "${refSystem}" not found in Spansh and no local journal entry`);
         setSearchPhase('error');
         return;
       }
 
-      setRefCoords({ x: resolved.x, y: resolved.y, z: resolved.z });
+      setRefCoords(resolved);
       setSearchPhase('searching');
-      const results = await searchNearbySystems(
-        { x: resolved.x, y: resolved.y, z: resolved.z },
-        searchRadius,
-        maxResults,
-      );
+
+      // Try Spansh search — fall through to local-only if it fails
+      let spanshResults: SpanshSearchSystem[] = [];
+      let spanshFailed = false;
+      try {
+        spanshResults = await searchNearbySystems(resolved, searchRadius, maxResults);
+      } catch {
+        spanshFailed = true;
+      }
+
+      // Always scan local data so we never lose systems we've personally scanned
+      const localResults = searchLocalJournal(resolved, searchRadius, knownSystems, journalExplorationCache);
+      const spanshAddrs = new Set(spanshResults.map((s) => s.id64));
+      const localOnly = localResults.filter((l) => !spanshAddrs.has(l.id64));
+      let results: SpanshSearchSystem[] = [...spanshResults, ...localOnly].sort((a, b) => a.distance - b.distance);
+      if (maxResults > 0 && results.length > maxResults) results = results.slice(0, maxResults);
+
+      // Set banner text about source / fallback state
+      if (spanshFailed) {
+        if (results.length === 0) {
+          setSearchError('Spansh unavailable and no local journal data within range');
+          setSearchPhase('error');
+          return;
+        }
+        setSearchWarning(`Spansh unavailable \u2014 showing ${results.length} system(s) from your journal only`);
+      } else if (localOnly.length > 0) {
+        setSearchWarning(`Spansh returned ${spanshResults.length} \u2014 added ${localOnly.length} more from your journal data`);
+      }
 
       setTotalCount(results.length);
       // Hydrate from persisted scouting data
@@ -222,7 +336,7 @@ export function ScoutingPage() {
       setSearchError(err instanceof Error ? err.message : 'Search failed');
       setSearchPhase('error');
     }
-  }, [refSystem, searchRadius, maxResults, scoutedSystems, colonizedSystems, upsertScoutedSystem]);
+  }, [refSystem, searchRadius, maxResults, scoutedSystems, colonizedSystems, upsertScoutedSystem, knownSystems, journalExplorationCache]);
 
   // --- Scout a single system (score from journal cache or Spansh + persist) ---
   const scoutSystem = useCallback(async (id64: number) => {
@@ -233,7 +347,25 @@ export function ScoutingPage() {
     try {
       const searchEntry = systems.find((s) => s.search.id64 === id64);
       const existingScouted = scoutedSystems[id64];
-      const journalCached = journalExplorationCache[id64];
+      let journalCached = journalExplorationCache[id64];
+
+      // If the cache is empty, the live watcher may have missed scan events
+      // (Chrome FSA NotReadableError). Inline re-parse the journals now so
+      // this manual Rescore always sees fresh data before falling back to Spansh.
+      if (!journalCached || journalCached.scannedBodies.length === 0) {
+        try {
+          const data = await extractExplorationData();
+          const fresh = data.get(id64);
+          if (fresh && fresh.scannedBodies.length > 0) {
+            journalCached = fresh;
+            // Merge into store so other pages benefit
+            const current = useAppStore.getState().journalExplorationCache;
+            setJournalExplorationCache({ ...current, [id64]: fresh });
+          }
+        } catch {
+          // Journal folder not accessible — continue with Spansh-only path
+        }
+      }
 
       // Try journal cache first (journal-first philosophy)
       let bodies: SpanshDumpBody[] = [];
@@ -1139,6 +1271,13 @@ export function ScoutingPage() {
       {searchPhase === 'error' && (
         <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 mb-4 text-sm text-red-400">
           {searchError}
+        </div>
+      )}
+
+      {/* Warning — Spansh fallback / local-merge notice */}
+      {searchPhase === 'done' && searchWarning && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 mb-4 text-sm text-amber-300">
+          {'\u26A0 '}{searchWarning}
         </div>
       )}
 

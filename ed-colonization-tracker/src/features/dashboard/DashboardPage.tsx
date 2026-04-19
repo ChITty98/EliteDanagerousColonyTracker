@@ -518,9 +518,10 @@ export function DashboardPage() {
 
       // Travel-time matrix — per ship, sourcing-relevant trips only
       try {
-        const stats = await extractStationTravelTimes();
+        const { stats, latestShip } = await extractStationTravelTimes();
         useAppStore.getState().setStationTravelTimes(stats);
-        serverLog(`Travel-time matrix: ${Object.keys(stats).length} station pairs`);
+        if (latestShip) useAppStore.getState().setCurrentShip(latestShip);
+        serverLog(`Travel-time matrix: ${Object.keys(stats).length} station pairs${latestShip ? `, current ship = ${latestShip.type}` : ''}`);
       } catch (ttErr) {
         serverLog(`Travel-time scan failed: ${ttErr instanceof Error ? ttErr.message : String(ttErr)}`);
       }

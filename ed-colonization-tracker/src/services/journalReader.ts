@@ -2247,7 +2247,7 @@ export interface TravelStat {
  */
 export async function extractStationTravelTimes(
   dirHandle?: FileSystemDirectoryHandle,
-): Promise<Record<string, TravelStat>> {
+): Promise<{ stats: Record<string, TravelStat>; latestShip: { shipId: number; type: string; name?: string; ident?: string; cargoCapacity?: number } | null }> {
   const handle = dirHandle || journalDirHandle;
   if (!handle) throw new Error('No journal folder selected');
   await ensurePermission(handle);
@@ -2258,6 +2258,7 @@ export async function extractStationTravelTimes(
   const trips = new Map<string, TripList>();
 
   let activeShipId: number | null = null;
+  let latestShip: { shipId: number; type: string; name?: string; ident?: string; cargoCapacity?: number } | null = null;
   let currentDock: null | {
     stationName: string;
     marketId: number;
@@ -2274,8 +2275,22 @@ export async function extractStationTravelTimes(
       try { ev = JSON.parse(line); } catch { continue; }
       switch (ev.event) {
         case 'Loadout':
+          if (ev.ShipID != null) {
+            activeShipId = ev.ShipID;
+            latestShip = {
+              shipId: ev.ShipID,
+              type: ev.Ship ?? '',
+              name: ev.ShipName,
+              ident: ev.ShipIdent,
+              cargoCapacity: ev.CargoCapacity,
+            };
+          }
+          break;
         case 'ShipyardSwap':
-          if (ev.ShipID != null) activeShipId = ev.ShipID;
+          if (ev.ShipID != null) {
+            activeShipId = ev.ShipID;
+            latestShip = { shipId: ev.ShipID, type: ev.ShipType ?? '' };
+          }
           break;
         case 'Docked':
           currentDock = {
@@ -2350,7 +2365,7 @@ export async function extractStationTravelTimes(
   }
   // Clean up static holder
   (extractStationTravelTimes as unknown as { _pendingUndock?: unknown })._pendingUndock = undefined;
-  return out;
+  return { stats: out, latestShip };
 }
 
 /**

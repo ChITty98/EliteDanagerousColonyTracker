@@ -141,6 +141,39 @@ async function initWatcher(dirHandle: FileSystemDirectoryHandle): Promise<void> 
   const file = await latest.handle.getFile();
   state.byteOffset = file.size;
 
+  // Scan the current journal file for the most recent Loadout / ShipyardSwap
+  // so `currentShip` is populated at startup. Otherwise the watcher starts
+  // from file-end and never sees the Loadout that fires at game login.
+  try {
+    const text = await file.text();
+    const lines = text.split('\n');
+    // Walk backwards — stop at first Loadout or ShipyardSwap found
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      try {
+        const ev = JSON.parse(line);
+        if (ev.event === 'Loadout' && ev.ShipID != null) {
+          useAppStore.getState().setCurrentShip({
+            shipId: ev.ShipID,
+            type: ev.Ship,
+            name: ev.ShipName,
+            ident: ev.ShipIdent,
+            cargoCapacity: ev.CargoCapacity,
+          });
+          break;
+        }
+        if (ev.event === 'ShipyardSwap' && ev.ShipID != null) {
+          useAppStore.getState().setCurrentShip({
+            shipId: ev.ShipID,
+            type: ev.ShipType,
+          });
+          break;
+        }
+      } catch { /* skip malformed */ }
+    }
+  } catch { /* journal read failed — currentShip stays whatever it was */ }
+
   // Capture initial timestamps for companion files
   try {
     const cargoHandle = await dirHandle.getFileHandle('Cargo.json');

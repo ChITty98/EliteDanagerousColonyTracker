@@ -3,13 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAppStore } from '@/store';
 import { formatNumber, cleanProjectName } from '@/lib/utils';
 import { COMMODITY_BY_ID } from '@/data/commodities';
-import {
-  isFileSystemAccessSupported,
-  getJournalFolderHandle,
-  selectJournalFolder,
-  estimateCarrierCargo,
-  type MultiCarrierCargo,
-} from '@/services/journalReader';
+import type { MultiCarrierCargo } from '@/services/journalReader';
 
 interface CargoProjectMatch {
   projectId: string;
@@ -22,7 +16,6 @@ export function FleetCarrierPage() {
   const settings = useAppStore((s) => s.settings);
   const allProjects = useAppStore((s) => s.projects);
   const carrierCargo = useAppStore((s) => s.carrierCargo);
-  const setCarrierCargo = useAppStore((s) => s.setCarrierCargo);
 
   // Initialize from persisted store data
   const persistedMyCarrier = settings.myFleetCarrier ? carrierCargo[settings.myFleetCarrier] : null;
@@ -74,49 +67,53 @@ export function FleetCarrierPage() {
     setLoading(true);
     setError('');
     try {
-      if (!getJournalFolderHandle()) {
-        const handle = await selectJournalFolder();
-        if (!handle) {
-          setError('No folder selected.');
-          setLoading(false);
-          return;
-        }
+      // Server-side refresh: reads Cargo.json + Market.json, promotes to carrierCargo
+      // if we're docked at an FC, otherwise saves as marketSnapshot. Broadcasts
+      // state_updated and ship_cargo SSE so every connected client re-renders.
+      // Works on iPad / Firefox / Safari — no FSA required.
+      const token = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
+      const url = token ? `/api/refresh-companion-files?token=${token}` : '/api/refresh-companion-files';
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(`refresh HTTP ${res.status}: ${body || 'server error'}`);
       }
-      const currentCargo = useAppStore.getState().carrierCargo;
-      const result = await estimateCarrierCargo(
-        undefined,
-        settings.myFleetCarrierMarketId,
-        settings.myFleetCarrier,
-        settings.squadronCarrierCallsigns,
-        currentCargo,
-      );
-      setMultiCarrierCargo(result);
+      const data = await res.json();
+      // Force a state rehydrate so the carrierCargo patch the server wrote lands in the store
+      try { await useAppStore.persist.rehydrate(); } catch { /* best-effort */ }
+
+      // Build the local MultiCarrierCargo view from the updated store for the UI
+      const store = useAppStore.getState();
+      const myPersisted = settings.myFleetCarrier ? store.carrierCargo[settings.myFleetCarrier] : null;
+      const squadronList = (settings.squadronCarrierCallsigns || []).map((callsign) => {
+        const entry = store.carrierCargo[callsign];
+        if (!entry) return null;
+        return {
+          callsign,
+          cargo: {
+            items: entry.items,
+            isEstimate: entry.isEstimate,
+            earliestTransfer: entry.updatedAt,
+            latestTransfer: entry.updatedAt,
+            carrierCallsign: callsign,
+          },
+        };
+      }).filter(Boolean) as { callsign: string; cargo: MultiCarrierCargo['squadronCarriers'][number]['cargo'] }[];
+
+      setMultiCarrierCargo({
+        myCarrier: myPersisted ? {
+          items: myPersisted.items,
+          isEstimate: myPersisted.isEstimate,
+          earliestTransfer: myPersisted.updatedAt,
+          latestTransfer: myPersisted.updatedAt,
+          carrierCallsign: myPersisted.callsign,
+        } : null,
+        squadronCarriers: squadronList,
+      });
       setLoaded(true);
 
-      // Persist to store so cargo survives page navigation and restarts
-      // Only overwrite if new data is at least as good (don't replace accurate with estimate)
-      const now = new Date().toISOString();
-      if (result.myCarrier && settings.myFleetCarrier) {
-        const existing = currentCargo[settings.myFleetCarrier];
-        if (!existing || existing.isEstimate || !result.myCarrier.isEstimate) {
-          setCarrierCargo(settings.myFleetCarrier, {
-            callsign: settings.myFleetCarrier,
-            items: result.myCarrier.items,
-            isEstimate: result.myCarrier.isEstimate,
-            updatedAt: result.myCarrier.isEstimate ? (existing?.updatedAt || now) : now,
-          });
-        }
-      }
-      for (const sc of result.squadronCarriers) {
-        const existing = currentCargo[sc.callsign];
-        if (!existing || existing.isEstimate || !sc.cargo.isEstimate) {
-          setCarrierCargo(sc.callsign, {
-            callsign: sc.callsign,
-            items: sc.cargo.items,
-            isEstimate: sc.cargo.isEstimate,
-            updatedAt: sc.cargo.isEstimate ? (existing?.updatedAt || now) : now,
-          });
-        }
+      if (data.marketOutcome && data.marketOutcome.type === 'none' && !myPersisted) {
+        setError('No FC market data yet — dock at your FC and open the Commodities market, then tap Refresh again.');
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load carrier cargo');
@@ -174,12 +171,6 @@ export function FleetCarrierPage() {
         </p>
       </div>
 
-      {!isFileSystemAccessSupported() && (
-        <div className="mb-4 px-4 py-2 bg-destructive/10 border border-destructive/20 rounded-lg text-sm text-destructive">
-          File System Access API not supported in this browser. Use Chrome or Edge.
-        </div>
-      )}
-
       {error && (
         <div className="mb-4 px-4 py-2 bg-destructive/10 border border-destructive/20 rounded-lg text-sm text-destructive">
           {error}
@@ -193,7 +184,7 @@ export function FleetCarrierPage() {
           </p>
           <button
             onClick={loadCarrierCargo}
-            disabled={loading || !isFileSystemAccessSupported()}
+            disabled={loading}
             className="px-4 py-2 bg-primary/20 text-primary rounded-lg text-sm hover:bg-primary/30 transition-colors disabled:opacity-50"
           >
             {loading ? 'Loading...' : '\u{1F4E6} Load Carrier Cargo'}

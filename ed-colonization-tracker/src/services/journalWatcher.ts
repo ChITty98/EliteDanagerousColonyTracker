@@ -82,16 +82,16 @@ let accLocationEvents: ReturnType<typeof parseJournalLines>['locationEvents'] = 
  * Idempotent — calling when already running is a no-op.
  */
 export function startJournalWatcher(): void {
-  if (state.running) return;
-  const handle = getJournalFolderHandle();
-  if (!handle) return;
-
-  state.running = true;
-
-  // Do an initial scan to set up state without re-processing
-  initWatcher(handle).then(() => {
-    state.intervalId = setInterval(() => pollJournal(handle), POLL_INTERVAL_MS);
-  });
+  // Phase B cutover: journal polling is now server-side (server/journal/watcher.js).
+  // The server reads new events and broadcasts state_updated SSE + targeted events
+  // (commander_position, carrier_cargo_updated, ship_cargo, etc.) to every client.
+  // This function is kept as a no-op so existing callers don't break — they all
+  // expect it to be idempotent and side-effect-free if there's no folder handle.
+  //
+  // To roll back: restore the original body (initWatcher + setInterval) and the
+  // browser will poll alongside the server. Both writers merge through sparse
+  // PATCH, so there's no state corruption, just duplicate work.
+  return;
 }
 
 /**

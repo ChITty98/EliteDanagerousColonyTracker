@@ -61,6 +61,7 @@ export function SourcesPage() {
   const commanderPosition = useAppStore((s) => s.commanderPosition);
   const currentShip = useAppStore((s) => s.currentShip);
   const stationTravelTimes = useAppStore((s) => s.stationTravelTimes);
+  const fleetCarriers = useAppStore((s) => s.fleetCarriers);
   const activeProjects = useMemo(() => projects.filter((p) => p.status === 'active'), [projects]);
 
   const [selectedProjectId, setSelectedProjectId] = useState<string | 'all'>('all');
@@ -134,7 +135,7 @@ export function SourcesPage() {
         hasLargePads: v.hasLargePads,
         commodities: v.commodities.map((id) => ({
           commodityId: id,
-          name: COMMODITY_BY_ID[id]?.name || id,
+          name: COMMODITY_BY_ID.get(id)?.name || id,
           buyPrice: v.commodityPrices?.[id]?.buyPrice ?? 0,
           stock: null, // journal data has no stock
         })),
@@ -161,7 +162,7 @@ export function SourcesPage() {
       }[] = [];
       for (const st of allStations) {
         for (const c of st.commodities) {
-          const defName = COMMODITY_BY_ID[c.commodityId]?.name || c.name;
+          const defName = COMMODITY_BY_ID.get(c.commodityId)?.name || c.name;
           if (
             c.commodityId.toLowerCase().includes(q) ||
             c.name.toLowerCase().includes(q) ||
@@ -532,7 +533,7 @@ export function SourcesPage() {
                         <tbody>
                           {[...s.commodities].sort((a, b) => (b.stock ?? 0) - (a.stock ?? 0)).map((c) => (
                             <tr key={c.commodityId} className="border-t border-border/20">
-                              <td className="py-1 pr-3 text-foreground">{COMMODITY_BY_ID[c.commodityId]?.name || c.name}</td>
+                              <td className="py-1 pr-3 text-foreground">{COMMODITY_BY_ID.get(c.commodityId)?.name || c.name}</td>
                               <td className="py-1 pr-3 text-right tabular-nums">
                                 {c.stock == null ? <span className="text-muted-foreground/50">—</span> : c.stock.toLocaleString()}
                               </td>
@@ -821,7 +822,7 @@ export function SourcesPage() {
                   priceSeen?: string;
                   distance?: number | null;  // ly from the reference system
                   stock?: number | null;      // from market snapshot if available
-                  travel?: { avgSeconds: number; tripCount: number } | null; // journal-derived travel stat for current ship
+                  travel?: { avgSeconds: number; tripCount: number; via: 'here' | 'fc' | 'last'; fromStation?: string } | null; // journal-derived travel stat for current ship
                 }[] = [];
                 const refLower = refSystem.toLowerCase();
                 // Distance anchor is the commander's CURRENT location (so you can
@@ -838,21 +839,79 @@ export function SourcesPage() {
                   const dz = target.coordinates.z - here.z;
                   return Math.sqrt(dx * dx + dy * dy + dz * dz);
                 };
-                // Travel-time lookup — from user's currently-docked station (if any)
-                // to a source station, for the currently active ship.
+                // Travel-time lookup: primary is "from the most recently docked
+                // station in the current system, in the current ship". Fall back
+                // to the user's FC (which usually has the richest trip history
+                // for haulers) if no direct data, and finally to the globally
+                // most-recently-docked non-ephemeral station. Each fallback is
+                // tagged so the UI can surface the source.
                 const fromMarketId = (() => {
                   if (!commanderPosition?.systemAddress) return null;
-                  const here = Object.values(knownStations).find(
+                  // Sort by lastDocked desc — `.find()` returned whatever came
+                  // first in iteration order, which was often a stale
+                  // construction site for colonized systems.
+                  const candidates = Object.values(knownStations).filter(
                     (s) => s.systemAddress === commanderPosition.systemAddress && s.lastDocked,
                   );
-                  return here?.marketId ?? null;
+                  candidates.sort((a, b) => (b.lastDocked ?? '').localeCompare(a.lastDocked ?? ''));
+                  return candidates[0]?.marketId ?? null;
+                })();
+                const fromStationName = fromMarketId != null ? (knownStations[fromMarketId]?.stationName ?? null) : null;
+                // FC MarketID: prefer the settings value, but fall back to
+                // fleetCarriers list lookup by callsign, then knownStations
+                // scan. settings.myFleetCarrierMarketId is only populated if
+                // the user set it explicitly — for many users it's null even
+                // when their callsign is set.
+                const fcName = settings.myFleetCarrier || null;
+                const fcMarketId = (() => {
+                  if (settings.myFleetCarrierMarketId != null) return settings.myFleetCarrierMarketId;
+                  if (!fcName) return null;
+                  const fc = (Array.isArray(fleetCarriers) ? fleetCarriers : []).find(
+                    (f) => f.callsign === fcName,
+                  );
+                  if (fc) return fc.marketId;
+                  // Final fallback — scan knownStations for an entry whose name matches the callsign
+                  const station = Object.values(knownStations).find(
+                    (s) => s.stationName === fcName,
+                  );
+                  return station ? station.marketId : null;
+                })();
+                // Secondary fallback target: globally most-recent non-ephemeral dock
+                const lastDockedMarketId = (() => {
+                  const candidates = Object.values(knownStations).filter((s) => s.lastDocked);
+                  candidates.sort((a, b) => (b.lastDocked ?? '').localeCompare(a.lastDocked ?? ''));
+                  return candidates[0]?.marketId ?? null;
                 })();
                 const shipId = currentShip?.shipId ?? null;
-                const travelStatFor = (toMarketId: number): { avgSeconds: number; tripCount: number } | null => {
-                  if (!fromMarketId || shipId == null) return null;
-                  const key = `${fromMarketId}:${toMarketId}:${shipId}`;
+
+                const lookupTravel = (fromMid: number, toMarketId: number) => {
+                  if (shipId == null) return null;
+                  const key = `${fromMid}:${toMarketId}:${shipId}`;
                   const stat = stationTravelTimes[key];
                   return stat ? { avgSeconds: stat.recentAvgSeconds, tripCount: stat.tripCount } : null;
+                };
+
+                const travelStatFor = (toMarketId: number): { avgSeconds: number; tripCount: number; via: 'here' | 'fc' | 'last'; fromStation?: string } | null => {
+                  if (shipId == null) return null;
+                  // 1. Primary: from current dock
+                  if (fromMarketId) {
+                    const direct = lookupTravel(fromMarketId, toMarketId);
+                    if (direct) return { ...direct, via: 'here', fromStation: fromStationName ?? undefined };
+                  }
+                  // 2. Fallback: from user's FC (where most hauls start)
+                  if (fcMarketId && fcMarketId !== fromMarketId) {
+                    const viaFc = lookupTravel(fcMarketId, toMarketId);
+                    if (viaFc) return { ...viaFc, via: 'fc', fromStation: fcName ?? undefined };
+                  }
+                  // 3. Last resort: from most-recently-docked station globally
+                  if (lastDockedMarketId && lastDockedMarketId !== fromMarketId && lastDockedMarketId !== fcMarketId) {
+                    const viaLast = lookupTravel(lastDockedMarketId, toMarketId);
+                    if (viaLast) {
+                      const n = knownStations[lastDockedMarketId]?.stationName;
+                      return { ...viaLast, via: 'last', fromStation: n ?? undefined };
+                    }
+                  }
+                  return null;
                 };
                 // Stock lookup for a station + commodity (only available in marketSnapshots)
                 const findStock = (marketId: number | undefined, commodityId: string): number | null => {
@@ -1011,8 +1070,16 @@ export function SourcesPage() {
                             </td>
                             <td className="text-right px-4 py-2 text-muted-foreground">
                               {r.travel ? (
-                                <span title={`${r.travel.tripCount} trips`}>
+                                <span
+                                  title={`${r.travel.tripCount} trips${r.travel.fromStation ? ` from ${r.travel.fromStation}` : ''}`}
+                                  className={r.travel.via === 'here' ? '' : 'text-sky-400/80'}
+                                >
                                   {Math.floor(r.travel.avgSeconds / 60)}m {Math.round(r.travel.avgSeconds % 60)}s
+                                  {r.travel.via !== 'here' && (
+                                    <span className="text-[10px] text-muted-foreground/70 ml-1">
+                                      {r.travel.via === 'fc' ? 'via FC' : 'via last dock'}
+                                    </span>
+                                  )}
                                 </span>
                               ) : '\u2014'}
                             </td>

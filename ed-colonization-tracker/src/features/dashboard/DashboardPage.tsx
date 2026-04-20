@@ -5,26 +5,18 @@ import { cleanJournalString, cleanProjectName } from '@/lib/utils';
 import { resolveStationType, getStationTypeInfo } from '@/data/stationTypes';
 import { computeTierPoints } from '@/data/installationTypes';
 import {
-  isFileSystemAccessSupported,
   getJournalFolderHandle,
-  selectJournalFolder,
-  scanJournalFiles,
-  extractKnowledgeBase,
-  readMarketJson,
-  readShipCargo,
   isColonisationShip,
   isConstructionStationName,
-  scanForVisitedMarkets,
   scanRecentContributions,
   scanSessionStats,
-  extractLatestCargoCapacity,
   extractExplorationData,
-  extractDockHistory,
-  extractStationTravelTimes,
   journalBodiesToSpanshFormat,
   type RecentContributionSummary,
   type SessionStats,
 } from '@/services/journalReader';
+import type { ProjectCommodity, MarketSnapshot } from '@/store/types';
+import type { ShipCargo } from '@/services/journalReader';
 import { SessionSummaryModal } from './SessionSummaryModal';
 import { SummaryStatsBanner } from './SummaryStatsBanner';
 import { SystemCardsGrid } from './SystemCardsGrid';
@@ -452,45 +444,68 @@ export function DashboardPage() {
         }).catch(() => {});
       } catch { /* ignore */ }
     };
-    serverLog('Starting — handleSyncAll invoked');
+    serverLog('Starting — handleSyncAll invoked (server-side)');
     setSyncing(true);
     setSyncMessage('');
     try {
-      if (!getJournalFolderHandle()) {
-        const handle = await selectJournalFolder();
-        if (!handle) {
-          setSyncMessage('No folder selected.');
-          setSyncing(false);
-          return;
-        }
+      // Server-side journal reader does the heavy lift: knowledge base,
+      // dock history, travel times, exploration, visited markets, cargo capacity,
+      // depots, current Market.json + Cargo.json. The server writes results
+      // directly to colony-data.json via sparse PATCH and broadcasts state_updated
+      // SSE so this client (and any other connected device) rehydrates.
+      //
+      // Works from any device — no File System Access API, no Chrome requirement.
+      const token = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
+      const syncUrl = token ? `/api/sync-all?token=${token}` : '/api/sync-all';
+      const syncRes = await fetch(syncUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      if (!syncRes.ok) {
+        const errBody = await syncRes.text().catch(() => '');
+        throw new Error(`sync-all HTTP ${syncRes.status}: ${errBody || 'server error'}`);
       }
+      const sync = await syncRes.json() as {
+        ok: boolean;
+        elapsedMs: number;
+        journalDir: string;
+        filesScanned: number;
+        counts: Record<string, number>;
+        claimedSystems: string[];
+        currentShip: { shipId: number; type: string; name?: string; ident?: string; cargoCapacity?: number } | null;
+        cargoCapacity: number | null;
+        depots: {
+          marketId: number;
+          timestamp: string;
+          constructionProgress: number;
+          isComplete: boolean;
+          isFailed: boolean;
+          commodities: ProjectCommodity[];
+          systemName?: string;
+          systemAddress?: number;
+          stationName?: string;
+          stationType?: string;
+        }[];
+        latestMarket: MarketSnapshot | null;
+        shipCargo: ShipCargo | null;
+      };
+      serverLog(`Server scan: ${sync.filesScanned} files in ${sync.elapsedMs}ms (${sync.counts.systems} sys / ${sync.counts.stations} stn / ${sync.counts.travelTimes} travel / ${sync.depots.length} depots)`);
 
-      // Scan for depot data
-      const depots = await scanJournalFiles();
+      // Pull fresh state so the store reflects everything the server just persisted
+      // (knownSystems, knownStations, fleetCarriers, stationTravelTimes, etc.).
+      // The state_updated SSE would eventually do this too but we force it now so
+      // the depot-processing loop below sees fresh knownStations.
+      try { await useAppStore.persist.rehydrate(); } catch { /* best-effort */ }
+
+      const depots = sync.depots;
       const activeDepots = depots.filter((d) => !d.isComplete);
 
-      // Extract knowledge base
-      try {
-        const kb = await extractKnowledgeBase({
-          myFleetCarrier: settings.myFleetCarrier,
-          myFleetCarrierMarketId: settings.myFleetCarrierMarketId,
-          squadronCarrierCallsigns: settings.squadronCarrierCallsigns,
-        });
+      // Auto-add claimed systems to colonized list. claimedSystems is NOT a persisted
+      // state key — server returns it in the response for the dashboard to consume.
+      {
         const store = useAppStore.getState();
-        store.upsertKnownSystems(kb.systems);
-        store.upsertKnownStations(kb.stations);
-        store.mapSystemAddresses(kb.systemAddressMap);
-        store.setFSSSignals(kb.fssSignals);
-        if (kb.bodyVisits.length > 0) {
-          store.upsertBodyVisits(kb.bodyVisits);
-        }
-        for (const fc of kb.fleetCarriers) {
-          store.addFleetCarrier(fc);
-        }
-        // Auto-add claimed systems to colonized list
-        // Systems where a ColonisationSystemClaim was filed should appear as colonies
-        // even before the outpost is built
-        for (const sysName of kb.claimedSystems) {
+        for (const sysName of sync.claimedSystems || []) {
           const existing = store.projects.some(
             (p) => p.systemName.toLowerCase() === sysName.toLowerCase()
           );
@@ -501,76 +516,25 @@ export function DashboardPage() {
             store.addManualColonizedSystem(sysName);
           }
         }
-      } catch (kbErr) {
-        console.error('[KB Sync] Knowledge base extraction FAILED:', kbErr);
       }
 
-      // Station dossier backfill — tally historical Docked events per station
-      try {
-        const dockHistory = await extractDockHistory();
-        if (dockHistory.size > 0) {
-          useAppStore.getState().applyDockHistoryBackfill(Array.from(dockHistory.values()));
-          serverLog(`Backfilled dossier for ${dockHistory.size} stations`);
-        }
-      } catch (dhErr) {
-        serverLog(`Dock history backfill failed: ${dhErr instanceof Error ? dhErr.message : String(dhErr)}`);
-      }
+      // Apply current-snapshot state (not persisted; runtime-only): Market.json + Cargo.json
+      if (sync.latestMarket) useAppStore.getState().setLatestMarket(sync.latestMarket);
+      if (sync.shipCargo) useAppStore.getState().setLiveShipCargo(sync.shipCargo);
 
-      // Travel-time matrix — per ship, sourcing-relevant trips only
-      try {
-        const { stats, latestShip } = await extractStationTravelTimes();
-        useAppStore.getState().setStationTravelTimes(stats);
-        if (latestShip) useAppStore.getState().setCurrentShip(latestShip);
-        serverLog(`Travel-time matrix: ${Object.keys(stats).length} station pairs${latestShip ? `, current ship = ${latestShip.type}` : ''}`);
-      } catch (ttErr) {
-        serverLog(`Travel-time scan failed: ${ttErr instanceof Error ? ttErr.message : String(ttErr)}`);
-      }
-
-      // Read market.json
-      try {
-        const market = await readMarketJson();
-        if (market) {
-          useAppStore.getState().setLatestMarket(market);
-        }
-      } catch {
-        // Market reading is optional
-      }
-
-      // Read ship cargo so overlay and project pages have it immediately
-      try {
-        const cargo = await readShipCargo();
-        if (cargo) {
-          useAppStore.getState().setLiveShipCargo(cargo);
-        }
-      } catch {
-        // Ship cargo reading is supplementary
-      }
-
-      // Auto-update cargo capacity from Loadout events (fires on login + ship swap)
-      // Skip if user has manually overridden the value
-      try {
+      // Cargo capacity — server already wrote it to settings, but only if the user
+      // hasn't manually overridden it. Respect the same cargoCapacityManual check here
+      // by checking the post-rehydrate settings.
+      if (sync.cargoCapacity && sync.cargoCapacity > 0) {
         const currentSettings = useAppStore.getState().settings;
-        if (!currentSettings.cargoCapacityManual) {
-          const loadout = await extractLatestCargoCapacity();
-          if (loadout && loadout.cargoCapacity > 0) {
-            if (loadout.cargoCapacity !== currentSettings.cargoCapacity) {
-              useAppStore.getState().updateSettings({ cargoCapacity: loadout.cargoCapacity });
-            }
-          }
+        if (!currentSettings.cargoCapacityManual && sync.cargoCapacity !== currentSettings.cargoCapacity) {
+          useAppStore.getState().updateSettings({ cargoCapacity: sync.cargoCapacity });
         }
-      } catch {
-        // Cargo capacity extraction is supplementary
       }
 
-      // Discover visited markets (stations where user bought colonisation commodities)
-      try {
-        const visited = await scanForVisitedMarkets();
-        if (visited.length > 0) {
-          useAppStore.getState().setVisitedMarkets(visited);
-        }
-      } catch {
-        // Visited market discovery is supplementary
-      }
+      // currentShip — server returns latest Loadout/ShipyardSwap; applied here so the
+      // Sources page travel-time column lights up immediately.
+      if (sync.currentShip) useAppStore.getState().setCurrentShip(sync.currentShip);
 
       const totalStationsInStore = Object.keys(useAppStore.getState().knownStations).length;
       const totalSystemsInStore = Object.keys(useAppStore.getState().knownSystems).length;
@@ -724,15 +688,13 @@ export function DashboardPage() {
           >
             Create First Project
           </Link>
-          {isFileSystemAccessSupported() && (
-            <button
-              onClick={handleSyncAll}
-              disabled={syncing}
-              className="px-4 py-2 bg-secondary/20 text-secondary rounded-lg font-medium hover:bg-secondary/30 transition-colors disabled:opacity-50"
-            >
-              {syncing ? 'Scanning...' : '\u{1F4C2} Import from Journal'}
-            </button>
-          )}
+          <button
+            onClick={handleSyncAll}
+            disabled={syncing}
+            className="px-4 py-2 bg-secondary/20 text-secondary rounded-lg font-medium hover:bg-secondary/30 transition-colors disabled:opacity-50"
+          >
+            {syncing ? 'Scanning...' : '\u{1F4C2} Import from Journal'}
+          </button>
         </div>
         {syncMessage && (
           <div className="mt-4 px-4 py-2 bg-muted rounded-lg text-sm text-muted-foreground max-w-md text-center">
@@ -810,15 +772,13 @@ export function DashboardPage() {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold">Dashboard</h2>
         <div className="flex gap-2">
-          {isFileSystemAccessSupported() && (
-            <button
-              onClick={handleSyncAll}
-              disabled={syncing}
-              className="px-4 py-2 bg-secondary/20 text-secondary rounded-lg text-sm font-medium hover:bg-secondary/30 transition-colors disabled:opacity-50"
-            >
-              {syncing ? 'Syncing...' : '\u{1F504} Sync All from Journal'}
-            </button>
-          )}
+          <button
+            onClick={handleSyncAll}
+            disabled={syncing}
+            className="px-4 py-2 bg-secondary/20 text-secondary rounded-lg text-sm font-medium hover:bg-secondary/30 transition-colors disabled:opacity-50"
+          >
+            {syncing ? 'Syncing...' : '\u{1F504} Sync All from Journal'}
+          </button>
           <Link
             to="/projects/new"
             className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"

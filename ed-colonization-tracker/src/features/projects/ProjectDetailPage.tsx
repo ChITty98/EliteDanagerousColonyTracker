@@ -6,7 +6,7 @@ import { COMMODITIES, CATEGORY_ORDER, CATEGORY_LABELS, type CommodityCategory } 
 import { formatNumber, formatPercent, cleanProjectName, stripConstructionPrefix, cleanJournalString } from '@/lib/utils';
 import { isColonisationShip } from '@/services/journalReader';
 import { StationTypeIcon } from '@/components/StationTypeIcon';
-import { resolveStationType } from '@/data/stationTypes';
+import { resolveStationType, EDITABLE_STATION_TYPES } from '@/data/stationTypes';
 import { INSTALLATION_TYPE_OPTIONS } from '@/data/installationTypes';
 import {
   scanForMarketId,

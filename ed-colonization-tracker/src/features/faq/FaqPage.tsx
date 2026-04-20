@@ -46,8 +46,8 @@ const faqItems: FaqItem[] = [
             <strong>Standalone-first</strong> &mdash; The app works entirely from
             local files. Your Elite Dangerous journal files are the primary data
             source. All project data, settings, scouted systems, and market snapshots
-            are stored locally in your browser (IndexedDB). No account, no login,
-            no cloud dependency.
+            are stored in <code>colony-data.json</code> next to the executable on
+            your PC. No account, no login, no cloud dependency.
           </li>
           <li>
             <strong>API-augmented</strong> &mdash; External APIs enrich the experience
@@ -73,27 +73,30 @@ const faqItems: FaqItem[] = [
     answer: (
       <>
         <p>
-          The app uses the <strong>File System Access API</strong> built into
-          Chromium-based browsers (Chrome, Edge, Brave). When you click
-          &quot;Select Folder&quot; on the Settings page or &quot;Import from
-          Journal&quot; on the Dashboard, you grant read-only access to your
-          Elite Dangerous journal folder.
+          The <strong>server process</strong> (the exe) reads your Elite Dangerous
+          journal files directly from disk. Any browser on any device can then
+          view the same data &mdash; Chrome, Firefox, Safari, iPad, Surface, all
+          work. No browser permission dialog, no File System Access API, no
+          lost connection if Chrome loses focus.
         </p>
         <p className="mt-2">
-          <strong>Initial sync</strong> reads every Journal.*.log file in the
-          folder, parsing Docked, FSDJump, ColonisationContribution, Market,
-          Location, Scan and other events to build a complete picture of your
-          colonization progress, scouted systems, carrier cargo, etc.
+          <strong>Initial sync</strong> (tap &ldquo;Sync All from Journal&rdquo;)
+          reads every Journal.*.log file in your folder, parsing Docked, FSDJump,
+          ColonisationContribution, Market, Location, Scan and other events to
+          build a complete picture of your colonization progress, scouted systems,
+          carrier cargo, etc.
         </p>
         <p className="mt-2">
-          <strong>Live watcher</strong> then polls the active journal file every
-          2 seconds. When Elite Dangerous writes new events, the app reads only
-          the new bytes (incremental read), parses them, and updates the UI and
-          overlay in near-real-time with a 500ms debounce.
+          <strong>Live watcher</strong> polls the active journal file every 2
+          seconds and Cargo.json / Market.json every 5 seconds. When Elite
+          Dangerous writes new events, the server reads only the new bytes,
+          parses them, and pushes updates to every connected client (PC, iPad,
+          Surface, etc.) via Server-Sent Events.
         </p>
         <p className="mt-2 text-muted-foreground text-xs">
-          Journal folder is usually at: C:\Users\YourName\Saved Games\Frontier
-          Developments\Elite Dangerous
+          Journal folder is auto-detected at: C:\Users\YourName\Saved Games\Frontier
+          Developments\Elite Dangerous. Override via the <code>ED_JOURNAL_DIR</code>
+          environment variable if yours is elsewhere.
         </p>
       </>
     ),
@@ -105,8 +108,10 @@ const faqItems: FaqItem[] = [
       <>
         <p>
           All project data, settings, scouted systems, and gallery images are
-          persisted in your browser&rsquo;s local storage (IndexedDB). You do
-          <strong> not</strong> lose data between sessions.
+          persisted server-side in <code>colony-data.json</code> (and{' '}
+          <code>colony-images/</code> for gallery files) next to the executable.
+          You do <strong>not</strong> lose data between sessions, and every
+          connected device sees the same data.
         </p>
         <p className="mt-2">
           However, the journal folder permission is not persisted across browser
@@ -906,10 +911,10 @@ const faqItems: FaqItem[] = [
           the server. Refresh any other connected device to see updates.
         </p>
         <p className="mt-2 text-muted-foreground text-xs">
-          <strong>Note:</strong> Journal folder access (for live watcher and
-          journal sync) only works from the PC running the server, since the
-          File System Access API requires a local browser. Other devices can view
-          data and manage projects but cannot trigger journal scans.
+          <strong>Note:</strong> Journal reading happens on the server (the exe),
+          not in the browser. Any device can trigger a sync or refresh &mdash;
+          they all hit the same server endpoints. iPad, Surface, Firefox,
+          Safari: full functionality.
         </p>
       </>
     ),
@@ -941,16 +946,18 @@ const faqItems: FaqItem[] = [
     answer: (
       <>
         <p>
-          Some features require the host PC&rsquo;s browser (Chrome) because they
-          depend on the <strong>File System Access API</strong> to read Elite
-          Dangerous journal files. Here&rsquo;s the breakdown:
+          The journal reader runs on the server (the exe), not in the browser.
+          Every device &mdash; PC, iPad, Surface, phone &mdash; gets the same
+          functionality. The only thing still tied to the gaming PC is the
+          in-game overlay, because that&rsquo;s displayed on top of the game
+          window itself.
         </p>
         <table className="mt-2 text-xs w-full">
           <thead>
             <tr className="border-b border-border">
               <th className="text-left py-1 pr-4">Feature</th>
               <th className="text-left py-1 pr-4">Host PC</th>
-              <th className="text-left py-1">iPad / Phone</th>
+              <th className="text-left py-1">Network devices</th>
             </tr>
           </thead>
           <tbody className="text-muted-foreground">
@@ -981,23 +988,28 @@ const faqItems: FaqItem[] = [
             </tr>
             <tr className="border-b border-border/30">
               <td className="py-1 pr-4 text-foreground">Journal sync &amp; live watcher</td>
+              <td className="py-1 pr-4">{'\u2705'} (server)</td>
+              <td className="py-1">{'\u2705'} (can trigger Sync All)</td>
+            </tr>
+            <tr className="border-b border-border/30">
+              <td className="py-1 pr-4 text-foreground">FC cargo refresh</td>
               <td className="py-1 pr-4">{'\u2705'}</td>
-              <td className="py-1">{'\u274C'} Requires local filesystem</td>
+              <td className="py-1">{'\u2705'} Refresh button on FC page</td>
             </tr>
             <tr className="border-b border-border/30">
               <td className="py-1 pr-4 text-foreground">Start/stop hauling sessions</td>
               <td className="py-1 pr-4">{'\u2705'}</td>
-              <td className="py-1">{'\u274C'} Needs journal watcher</td>
+              <td className="py-1">{'\u2705'}</td>
             </tr>
             <tr className="border-b border-border/30">
-              <td className="py-1 pr-4 text-foreground">Journal history stats</td>
-              <td className="py-1 pr-4">{'\u2705'}</td>
-              <td className="py-1">{'\u274C'} Reads journal files directly</td>
+              <td className="py-1 pr-4 text-foreground">Live position / jump / dock updates</td>
+              <td className="py-1 pr-4">{'\u2705'} Live via SSE</td>
+              <td className="py-1">{'\u2705'} Live via SSE</td>
             </tr>
             <tr>
               <td className="py-1 pr-4 text-foreground">In-game overlay</td>
               <td className="py-1 pr-4">{'\u2705'}</td>
-              <td className="py-1">N/A (runs on game PC)</td>
+              <td className="py-1">N/A (displays on game window)</td>
             </tr>
           </tbody>
         </table>
@@ -1031,17 +1043,25 @@ const faqItems: FaqItem[] = [
         <p>Check these common issues:</p>
         <ol className="list-decimal ml-5 mt-2 space-y-1">
           <li>
-            Make sure you selected the correct journal folder (should contain
-            files like <code>Journal.2026-03-16T...</code>).
+            Make sure the journal folder exists at{' '}
+            <code>C:\Users\YourName\Saved Games\Frontier Developments\Elite Dangerous</code>
+            {' '}and contains files like <code>Journal.YYYY-MM-DDTHHMMSS.log</code>.
+            If ED is installed to a non-standard location, set{' '}
+            <code>ED_JOURNAL_DIR</code> env var before launching the exe.
           </li>
           <li>
-            The browser must be Chromium-based (Chrome, Edge, Brave). Firefox
-            and Safari do not support the File System Access API.
+            Check the exe terminal for a <code>[Watcher] Started — watching ...</code>
+            {' '}line. If you see <code>Journal dir not found</code>, the path
+            is wrong.
           </li>
           <li>
-            If using the standalone .exe, the browser connects to{' '}
-            <code>localhost:5173</code> &mdash; make sure nothing else is using
-            that port.
+            Browser-wise, any modern browser works &mdash; Chrome, Edge, Firefox,
+            Safari, iPad Safari all support the full app. Journal reading is
+            server-side.
+          </li>
+          <li>
+            Port 5173 must be free. If something else is using it, stop that
+            service or change <code>PORT</code> env var before launching.
           </li>
         </ol>
       </>

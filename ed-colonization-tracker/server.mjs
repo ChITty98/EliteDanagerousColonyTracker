@@ -46,6 +46,7 @@ import {
   stopServerWatcher,
   getServerWatcherStatus,
 } from './server/journal/watcher.js';
+import { pollCompanionFiles } from './server/journal/processors.js';
 
 // SEA detection: when bundled via build-exe.mjs and injected as a single executable,
 // the node:sea API reports isSea() === true. In that case, runtime state (colony-data.json,
@@ -819,6 +820,47 @@ const server = http.createServer((req, res) => {
       }));
     } catch (e) {
       console.error('[Refresh] Failed:', e);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message || String(e) }));
+    }
+    return;
+  }
+
+  // Sync Market: POST /api/sync-market
+  // Explicit user-triggered read of Market.json. Routes through the same
+  // pollCompanionFiles used by the 5s watcher so the storage behavior is
+  // identical and overlay/SSE events fire the same way.
+  if (pathname === '/api/sync-market' && req.method === 'POST') {
+    try {
+      const existing = readStateFile();
+      const settings = existing.settings || {};
+      const journalDir = resolveJournalDir(settings.journalDirOverride);
+      if (!journalDirExists(journalDir)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Journal directory not found', journalDir }));
+        return;
+      }
+      const market = readMarketJson(journalDir);
+      if (!market || !market.marketId) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, reason: 'no-market-json' }));
+        return;
+      }
+      pollCompanionFiles(journalDir, {
+        readState: readStateFile,
+        applyStatePatch,
+        broadcastEvent,
+        sendOverlay: sendOverlayMessage,
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        ok: true,
+        stationName: market.stationName,
+        systemName: market.systemName,
+        itemCount: (market.items || []).length,
+      }));
+    } catch (e) {
+      console.error('[SyncMarket] Failed:', e);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: e.message || String(e) }));
     }

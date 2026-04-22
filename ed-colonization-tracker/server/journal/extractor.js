@@ -165,19 +165,25 @@ export function readMarketSnapshot(journalDir) {
   const market = readMarketJson(journalDir);
   if (!market || !market.items || market.items.length === 0) return null;
 
+  // Capture every item (sell-side + buy-side). Raw-name fallback when not in colonisation dict.
   const commodities = [];
   for (const item of market.items) {
-    if (item.stock <= 0 || item.buyPrice <= 0) continue;
+    const hasSale = item.stock > 0 && item.buyPrice > 0;
+    const hasDemand = item.demand > 0 && item.sellPrice > 0;
+    if (!hasSale && !hasDemand) continue;
     const def =
       findCommodityByDisplayName(item.nameLocalised || item.name) ||
       findCommodityByDisplayName(item.name) ||
       findCommodityByJournalName(`$${String(item.name || '').replace(/\s+/g, '').toLowerCase()}_name;`);
-    if (!def) continue;
+    const rawName = item.nameLocalised || item.name || 'unknown';
     commodities.push({
-      commodityId: def.id,
-      name: def.name,
+      commodityId: (def && def.id) || String(item.name || rawName).toLowerCase().replace(/\s+/g, ''),
+      name: (def && def.name) || rawName,
       buyPrice: item.buyPrice,
       stock: item.stock,
+      sellPrice: item.sellPrice,
+      demand: item.demand,
+      category: item.category || '',
     });
   }
 

@@ -1396,19 +1396,24 @@ export async function readMarketSnapshot(
   const market = await readMarketJson(handle);
   if (!market || !market.items || market.items.length === 0) return null;
 
-  // Find colonisation-relevant commodities actually for sale (stock > 0 and buyPrice > 0)
+  // Capture every item Market.json lists (sell-side + buy-side). Raw-name fallback when not in colonisation dict.
   const commodities: PersistedMarketCommodity[] = [];
   for (const item of market.items) {
-    if (item.stock <= 0 || item.buyPrice <= 0) continue;
+    const hasSale = item.stock > 0 && item.buyPrice > 0;
+    const hasDemand = item.demand > 0 && item.sellPrice > 0;
+    if (!hasSale && !hasDemand) continue;
     const def = findCommodityByDisplayName(item.nameLocalised || item.name)
       ?? findCommodityByDisplayName(item.name)
       ?? findCommodityByJournalName(`$${(item.name || '').replace(/\s+/g, '').toLowerCase()}_name;`);
-    if (!def) continue;
+    const rawName = item.nameLocalised || item.name || 'unknown';
     commodities.push({
-      commodityId: def.id,
-      name: def.name,
+      commodityId: def?.id ?? String(item.name || rawName).toLowerCase().replace(/\s+/g, ''),
+      name: def?.name ?? rawName,
       buyPrice: item.buyPrice,
       stock: item.stock,
+      sellPrice: item.sellPrice,
+      demand: item.demand,
+      category: item.category || '',
     });
   }
 

@@ -209,6 +209,12 @@ function processPositionEvents(parsed, existing, patch, extraEvents) {
     if (!ev.StarSystem || !ev.SystemAddress) continue;
     updates.push({ source: 'Docked', systemName: ev.StarSystem, systemAddress: ev.SystemAddress, coordinates: resolveCoords({ StarSystem: ev.StarSystem }, existing), timestamp: ev.timestamp });
   }
+  // FSSDiscoveryScan (honk) — you must be in-system to trigger it, so it's a reliable position signal.
+  // The event uses SystemName (vs StarSystem on other events).
+  for (const ev of parsed.fssDiscoveryScanEvents || []) {
+    if (!ev.SystemName || !ev.SystemAddress) continue;
+    updates.push({ source: 'FSSDiscoveryScan', systemName: ev.SystemName, systemAddress: ev.SystemAddress, coordinates: resolveCoords({ StarSystem: ev.SystemName }, existing), timestamp: ev.timestamp });
+  }
 
   if (updates.length === 0) return;
   updates.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -888,29 +894,65 @@ export function pollCompanionFiles(journalDir, deps) {
         itemCount: items.length,
         timestamp: new Date().toISOString(),
       });
+      if (deps.sendOverlay) {
+        deps.sendOverlay({
+          id: 'edcolony_carrier_update',
+          text: `FC cargo updated: ${ownerCallsign} — ${items.length} items`,
+          color: '#7fd7ff',
+          x: 40,
+          y: 280,
+          ttl: 6,
+        });
+      }
     } else if (!isEphemeralStation(market.stationName, undefined, market.marketId)) {
-      const relevantCommodities = market.items
-        .filter((it) => it.stock > 0 && it.buyPrice > 0)
+      // Capture every item Market.json lists (sell-side + buy-side). Fall back to raw
+      // Spansh name when commodity isn't in the colonisation dictionary so data isn't lost.
+      // Always save the snapshot — even a zero-commodity one preserves station metadata.
+      const allCommodities = market.items
+        .filter((it) => (it.stock > 0 && it.buyPrice > 0) || (it.demand > 0 && it.sellPrice > 0))
         .map((it) => {
           const def = findCommodityByDisplayName(it.nameLocalised || it.name)
             || findCommodityByDisplayName(it.name)
             || findCommodityByJournalName(`$${String(it.name || '').replace(/\s+/g, '').toLowerCase()}_name;`);
-          if (!def) return null;
-          return { commodityId: def.id, name: def.name, buyPrice: it.buyPrice, stock: it.stock };
-        })
-        .filter(Boolean);
-      if (relevantCommodities.length > 0) {
-        const snapshot = {
-          marketId: market.marketId,
-          stationName: market.stationName,
-          systemName: market.systemName,
-          stationType: '',
-          isPlanetary: false,
-          hasLargePads: false,
-          commodities: relevantCommodities,
-          updatedAt: market.timestamp || new Date().toISOString(),
-        };
-        patch.marketSnapshots = { __upsert: { [String(market.marketId)]: snapshot } };
+          const rawName = it.nameLocalised || it.name || 'unknown';
+          return {
+            commodityId: (def && def.id) || String(it.name || rawName).toLowerCase().replace(/\s+/g, ''),
+            name: (def && def.name) || rawName,
+            buyPrice: it.buyPrice,
+            stock: it.stock,
+            sellPrice: it.sellPrice,
+            demand: it.demand,
+            category: it.category || '',
+          };
+        });
+      const snapshot = {
+        marketId: market.marketId,
+        stationName: market.stationName,
+        systemName: market.systemName,
+        stationType: '',
+        isPlanetary: false,
+        hasLargePads: false,
+        commodities: allCommodities,
+        updatedAt: market.timestamp || new Date().toISOString(),
+      };
+      patch.marketSnapshots = { __upsert: { [String(market.marketId)]: snapshot } };
+      extra.push({
+        type: 'market_snapshot_updated',
+        marketId: market.marketId,
+        stationName: market.stationName,
+        systemName: market.systemName,
+        itemCount: allCommodities.length,
+        timestamp: new Date().toISOString(),
+      });
+      if (deps.sendOverlay) {
+        deps.sendOverlay({
+          id: 'edcolony_market_update',
+          text: `Market captured: ${market.stationName} — ${allCommodities.length} items`,
+          color: '#7fff7f',
+          x: 40,
+          y: 280,
+          ttl: 6,
+        });
       }
     }
   }

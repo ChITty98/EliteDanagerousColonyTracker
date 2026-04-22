@@ -9,6 +9,7 @@ import { SourcesPage } from '@/features/sources/SourcesPage';
 import { SessionsPage } from '@/features/sessions/SessionsPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 import { FaqPage } from '@/features/faq/FaqPage';
+import { WikiPage } from '@/features/wiki/WikiPage';
 import { FleetCarrierPage } from '@/features/carrier/FleetCarrierPage';
 import { ScoutingPage } from '@/features/scouting/ScoutingPage';
 import { ChainPlannerPage } from '@/features/planner/ChainPlannerPage';
@@ -39,6 +40,7 @@ export const router = createBrowserRouter([
       { path: 'companion', element: <CompanionPage /> },
       { path: 'journal-stats', element: <JournalStatsPage /> },
       { path: 'settings', element: <SettingsPage /> },
+      { path: 'wiki', element: <WikiPage /> },
       { path: 'faq', element: <FaqPage /> },
     ],
   },

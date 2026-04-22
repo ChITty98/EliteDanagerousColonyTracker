@@ -18,6 +18,7 @@ const navItems = [
   { to: '/companion', label: 'Companion', icon: '\u{1F4E1}' },
   { to: '/journal-stats', label: 'Journal Stats', icon: '\u{1F4D6}' },
   { to: '/settings', label: 'Settings', icon: '\u2699' },
+  { to: '/wiki', label: 'Wiki', icon: '\u{1F4DA}' },
   { to: '/faq', label: 'FAQ & Help', icon: '\u2753' },
 ];
 
@@ -71,7 +72,7 @@ export function Layout() {
           ))}
         </div>
         <div className="p-4 border-t border-border text-xs text-muted-foreground">
-          v1.0.0
+          v1.3.0
         </div>
       </nav>
 

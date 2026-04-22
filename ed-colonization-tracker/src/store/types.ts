@@ -183,10 +183,13 @@ export interface ScoutedSystemData {
 // --- Persisted market commodity data (from Market.json reads) ---
 
 export interface PersistedMarketCommodity {
-  commodityId: string; // matches CommodityDefinition.id
+  commodityId: string; // matches CommodityDefinition.id, or raw slugified name if not in dictionary
   name: string;
   buyPrice: number;
   stock: number;
+  sellPrice?: number;  // price station pays commander (commander-sell side)
+  demand?: number;     // station's demand for the commodity
+  category?: string;   // Spansh category (e.g. "Chemicals", "Weapons"); blank when unknown
 }
 
 export interface PersistedMarketSnapshot {

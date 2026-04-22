@@ -117,7 +117,11 @@ export function SourcesPage() {
         stationType: s.stationType,
         isPlanetary: s.isPlanetary,
         hasLargePads: s.hasLargePads,
-        commodities: s.commodities.map((c) => ({ commodityId: c.commodityId, name: c.name, buyPrice: c.buyPrice, stock: c.stock })),
+        // Sources tab is "find where to buy" — keep only items the station actually sells.
+        // Buy-side (demand+sellPrice) is stored in the snapshot but filtered out here.
+        commodities: s.commodities
+          .filter((c) => c.stock > 0 && c.buyPrice > 0)
+          .map((c) => ({ commodityId: c.commodityId, name: c.name, buyPrice: c.buyPrice, stock: c.stock })),
         updatedAt: s.updatedAt,
         source: 'snapshot',
         distance: distanceTo(s.systemName),
@@ -200,6 +204,26 @@ export function SourcesPage() {
   const handleSyncMarket = useCallback(async () => {
     setSyncStatus('Reading Market.json...');
     try {
+      // Prefer server-side read (same path the watcher uses). Falls back to client FSA if server has no journal dir.
+      const token = sessionStorage.getItem('colony-token');
+      const url = token ? `/api/sync-market?token=${token}` : '/api/sync-market';
+      const res = await fetch(url, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.ok) {
+          setSyncStatus(
+            `Updated ${data.stationName} (${data.systemName}): ${data.itemCount} commodities`
+          );
+          setTimeout(() => setSyncStatus(null), 10000);
+          return;
+        }
+        if (data && data.reason === 'no-market-json') {
+          setSyncStatus('No Market.json found — dock at a station first');
+          setTimeout(() => setSyncStatus(null), 5000);
+          return;
+        }
+      }
+      // Fallback: client-side FSA read (browser-only mode).
       const snapshot = await readMarketSnapshot();
       if (!snapshot) {
         setSyncStatus('No Market.json found — dock at a station first');
@@ -207,9 +231,8 @@ export function SourcesPage() {
         return;
       }
       upsertMarketSnapshot(snapshot);
-      const commodityNames = snapshot.commodities.map((c) => c.name).join(', ');
       setSyncStatus(
-        `Updated ${snapshot.stationName} (${snapshot.systemName}): ${snapshot.commodities.length} commodities${commodityNames ? ' — ' + commodityNames : ''}`
+        `Updated ${snapshot.stationName} (${snapshot.systemName}): ${snapshot.commodities.length} commodities`
       );
       setTimeout(() => setSyncStatus(null), 10000);
     } catch (err) {
@@ -218,10 +241,10 @@ export function SourcesPage() {
     }
   }, [upsertMarketSnapshot]);
 
-  // Get persisted market snapshots that sell a commodity
+  // Get persisted market snapshots that sell a commodity (sell-side only; buy-side stored but not used here)
   const getMarketSnapshotsFor = useCallback((commodityId: string) => {
     return Object.values(marketSnapshots).filter((ms) =>
-      ms.commodities.some((c) => c.commodityId === commodityId)
+      ms.commodities.some((c) => c.commodityId === commodityId && c.stock > 0 && c.buyPrice > 0)
     );
   }, [marketSnapshots]);
 
@@ -319,7 +342,7 @@ export function SourcesPage() {
     return visitedMarkets.filter((m) => {
       const snapshot = marketSnapshots[m.marketId];
       if (snapshot) {
-        return snapshot.commodities.some((c) => c.commodityId === commodityId);
+        return snapshot.commodities.some((c) => c.commodityId === commodityId && c.stock > 0 && c.buyPrice > 0);
       }
       return m.commodities.includes(commodityId);
     });

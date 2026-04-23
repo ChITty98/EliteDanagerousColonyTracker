@@ -24,6 +24,16 @@ export const COMMODITIES: CommodityDefinition[] = [
   { id: "insulatingmembrane", journalName: "$insulatingmembrane_name;", name: "Insulating Membrane", category: "medium", planetaryOnly: false },
   { id: "copper", journalName: "$copper_name;", name: "Copper", category: "medium", planetaryOnly: false },
 
+  // Medium construction materials (added 2026-04-22 from observed depot + market data)
+  { id: "buildingfabricators", journalName: "$buildingfabricators_name;", name: "Building Fabricators", category: "medium", planetaryOnly: false },
+  { id: "surfacestabilisers", journalName: "$surfacestabilisers_name;", name: "Surface Stabilisers", category: "medium", planetaryOnly: false },
+  { id: "structuralregulators", journalName: "$structuralregulators_name;", name: "Structural Regulators", category: "medium", planetaryOnly: false },
+  { id: "robotics", journalName: "$robotics_name;", name: "Robotics", category: "medium", planetaryOnly: false },
+  { id: "mineralextractors", journalName: "$mineralextractors_name;", name: "Mineral Extractors", category: "medium", planetaryOnly: false },
+  { id: "cropharvesters", journalName: "$cropharvesters_name;", name: "Crop Harvesters", category: "medium", planetaryOnly: false },
+  { id: "autofabricators", journalName: "$autofabricators_name;", name: "Auto-Fabricators", category: "medium", planetaryOnly: false },
+  { id: "geologicalequipment", journalName: "$geologicalequipment_name;", name: "Geological Equipment", category: "medium", planetaryOnly: false },
+
   // Light (under 100 tons)
   { id: "superconductors", journalName: "$superconductors_name;", name: "Superconductors", category: "light", planetaryOnly: false },
   { id: "computercomponents", journalName: "$computercomponents_name;", name: "Computer Components", category: "light", planetaryOnly: false },
@@ -34,6 +44,26 @@ export const COMMODITIES: CommodityDefinition[] = [
   { id: "medicaldiagnosticequipment", journalName: "$medicaldiagnosticequipment_name;", name: "Medical Diagnostic Equipment", category: "light", planetaryOnly: false },
   { id: "nonlethalweapons", journalName: "$nonlethalweapons_name;", name: "Non-Lethal Weapons", category: "light", planetaryOnly: false },
   { id: "powergenerators", journalName: "$powergenerators_name;", name: "Power Generators", category: "light", planetaryOnly: false },
+  // Light — added 2026-04-22 from observed depot + market data
+  { id: "emergencypowercells", journalName: "$emergencypowercells_name;", name: "Emergency Power Cells", category: "light", planetaryOnly: false },
+  { id: "evacuationshelter", journalName: "$evacuationshelter_name;", name: "Evacuation Shelter", category: "light", planetaryOnly: false },
+  { id: "survivalequipment", journalName: "$survivalequipment_name;", name: "Survival Equipment", category: "light", planetaryOnly: false },
+  { id: "landenrichmentsystems", journalName: "$landenrichmentsystems_name;", name: "Land Enrichment Systems", category: "light", planetaryOnly: false },
+  { id: "hesuits", journalName: "$hesuits_name;", name: "H.E. Suits", category: "light", planetaryOnly: false },
+  { id: "combatstabilisers", journalName: "$combatstabilisers_name;", name: "Combat Stabilisers", category: "light", planetaryOnly: false },
+  { id: "microcontrollers", journalName: "$microcontrollers_name;", name: "Micro Controllers", category: "light", planetaryOnly: false },
+  { id: "battleweapons", journalName: "$battleweapons_name;", name: "Battle Weapons", category: "light", planetaryOnly: false },
+  { id: "militarygradefabrics", journalName: "$militarygradefabrics_name;", name: "Military Grade Fabrics", category: "light", planetaryOnly: false },
+  { id: "advancedcatalysers", journalName: "$advancedcatalysers_name;", name: "Advanced Catalysers", category: "light", planetaryOnly: false },
+  { id: "microbialfurnaces", journalName: "$microbialfurnaces_name;", name: "Microbial Furnaces", category: "light", planetaryOnly: false },
+  { id: "resonatingseparators", journalName: "$resonatingseparators_name;", name: "Resonating Separators", category: "light", planetaryOnly: false },
+  { id: "thermalcoolingunits", journalName: "$thermalcoolingunits_name;", name: "Thermal Cooling Units", category: "light", planetaryOnly: false },
+  { id: "basicmedicines", journalName: "$basicmedicines_name;", name: "Basic Medicines", category: "light", planetaryOnly: false },
+  { id: "bioreducinglichen", journalName: "$bioreducinglichen_name;", name: "Bioreducing Lichen", category: "light", planetaryOnly: false },
+  { id: "muonimager", journalName: "$muonimager_name;", name: "Muon Imager", category: "light", planetaryOnly: false },
+  { id: "biowaste", journalName: "$biowaste_name;", name: "Biowaste", category: "light", planetaryOnly: false },
+  { id: "grain", journalName: "$grain_name;", name: "Grain", category: "light", planetaryOnly: false },
+  { id: "pesticides", journalName: "$pesticides_name;", name: "Pesticides", category: "light", planetaryOnly: false },
 ];
 
 // Lookup helpers

@@ -780,7 +780,11 @@ export function ProjectDetailPage() {
           <tbody>
             {CATEGORY_ORDER.map((category) => {
               const catCommodities = project.commodities.filter((c) => {
-                const def = COMMODITIES.find((d) => d.id === c.commodityId);
+                // Try id match first; fall back to display-name match. Backwards
+                // compat for projects whose commodityIds were slugified by the old
+                // broken regex (e.g. "vcutioshltr" for "Evacuation Shelter").
+                const def = COMMODITIES.find((d) => d.id === c.commodityId)
+                  ?? COMMODITIES.find((d) => d.name.toLowerCase() === c.name.toLowerCase());
                 return def?.category === category;
               });
               if (catCommodities.length === 0) return null;

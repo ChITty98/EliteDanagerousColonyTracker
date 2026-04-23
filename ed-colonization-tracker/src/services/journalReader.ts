@@ -1048,9 +1048,13 @@ function buildStationInfoMap(
 export function resourceToCommodity(r: JournalResourceRequired): ProjectCommodity {
   const known = findCommodityByJournalName(r.Name);
   const rawName = r.Name || 'unknown';
+  // Slug: strip `$` prefix and `_name;` suffix (was previously a broken character
+  // class that removed every n/a/m/e letter from the id).
+  const fallbackId = rawName.replace(/^\$|_name;?$/gi, '').toLowerCase();
+  const fallbackName = rawName.replace(/^\$/, '').replace(/_name;?$/i, '').replace(/_/g, ' ');
   return {
-    commodityId: known?.id || rawName.replace(/[$;_name]/g, '').toLowerCase(),
-    name: r.Name_Localised || rawName.replace(/[$;]/g, ''),
+    commodityId: known?.id || fallbackId,
+    name: r.Name_Localised || fallbackName,
     requiredQuantity: r.RequiredAmount,
     providedQuantity: r.ProvidedAmount,
   };

@@ -417,8 +417,10 @@ const server = http.createServer((req, res) => {
   }
 
   // State API: GET /api/state
+  // Return in-memory pendingState when available so clients that fetch after an
+  // SSE broadcast don't race against the 500ms debounced disk write.
   if (pathname === '/api/state' && req.method === 'GET') {
-    const data = readStateFile();
+    const data = pendingState ?? readStateFile();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(data));
     return;

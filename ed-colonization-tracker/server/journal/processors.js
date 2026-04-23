@@ -339,12 +339,23 @@ function processKBEvents(parsed, existing, settings, patch) {
 function processDepotEvents(parsed, existing, patch) {
   if (parsed.depotEvents.length === 0) return;
   const projects = Array.isArray(existing.projects) ? existing.projects : [];
-  if (projects.length === 0) return;
+  if (projects.length === 0) {
+    console.log(`[Depot] ${parsed.depotEvents.length} depot event(s) but no projects exist — ignored`);
+    return;
+  }
 
   const touched = [];
+  const skipped = [];
   for (const depot of parsed.depotEvents) {
     const project = projects.find((p) => p.marketId === depot.MarketID);
-    if (!project || project.status !== 'active') continue;
+    if (!project) {
+      skipped.push(`marketId=${depot.MarketID} (no matching project)`);
+      continue;
+    }
+    if (project.status !== 'active') {
+      skipped.push(`marketId=${depot.MarketID} project=${project.id} status=${project.status}`);
+      continue;
+    }
 
     const commodities = (depot.ResourcesRequired || []).map(resourceToCommodity);
     const next = Object.assign({}, project, { commodities, lastUpdatedAt: new Date().toISOString() });
@@ -360,6 +371,13 @@ function processDepotEvents(parsed, existing, patch) {
       }
     }
     touched.push(next);
+  }
+
+  if (touched.length > 0) {
+    console.log(`[Depot] Updated ${touched.length} project(s) from journal: ${touched.map((p) => `${p.id}(${p.commodities.length}commodities)`).join(', ')}`);
+  }
+  if (skipped.length > 0) {
+    console.log(`[Depot] Skipped ${skipped.length}: ${skipped.join('; ')}`);
   }
 
   if (touched.length === 0) return;

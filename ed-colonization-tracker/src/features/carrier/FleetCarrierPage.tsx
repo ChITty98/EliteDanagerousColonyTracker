@@ -1,4 +1,8 @@
 import { useState, useCallback, useMemo } from 'react';
+// NOTE: FC cargo rendering is now 100% store-driven (see useMemo below). Any server-side
+// write to state.carrierCargo — journal Cargo.json tick, /api/refresh-companion-files,
+// docked-at-FC auto-read — propagates via SSE → persist.rehydrate → store → memo → UI.
+// No manual Refresh click needed for updates; the button remains as a force-read escape hatch.
 import { Link } from 'react-router-dom';
 import { useAppStore } from '@/store';
 import { formatNumber, cleanProjectName } from '@/lib/utils';
@@ -17,26 +21,46 @@ export function FleetCarrierPage() {
   const allProjects = useAppStore((s) => s.projects);
   const carrierCargo = useAppStore((s) => s.carrierCargo);
 
-  // Initialize from persisted store data
+  // Live-derived from the store so SSE state updates auto-propagate to this UI.
+  // The Refresh button still exists as a manual trigger but no longer owns the
+  // rendered state — any server-side carrierCargo write (journal watcher,
+  // /api/refresh-companion-files, /api/sync-market) flows through the store
+  // rehydrate and this useMemo recomputes.
   const persistedMyCarrier = settings.myFleetCarrier ? carrierCargo[settings.myFleetCarrier] : null;
 
-  const [multiCarrierCargo, setMultiCarrierCargo] = useState<MultiCarrierCargo | null>(
-    persistedMyCarrier
-      ? {
-          myCarrier: {
+  const multiCarrierCargo = useMemo<MultiCarrierCargo | null>(() => {
+    if (!persistedMyCarrier && (settings.squadronCarrierCallsigns || []).length === 0) return null;
+    const squadron = (settings.squadronCarrierCallsigns || []).map((callsign) => {
+      const entry = carrierCargo[callsign];
+      if (!entry) return null;
+      return {
+        callsign,
+        cargo: {
+          items: entry.items,
+          isEstimate: entry.isEstimate,
+          earliestTransfer: entry.updatedAt,
+          latestTransfer: entry.updatedAt,
+          carrierCallsign: callsign,
+        },
+      };
+    }).filter(Boolean) as { callsign: string; cargo: MultiCarrierCargo['squadronCarriers'][number]['cargo'] }[];
+    return {
+      myCarrier: persistedMyCarrier
+        ? {
             items: persistedMyCarrier.items,
             isEstimate: persistedMyCarrier.isEstimate,
             earliestTransfer: persistedMyCarrier.updatedAt,
             latestTransfer: persistedMyCarrier.updatedAt,
             carrierCallsign: persistedMyCarrier.callsign,
-          },
-          squadronCarriers: [],
-        }
-      : null,
-  );
+          }
+        : null,
+      squadronCarriers: squadron,
+    };
+  }, [persistedMyCarrier, carrierCargo, settings.squadronCarrierCallsigns]);
+
   const [loading, setLoading] = useState(false);
-  const [loaded, setLoaded] = useState(!!persistedMyCarrier);
   const [error, setError] = useState('');
+  const loaded = !!persistedMyCarrier;
 
   const activeProjects = useMemo(
     () => allProjects.filter((p) => p.status === 'active'),
@@ -79,40 +103,13 @@ export function FleetCarrierPage() {
         throw new Error(`refresh HTTP ${res.status}: ${body || 'server error'}`);
       }
       const data = await res.json();
-      // Force a state rehydrate so the carrierCargo patch the server wrote lands in the store
+      // Force a state rehydrate so the carrierCargo patch the server wrote lands in the store.
+      // Once rehydrated, the useMemo above automatically recomputes multiCarrierCargo — no
+      // local-state juggling required.
       try { await useAppStore.persist.rehydrate(); } catch { /* best-effort */ }
 
-      // Build the local MultiCarrierCargo view from the updated store for the UI
-      const store = useAppStore.getState();
-      const myPersisted = settings.myFleetCarrier ? store.carrierCargo[settings.myFleetCarrier] : null;
-      const squadronList = (settings.squadronCarrierCallsigns || []).map((callsign) => {
-        const entry = store.carrierCargo[callsign];
-        if (!entry) return null;
-        return {
-          callsign,
-          cargo: {
-            items: entry.items,
-            isEstimate: entry.isEstimate,
-            earliestTransfer: entry.updatedAt,
-            latestTransfer: entry.updatedAt,
-            carrierCallsign: callsign,
-          },
-        };
-      }).filter(Boolean) as { callsign: string; cargo: MultiCarrierCargo['squadronCarriers'][number]['cargo'] }[];
-
-      setMultiCarrierCargo({
-        myCarrier: myPersisted ? {
-          items: myPersisted.items,
-          isEstimate: myPersisted.isEstimate,
-          earliestTransfer: myPersisted.updatedAt,
-          latestTransfer: myPersisted.updatedAt,
-          carrierCallsign: myPersisted.callsign,
-        } : null,
-        squadronCarriers: squadronList,
-      });
-      setLoaded(true);
-
-      if (data.marketOutcome && data.marketOutcome.type === 'none' && !myPersisted) {
+      const myPersistedAfter = settings.myFleetCarrier ? useAppStore.getState().carrierCargo[settings.myFleetCarrier] : null;
+      if (data.marketOutcome && data.marketOutcome.type === 'none' && !myPersistedAfter) {
         setError('No FC market data yet — dock at your FC and open the Commodities market, then tap Refresh again.');
       }
     } catch (e) {

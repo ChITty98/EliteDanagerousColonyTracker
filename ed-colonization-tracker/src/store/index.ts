@@ -321,10 +321,19 @@ function startStateSyncListener() {
           return;
         }
         if (ev.type !== 'state_updated') return;
-        // Skip if this was likely our own PATCH
-        if (Date.now() - lastOwnPatchTime < PATCH_IGNORE_WINDOW) return;
-        // Skip if a recent exploration update caused this — system view handles it directly
-        if (Date.now() - lastExplorationUpdate < 5000) return;
+        // Server-initiated updates (journal watcher, sync-all, companion refresh)
+        // always apply — they're not echoes of our own PATCH, so PATCH_IGNORE_WINDOW
+        // shouldn't suppress them. Only gate client-originated sources.
+        const serverSourced = ev.source === 'watcher'
+          || ev.source === 'sync-all'
+          || ev.source === 'refresh-companion-files'
+          || ev.source === 'sync-market';
+        if (!serverSourced) {
+          // Skip if this was likely our own PATCH
+          if (Date.now() - lastOwnPatchTime < PATCH_IGNORE_WINDOW) return;
+          // Skip if a recent exploration update caused this — system view handles it directly
+          if (Date.now() - lastExplorationUpdate < 5000) return;
+        }
         // Re-fetch state from server and merge into store
         const res = await fetch(apiUrl('/api/state'));
         if (!res.ok) return;

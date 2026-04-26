@@ -320,6 +320,16 @@ function startStateSyncListener() {
           lastExplorationUpdate = Date.now();
           return;
         }
+        if (ev.type === 'heartbeat') return;
+        // Diagnostic — log every event we receive so we can see in DevTools / terminal
+        // whether the server is actually pushing to this client.
+        try {
+          const tk = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
+          fetch(tk ? `/api/log?token=${tk}` : '/api/log', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tag: 'StoreSSE', message: `received ${ev.type}${ev.source ? ' source=' + ev.source : ''}` }),
+          }).catch(() => {});
+        } catch { /* ignore */ }
         if (ev.type !== 'state_updated') return;
         // Server-initiated updates (journal watcher, sync-all, companion refresh)
         // always apply — they're not echoes of our own PATCH, so PATCH_IGNORE_WINDOW

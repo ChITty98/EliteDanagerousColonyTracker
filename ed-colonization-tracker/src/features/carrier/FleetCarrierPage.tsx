@@ -110,7 +110,7 @@ export function FleetCarrierPage() {
 
       const myPersistedAfter = settings.myFleetCarrier ? useAppStore.getState().carrierCargo[settings.myFleetCarrier] : null;
       if (data.marketOutcome && data.marketOutcome.type === 'none' && !myPersistedAfter) {
-        setError('No FC market data yet — dock at your FC and open the Commodities market, then tap Refresh again.');
+        setError('No FC sell orders found yet. Dock at your FC, open the Commodities market, and set sell orders for what you want to track. Items physically on the carrier without a sell order won’t appear here.');
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load carrier cargo');
@@ -164,7 +164,8 @@ export function FleetCarrierPage() {
       <div className="mb-6">
         <h2 className="text-2xl font-bold">{'\u2693'} Fleet Carrier — {settings.myFleetCarrier}</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Carrier cargo mapped to your active construction projects
+          Commodities <strong>set to sell</strong> on your FC, mapped to your active construction projects.
+          {' '}Items physically on the carrier without a sell order won't appear here — set sell orders in the in-game Commodities Market to populate this list.
         </p>
       </div>
 
@@ -177,7 +178,11 @@ export function FleetCarrierPage() {
       {!loaded ? (
         <div className="bg-card border border-border rounded-lg p-8 text-center">
           <p className="text-muted-foreground mb-4">
-            Load your carrier cargo to see which commodities map to active projects.
+            Load your carrier's <strong>sell orders</strong> to see which commodities map to active projects.
+            <br />
+            <span className="text-xs">
+              (Only items with sell orders set in the in-game Commodities Market are tracked. Cargo physically on the carrier without a sell order won't appear.)
+            </span>
           </p>
           <button
             onClick={loadCarrierCargo}
@@ -200,7 +205,7 @@ export function FleetCarrierPage() {
               </span>
             )}
             <span className="text-muted-foreground">
-              {carrierItems.length} commodities on carrier
+              {carrierItems.length} commodities set to sell
             </span>
             {(() => {
               const totalUsed = carrierItems.reduce((sum, i) => sum + i.count, 0);
@@ -225,7 +230,7 @@ export function FleetCarrierPage() {
           {matchedCargo.length > 0 ? (
             <div className="mb-8">
               <h3 className="text-lg font-semibold text-muted-foreground mb-3">
-                Relevant Cargo ({matchedCargo.length})
+                Relevant Sell Orders ({matchedCargo.length})
               </h3>
               <div className="bg-card border border-border rounded-lg overflow-hidden">
                 <table className="w-full">
@@ -299,7 +304,7 @@ export function FleetCarrierPage() {
           {otherCargo.length > 0 && (
             <div className="mb-8">
               <h3 className="text-lg font-semibold text-muted-foreground mb-3">
-                Other Cargo ({otherCargo.length})
+                Other Sell Orders ({otherCargo.length})
               </h3>
               <div className="bg-card border border-border rounded-lg overflow-hidden">
                 <table className="w-full">
@@ -327,7 +332,7 @@ export function FleetCarrierPage() {
           {/* No active projects notice */}
           {activeProjects.length === 0 && (
             <div className="bg-card border border-border rounded-lg p-6 text-center text-sm text-muted-foreground">
-              No active construction projects. Carrier cargo can't be mapped without active projects.
+              No active construction projects. Carrier sell orders can't be mapped without active projects.
             </div>
           )}
         </>

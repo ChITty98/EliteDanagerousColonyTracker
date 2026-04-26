@@ -129,12 +129,21 @@ const sseClients = [];
 
 function broadcastEvent(event) {
   const data = `data: ${JSON.stringify(event)}\n\n`;
+  let delivered = 0;
+  let dropped = 0;
   for (let i = sseClients.length - 1; i >= 0; i--) {
     try {
       sseClients[i].write(data);
+      delivered++;
     } catch {
       sseClients.splice(i, 1);
+      dropped++;
     }
+  }
+  // Skip noisy heartbeats; log everything else so we can prove broadcasts are firing.
+  if (event && event.type !== 'heartbeat') {
+    const src = event.source ? ` source=${event.source}` : '';
+    console.log(`[SSE] broadcast ${event.type}${src} → ${delivered} client(s)${dropped ? ` (dropped ${dropped} dead)` : ''}`);
   }
 }
 
@@ -1000,9 +1009,12 @@ const server = http.createServer((req, res) => {
     });
     res.write(`data: ${JSON.stringify({ type: 'connected', timestamp: new Date().toISOString() })}\n\n`);
     sseClients.push(res);
+    const remoteAddr = req.socket.remoteAddress || 'unknown';
+    console.log(`[SSE] client connected from ${remoteAddr} → ${sseClients.length} total`);
     req.on('close', () => {
       const idx = sseClients.indexOf(res);
       if (idx >= 0) sseClients.splice(idx, 1);
+      console.log(`[SSE] client disconnected from ${remoteAddr} → ${sseClients.length} total`);
     });
     return;
   }

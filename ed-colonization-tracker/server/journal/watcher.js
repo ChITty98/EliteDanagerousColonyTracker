@@ -24,6 +24,7 @@ import {
 } from './paths.js';
 import { processNewEvents, pollCompanionFiles } from './processors.js';
 import { fetchLatestPositionFromJournal } from './extractor.js';
+import { seedFcRegistryFromKnownStations } from './util.js';
 
 const POLL_INTERVAL_MS = 2000;
 const COMPANION_INTERVAL_MS = 5000;
@@ -72,6 +73,17 @@ export function startServerWatcher(deps) {
     companionTimer: null,
     lastEventAt: null,
   };
+
+  // Seed the FC registry from the persisted dossier so isFleetCarrier() can
+  // identify Fleet Carriers by MarketID without the broken 3.7B threshold.
+  try {
+    seedFcRegistryFromKnownStations(existing && existing.knownStations);
+    const seedCount = Object.keys(existing && existing.knownStations || {}).filter((k) => {
+      const s = (existing.knownStations || {})[k];
+      return s && s.stationType === 'FleetCarrier';
+    }).length;
+    console.log(`[Watcher] Seeded FC registry: ${seedCount} known fleet carrier(s)`);
+  } catch (e) { console.error('[Watcher] FC seed failed:', e && e.message); }
 
   try { initWatcher(); } catch (e) { console.error('[Watcher] init failed:', e && e.message); }
 

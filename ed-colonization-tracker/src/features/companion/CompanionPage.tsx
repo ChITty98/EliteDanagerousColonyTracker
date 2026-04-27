@@ -359,11 +359,20 @@ export function CompanionPage() {
           <div className="text-right text-xs text-muted-foreground">
             <div>Modules: {(fcModulesCapacity || 0).toLocaleString()}t</div>
             <div>Cargo: {currentCargoTons.toLocaleString()}t</div>
-            {myCargo && (
-              <div className="text-[10px] opacity-70">
-                as of {new Date(myCargo.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </div>
-            )}
+            {myCargo && (() => {
+              const ts = (myCargo as { updatedAt?: string }).updatedAt
+                || (myCargo as { latestTransfer?: string }).latestTransfer
+                || null;
+              const d = ts ? new Date(ts) : null;
+              const label = d && !isNaN(d.getTime())
+                ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                : '—';
+              return (
+                <div className="text-[10px] opacity-70">
+                  as of {label}
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

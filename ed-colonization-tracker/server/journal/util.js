@@ -8,13 +8,42 @@
  */
 
 /**
- * Fleet Carrier MarketIDs live in the 3,700,000,000+ range.
- *
- * NOTE: player-colonized stations share this range, so this check ALONE
- * false-positives real stations (e.g. Ma Gateway). Prefer isFleetCarrier().
+ * Module-scope registry of MarketIDs known to be Fleet Carriers, populated
+ * from the persisted dossier (knownStations) at server startup and updated
+ * on every Docked event with StationType === 'FleetCarrier'. Replaces the
+ * old marketId-range guess (>= 3.7B) which false-positived every player-built
+ * station that lives in the same range.
+ */
+const KNOWN_FC_MARKET_IDS = new Set();
+
+/** Seed the FC registry from a knownStations dossier (call at server boot). */
+export function seedFcRegistryFromKnownStations(knownStations) {
+  if (!knownStations || typeof knownStations !== 'object') return;
+  for (const k of Object.keys(knownStations)) {
+    const s = knownStations[k];
+    if (s && s.stationType === 'FleetCarrier') {
+      const id = Number(k);
+      if (!Number.isNaN(id)) KNOWN_FC_MARKET_IDS.add(id);
+    }
+  }
+}
+
+/** Register a MarketID as a known FC (call when StationType is confirmed FleetCarrier). */
+export function registerFcMarketId(marketId) {
+  if (typeof marketId === 'number') KNOWN_FC_MARKET_IDS.add(marketId);
+}
+
+/** True only if we've seen this MarketID confirmed as an FC via journal data. */
+export function isKnownFcMarketId(marketId) {
+  return typeof marketId === 'number' && KNOWN_FC_MARKET_IDS.has(marketId);
+}
+
+/**
+ * Legacy export — kept so call sites don't break. Now backed by the FC registry
+ * instead of the broken marketId-range guess. Returns true ONLY for confirmed FCs.
  */
 export function isFleetCarrierMarketId(marketId) {
-  return typeof marketId === 'number' && marketId >= 3700000000;
+  return isKnownFcMarketId(marketId);
 }
 
 /** Fleet Carrier callsigns match pattern XXX-XXX (letters/digits). */
@@ -27,12 +56,18 @@ export function isFleetCarrierCallsign(name) {
  * Robust FC detection. Order matters:
  *   1. StationType === 'FleetCarrier'  → trusted, return true
  *   2. StationType is known but NOT 'FleetCarrier' → trust the type, return false
- *   3. Fall back to MarketID range only when StationType is unknown
+ *   3. Fall back to FC registry lookup (populated from prior journal evidence)
+ *
+ * No more marketId-range guess. If we haven't seen this marketId before AND
+ * stationType is missing, return false. False negative (treating an FC as a
+ * generic station once) is fixable on the next Docked event when StationType
+ * arrives; false positive (treating Cavallo Nero / Ma Gateway as an FC) is
+ * what caused the snapshot drop bug.
  */
 export function isFleetCarrier(stationType, marketId) {
   if (stationType === 'FleetCarrier') return true;
   if (stationType && stationType !== 'FleetCarrier') return false;
-  if (marketId != null && isFleetCarrierMarketId(marketId)) return true;
+  if (marketId != null && isKnownFcMarketId(marketId)) return true;
   return false;
 }
 

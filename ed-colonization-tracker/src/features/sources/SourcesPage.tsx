@@ -75,10 +75,90 @@ export function SourcesPage() {
   type BrowseMode = 'system' | 'station' | 'commodity';
   const [browseMode, setBrowseMode] = useState<BrowseMode>('commodity');
   const [browseQuery, setBrowseQuery] = useState('');
+  // Economy filter — multi-select; matches if station has ANY selected economy
+  // (proportion > 0). Cross-references knownStations[marketId].economies because
+  // marketSnapshots itself doesn't carry economy data.
+  const ECONOMY_OPTIONS = ['Agriculture', 'Extraction', 'Industrial', 'High Tech', 'Refinery', 'Service', 'Tourism', 'Military', 'Colony', 'Terraforming'];
+  const [economyFilter, setEconomyFilter] = useState<string[]>([]);
+
+  // Helper: does a marketId match any selected economy? Uses knownStations dossier.
+  const matchesEconomyFilter = (marketId: number): boolean => {
+    if (economyFilter.length === 0) return true;
+    const station = knownStations[marketId];
+    if (!station) return false;
+    const economies = (station as { economies?: Array<{ name?: string; nameLocalised?: string; proportion?: number }> }).economies || [];
+    if (economies.length === 0) return false;
+    return economies.some((e) => {
+      if (!e || (e.proportion ?? 0) <= 0) return false;
+      const localised = (e.nameLocalised || '').toLowerCase();
+      const raw = (e.name || '').toLowerCase().replace(/^\$economy_|;$/g, '');
+      return economyFilter.some((sel) => {
+        const selLower = sel.toLowerCase();
+        return localised === selLower || raw === selLower.replace(/\s+/g, '');
+      });
+    });
+  };
+
+  // Helper: compact stock formatting — 308,904 → "309K", 8,062 → "8.1K", < 1000 → as-is.
+  const formatStock = (n: number | null | undefined): string => {
+    if (n == null) return '—';
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 10_000) return `${Math.round(n / 1000)}K`;
+    if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+    return String(n);
+  };
+
+  // Helper: travel-time stat for a target marketId. Uses fallback chain — current dock,
+  // user's FC, last-docked station — keyed by current ship's shipId.
+  const travelStatFor = (toMarketId: number): { avgSeconds: number; via: 'here' | 'fc' | 'last' } | null => {
+    const shipId = currentShip?.shipId;
+    if (shipId == null) return null;
+    // Find candidate "from" marketIds in priority order
+    const fromCandidates: Array<{ mid: number; via: 'here' | 'fc' | 'last' }> = [];
+    // 1. Current dock (last-docked station in the current system)
+    if (commanderPosition?.systemName) {
+      const sysLower = commanderPosition.systemName.toLowerCase();
+      const sameSystemDocks = Object.values(knownStations)
+        .filter((s) => s && s.systemName && s.systemName.toLowerCase() === sysLower && s.lastDocked)
+        .sort((a, b) => (b.lastDocked ?? '').localeCompare(a.lastDocked ?? ''));
+      if (sameSystemDocks[0]?.marketId) fromCandidates.push({ mid: sameSystemDocks[0].marketId, via: 'here' });
+    }
+    // 2. User's FC
+    const myFc = settings.myFleetCarrier;
+    if (myFc) {
+      const fcEntry = Object.values(knownStations).find((s) => s && s.stationName === myFc);
+      if (fcEntry?.marketId) fromCandidates.push({ mid: fcEntry.marketId, via: 'fc' });
+    }
+    // 3. Most recently docked station globally
+    const allDocks = Object.values(knownStations)
+      .filter((s) => s && s.marketId && s.lastDocked)
+      .sort((a, b) => (b.lastDocked ?? '').localeCompare(a.lastDocked ?? ''));
+    if (allDocks[0]?.marketId) fromCandidates.push({ mid: allDocks[0].marketId, via: 'last' });
+
+    for (const cand of fromCandidates) {
+      if (cand.mid === toMarketId) continue;
+      const stat = stationTravelTimes[`${cand.mid}:${toMarketId}:${shipId}`];
+      if (stat) return { avgSeconds: stat.recentAvgSeconds, via: cand.via };
+    }
+    return null;
+  };
+
+  // Helper: top 1-2 economy names for a marketId, for badge display
+  const stationEconomies = (marketId: number): string[] => {
+    const station = knownStations[marketId];
+    if (!station) return [];
+    const economies = (station as { economies?: Array<{ name?: string; nameLocalised?: string; proportion?: number }> }).economies || [];
+    return economies
+      .filter((e) => e && (e.proportion ?? 0) > 0)
+      .sort((a, b) => (b.proportion ?? 0) - (a.proportion ?? 0))
+      .slice(0, 2)
+      .map((e) => e.nameLocalised || (e.name || '').replace(/^\$economy_|;$/g, ''));
+  };
 
   const browseResults = useMemo(() => {
     const q = browseQuery.trim().toLowerCase();
-    if (!q) return null;
+    // Allow empty query when an economy filter is active — economy alone is a valid search
+    if (!q && economyFilter.length === 0) return null;
 
     // Distance from commander to a system (via knownSystems coords)
     const here = commanderPosition?.coordinates;
@@ -106,10 +186,21 @@ export function SourcesPage() {
       distance: number;
     }
 
-    // Build unified view — snapshots win over visitedMarkets for the same marketId
+    // Single source of truth: marketSnapshots. Sync All migrates visitedMarkets
+    // (journal-derived) into snapshots with stock: null, so we no longer need the
+    // separate render-time merge. Live captures and journal-derived stubs both
+    // live in marketSnapshots; the updatedAt timestamp distinguishes freshness.
     const byMarketId = new Map<number, UnifiedStation>();
     for (const s of Object.values(marketSnapshots)) {
       if (isEphemeralStation(s.stationName, s.stationType, s.marketId)) continue;
+      // Apply economy filter early — skip stations that don't match
+      if (!matchesEconomyFilter(s.marketId)) continue;
+      // Sources tab is "find where to buy" — keep items with a buyPrice. Stock may
+      // be null (journal-derived) or a real number (live snapshot). Show both.
+      const commodities = s.commodities
+        .filter((c) => c.buyPrice > 0 && (c.stock === null || c.stock > 0))
+        .map((c) => ({ commodityId: c.commodityId, name: c.name, buyPrice: c.buyPrice, stock: c.stock ?? null }));
+      if (commodities.length === 0) continue;
       byMarketId.set(s.marketId, {
         marketId: s.marketId,
         stationName: s.stationName,
@@ -117,35 +208,10 @@ export function SourcesPage() {
         stationType: s.stationType,
         isPlanetary: s.isPlanetary,
         hasLargePads: s.hasLargePads,
-        // Sources tab is "find where to buy" — keep only items the station actually sells.
-        // Buy-side (demand+sellPrice) is stored in the snapshot but filtered out here.
-        commodities: s.commodities
-          .filter((c) => c.stock > 0 && c.buyPrice > 0)
-          .map((c) => ({ commodityId: c.commodityId, name: c.name, buyPrice: c.buyPrice, stock: c.stock })),
+        commodities,
         updatedAt: s.updatedAt,
         source: 'snapshot',
         distance: distanceTo(s.systemName),
-      });
-    }
-    for (const v of visitedMarkets) {
-      if (isEphemeralStation(v.stationName, v.stationType, v.marketId)) continue;
-      if (byMarketId.has(v.marketId)) continue; // snapshot wins
-      byMarketId.set(v.marketId, {
-        marketId: v.marketId,
-        stationName: v.stationName,
-        systemName: v.systemName,
-        stationType: v.stationType,
-        isPlanetary: v.isPlanetary,
-        hasLargePads: v.hasLargePads,
-        commodities: v.commodities.map((id) => ({
-          commodityId: id,
-          name: COMMODITY_BY_ID.get(id)?.name || id,
-          buyPrice: v.commodityPrices?.[id]?.buyPrice ?? 0,
-          stock: null, // journal data has no stock
-        })),
-        updatedAt: v.lastVisited,
-        source: 'journal',
-        distance: distanceTo(v.systemName),
       });
     }
 
@@ -192,12 +258,13 @@ export function SourcesPage() {
     }
 
     const matched = allStations.filter((s) => {
+      if (!q) return true; // economy filter alone — match everything that passed it
       if (browseMode === 'system') return s.systemName.toLowerCase().includes(q);
       return s.stationName.toLowerCase().includes(q);
     });
     matched.sort((a, b) => a.distance - b.distance);
     return { mode: browseMode, rows: matched };
-  }, [browseMode, browseQuery, marketSnapshots, visitedMarkets, knownSystems, commanderPosition]);
+  }, [browseMode, browseQuery, marketSnapshots, visitedMarkets, knownSystems, commanderPosition, economyFilter, knownStations]);
 
   // Market sync
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
@@ -396,16 +463,16 @@ export function SourcesPage() {
         </span>
       </td>
       <td className={`text-right px-4 py-2 ${isInSystem ? 'text-progress-complete' : 'text-muted-foreground'}`}>
-        {isInSystem ? '0 ly' : s.distance != null ? `${s.distance.toFixed(1)} ly` : '\u2014'}
+        {isInSystem ? '0 ly' : s.distance != null ? `${Math.round(s.distance)} ly` : '\u2014'}
       </td>
       <td className="text-right px-4 py-2 text-muted-foreground">{'\u2014'}</td>
-      <td className="text-right px-4 py-2">
+      <td className="text-right px-4 py-2 whitespace-nowrap">
         <span className={s.stock >= need.remaining ? 'text-progress-complete' : s.stock > 0 ? 'text-foreground' : 'text-red-400'}>
-          {s.stock.toLocaleString()}
+          {formatStock(s.stock)}
         </span>
       </td>
-      <td className="text-right px-4 py-2 text-muted-foreground">{s.buyPrice.toLocaleString()} cr</td>
-      <td className="text-right px-4 py-2 text-muted-foreground">{Math.round(s.distanceToArrival).toLocaleString()}</td>
+      <td className="text-right px-4 py-2 text-muted-foreground whitespace-nowrap">{s.buyPrice.toLocaleString()}</td>
+      <td className="text-right px-4 py-2 text-muted-foreground whitespace-nowrap">{Math.round(s.distanceToArrival).toLocaleString()}</td>
       <td className="text-right px-4 py-2 text-muted-foreground">{formatAge(s.updatedAt)}</td>
     </tr>
   );
@@ -471,6 +538,33 @@ export function SourcesPage() {
           }
           className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-primary"
         />
+        {/* Economy filter — multi-select chips. Empty = no economy filter applied. */}
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-muted-foreground">Economy:</span>
+          {ECONOMY_OPTIONS.map((econ) => {
+            const active = economyFilter.includes(econ);
+            return (
+              <button
+                key={econ}
+                onClick={() => setEconomyFilter((v) => active ? v.filter((x) => x !== econ) : [...v, econ])}
+                className={`px-2 py-0.5 rounded ${active ? 'bg-primary/30 text-primary border border-primary' : 'bg-muted text-muted-foreground border border-border hover:bg-muted/70'}`}
+              >
+                {econ}
+              </button>
+            );
+          })}
+          {economyFilter.length > 0 && (
+            <button
+              onClick={() => setEconomyFilter([])}
+              className="px-2 py-0.5 rounded bg-destructive/20 text-destructive hover:bg-destructive/30"
+            >
+              Clear
+            </button>
+          )}
+          {economyFilter.length === 0 && (
+            <span className="text-muted-foreground/60">(none — all economies match)</span>
+          )}
+        </div>
         {browseResults && (
           <div className="mt-3">
             {browseResults.rows.length === 0 ? (
@@ -499,13 +593,13 @@ export function SourcesPage() {
                         <td className="py-1 pr-3 text-foreground">{r.commodityName}</td>
                         <td className="py-1 pr-3 text-foreground">{r.stationName}</td>
                         <td className="py-1 pr-3 text-muted-foreground">{r.systemName}</td>
-                        <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground">
-                          {Number.isFinite(r.distance) ? `${r.distance.toFixed(1)} ly` : '—'}
+                        <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground whitespace-nowrap">
+                          {Number.isFinite(r.distance) ? `${Math.round(r.distance)} ly` : '—'}
                         </td>
-                        <td className="py-1 pr-3 text-right tabular-nums">
-                          {r.stock == null ? <span className="text-muted-foreground/50">—</span> : r.stock.toLocaleString()}
+                        <td className="py-1 pr-3 text-right tabular-nums whitespace-nowrap">
+                          {r.stock == null ? <span className="text-muted-foreground/50">—</span> : formatStock(r.stock)}
                         </td>
-                        <td className="py-1 pr-3 text-right tabular-nums">{r.buyPrice > 0 ? `${r.buyPrice.toLocaleString()} cr` : '—'}</td>
+                        <td className="py-1 pr-3 text-right tabular-nums whitespace-nowrap">{r.buyPrice > 0 ? r.buyPrice.toLocaleString() : '—'}</td>
                         <td className="py-1 text-xs">
                           <span className={r.source === 'snapshot' ? 'text-green-400' : 'text-amber-400'}>
                             {r.source === 'snapshot' ? 'Market' : 'Journal'}
@@ -529,13 +623,31 @@ export function SourcesPage() {
                 }>).map((s) => (
                   <details key={s.marketId} className="rounded-lg border border-border bg-muted/30">
                     <summary className="cursor-pointer px-3 py-2 flex items-center justify-between text-sm gap-3 flex-wrap">
-                      <span className="flex items-center gap-2 min-w-0">
+                      <span className="flex items-center gap-2 min-w-0 flex-wrap">
                         <span>{stationTypeIcon(s.stationType)}</span>
                         <span className="font-semibold text-foreground truncate">{s.stationName}</span>
                         <span className="text-muted-foreground truncate">{s.systemName}</span>
+                        {stationEconomies(s.marketId).map((econ) => (
+                          <span key={econ} className="px-1.5 py-0.5 rounded text-[10px] bg-primary/10 text-primary border border-primary/30">{econ}</span>
+                        ))}
                       </span>
                       <span className="text-xs text-muted-foreground flex items-center gap-2 shrink-0">
-                        <span className="tabular-nums">{Number.isFinite(s.distance) ? `${s.distance.toFixed(1)} ly` : '—'}</span>
+                        <span className="tabular-nums">{Number.isFinite(s.distance) ? `${Math.round(s.distance)} ly` : '—'}</span>
+                        {(() => {
+                          const t = travelStatFor(s.marketId);
+                          if (!t) return null;
+                          const m = Math.floor(t.avgSeconds / 60);
+                          const sec = Math.round(t.avgSeconds % 60);
+                          return (
+                            <>
+                              <span>·</span>
+                              <span className={t.via === 'here' ? 'text-emerald-400/80' : 'text-sky-400/80'} title={t.via === 'here' ? 'from current dock' : t.via === 'fc' ? 'from your FC' : 'from last dock'}>
+                                {m}m {sec}s
+                                {t.via !== 'here' && <span className="text-[10px] ml-1">{t.via === 'fc' ? 'FC' : 'last'}</span>}
+                              </span>
+                            </>
+                          );
+                        })()}
                         <span>·</span>
                         <span>{s.commodities.length} items</span>
                         <span>·</span>
@@ -557,10 +669,10 @@ export function SourcesPage() {
                           {[...s.commodities].sort((a, b) => (b.stock ?? 0) - (a.stock ?? 0)).map((c) => (
                             <tr key={c.commodityId} className="border-t border-border/20">
                               <td className="py-1 pr-3 text-foreground">{COMMODITY_BY_ID.get(c.commodityId)?.name || c.name}</td>
-                              <td className="py-1 pr-3 text-right tabular-nums">
-                                {c.stock == null ? <span className="text-muted-foreground/50">—</span> : c.stock.toLocaleString()}
+                              <td className="py-1 pr-3 text-right tabular-nums whitespace-nowrap">
+                                {c.stock == null ? <span className="text-muted-foreground/50">—</span> : formatStock(c.stock)}
                               </td>
-                              <td className="py-1 text-right tabular-nums">{c.buyPrice > 0 ? `${c.buyPrice.toLocaleString()} cr` : '—'}</td>
+                              <td className="py-1 text-right tabular-nums whitespace-nowrap">{c.buyPrice > 0 ? c.buyPrice.toLocaleString() : '—'}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1079,7 +1191,7 @@ export function SourcesPage() {
                               <span className="mr-1.5" title={stationTypeLabel(r.stationType)}>{stationTypeIcon(r.stationType)}</span>
                               {r.stationName}
                               <span className="ml-1.5 text-xs opacity-60">
-                                {r.tag === 'pinned' ? '\u2B50' : '\u2713'} {r.tag}
+                                {r.tag === 'pinned' ? '\u2B50' : ''}
                               </span>
                             </td>
                             <td className="px-4 py-2 text-muted-foreground">{r.systemName}</td>
@@ -1088,32 +1200,32 @@ export function SourcesPage() {
                                 {stationTypeLabel(r.stationType)}
                               </span>
                             </td>
-                            <td className={`text-right px-4 py-2 ${r.isInSystem ? 'text-progress-complete' : 'text-muted-foreground'}`}>
-                              {r.distance != null ? `${r.distance.toFixed(1)} ly` : '\u2014'}
+                            <td className={`text-right px-4 py-2 whitespace-nowrap ${r.isInSystem ? 'text-progress-complete' : 'text-muted-foreground'}`}>
+                              {r.distance != null ? `${Math.round(r.distance)} ly` : '\u2014'}
                             </td>
-                            <td className="text-right px-4 py-2 text-muted-foreground">
+                            <td className="text-right px-4 py-2 text-muted-foreground whitespace-nowrap">
                               {r.travel ? (
                                 <span
                                   title={`${r.travel.tripCount} trips${r.travel.fromStation ? ` from ${r.travel.fromStation}` : ''}`}
                                   className={r.travel.via === 'here' ? '' : 'text-sky-400/80'}
                                 >
-                                  {Math.floor(r.travel.avgSeconds / 60)}m {Math.round(r.travel.avgSeconds % 60)}s
+                                  {Math.floor(r.travel.avgSeconds / 60)}:{String(Math.round(r.travel.avgSeconds % 60)).padStart(2, '0')}
                                   {r.travel.via !== 'here' && (
                                     <span className="text-[10px] text-muted-foreground/70 ml-1">
-                                      {r.travel.via === 'fc' ? 'via FC' : 'via last dock'}
+                                      {r.travel.via === 'fc' ? 'via FC' : 'via last'}
                                     </span>
                                   )}
                                 </span>
                               ) : '\u2014'}
                             </td>
-                            <td className="text-right px-4 py-2 text-muted-foreground">
-                              {r.stock != null ? r.stock.toLocaleString() : '\u2014'}
+                            <td className="text-right px-4 py-2 text-muted-foreground whitespace-nowrap">
+                              {r.stock != null ? formatStock(r.stock) : '\u2014'}
                             </td>
-                            <td className="text-right px-4 py-2 text-muted-foreground">
-                              {r.buyPrice != null ? `${r.buyPrice.toLocaleString()} cr` : '\u2014'}
+                            <td className="text-right px-4 py-2 text-muted-foreground whitespace-nowrap">
+                              {r.buyPrice != null ? r.buyPrice.toLocaleString() : '\u2014'}
                             </td>
-                            <td className="text-right px-4 py-2 text-muted-foreground">
-                              {r.distFromStarLS != null ? `${Math.round(r.distFromStarLS).toLocaleString()} ls` : '\u2014'}
+                            <td className="text-right px-4 py-2 text-muted-foreground whitespace-nowrap">
+                              {r.distFromStarLS != null ? Math.round(r.distFromStarLS).toLocaleString() : '\u2014'}
                             </td>
                             <td className="text-right px-4 py-2 text-xs text-muted-foreground">
                               {r.priceSeen ? new Date(r.priceSeen).toLocaleDateString() : (r.notes || '')}

@@ -186,7 +186,7 @@ export interface PersistedMarketCommodity {
   commodityId: string; // matches CommodityDefinition.id, or raw slugified name if not in dictionary
   name: string;
   buyPrice: number;
-  stock: number;
+  stock: number | null; // null = journal-derived (no live stock figure available)
   sellPrice?: number;  // price station pays commander (commander-sell side)
   demand?: number;     // station's demand for the commodity
   category?: string;   // Spansh category (e.g. "Chemicals", "Weapons"); blank when unknown
@@ -210,6 +210,60 @@ export interface PersistedCarrierCargo {
   items: { commodityId: string; name: string; count: number }[];
   isEstimate: boolean;
   updatedAt: string; // ISO timestamp
+}
+
+// --- War & Peace scout reports ---
+//
+// Per-system enriched conflict data fetched from EDSM + Spansh. Persisted
+// keyed by systemAddress in scoutedConflicts; cache TTL = next BGS tick.
+
+export interface ScoutFaction {
+  name: string;
+  allegiance: string;
+  government?: string;
+  influence: number;
+  state: string;
+  activeStates?: string[];
+  pendingStates?: string[];
+  recoveringStates?: string[];
+}
+
+export interface ScoutConflictPair {
+  state: 'War' | 'Civil War' | 'Election' | string;
+  factions: ScoutFaction[];        // 2 if confidently paired, more if multiple factions in same state
+  paired: boolean;                  // true when there are exactly 2 same-state factions
+  wonDays?: { faction: string; days: number }[]; // from journal Conflicts when available
+  status?: 'active' | 'pending';
+}
+
+export interface ScoutAnchor {
+  name: string;
+  type?: string;
+  distanceLs?: number;
+  controllingFaction?: string;
+  isUserRelevant?: boolean;
+  hasRefuel?: boolean;
+  hasRepair?: boolean;
+  hasRearm?: boolean;
+}
+
+export interface ScoutReport {
+  systemName: string;
+  systemAddress: number;
+  scoutedAt: string;
+  expiresAt: string;
+  population?: number;
+  controllingFaction?: string;
+  controllingFactionState?: string;
+  systemAllegiance?: string;
+  power?: string[];
+  powerState?: string;
+  conflictPairs: ScoutConflictPair[];
+  combatAnchors: ScoutAnchor[];
+  serviceStations: ScoutAnchor[]; // stations with refuel+repair+rearm sorted by distance
+  notes?: string[];
+  // sourceTags identifies what fed each piece of the report
+  sources: { spansh?: boolean; edsm?: boolean; journal?: boolean };
 }
 
 // --- Phase 2 placeholder ---

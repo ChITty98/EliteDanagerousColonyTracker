@@ -551,8 +551,10 @@ export function ProjectDetailPage() {
           const totalNeedToBuy = project.commodities.reduce((sum, c) => {
             const rem = Math.max(0, c.requiredQuantity - c.providedQuantity);
             if (rem === 0) return sum;
-            const fcStock = multiCarrierCargo?.myCarrier?.items.find((i) => i.commodityId === c.commodityId)?.count || 0;
-            const shipStock = shipCargo?.items.find((i) => i.commodityId === c.commodityId)?.count || 0;
+            const stripJournalForm = (id: string) => id.replace(/^\$|_name;$/g, '').toLowerCase();
+            const matchTop = (itemId: string) => itemId === c.commodityId || stripJournalForm(itemId) === c.commodityId.toLowerCase();
+            const fcStock = multiCarrierCargo?.myCarrier?.items.find((i) => matchTop(i.commodityId))?.count || 0;
+            const shipStock = shipCargo?.items.find((i) => matchTop(i.commodityId))?.count || 0;
             return sum + Math.max(0, rem - fcStock - shipStock);
           }, 0);
           const totalInStock = Math.max(totalRemaining, 0) - totalNeedToBuy;
@@ -801,9 +803,20 @@ export function ProjectDetailPage() {
                     const pct = c.requiredQuantity > 0 ? c.providedQuantity / c.requiredQuantity : 0;
                     const isItemComplete = c.providedQuantity >= c.requiredQuantity && c.requiredQuantity > 0;
 
-                    const shipCount = shipCargo?.items.find((i) => i.commodityId === c.commodityId)?.count;
-                    const myFcCount = multiCarrierCargo?.myCarrier?.items.find((i) => i.commodityId === c.commodityId)?.count;
-                    const sqCount = squadronCargos.reduce((s, sc) => s + (sc.items.find((i) => i.commodityId === c.commodityId)?.count || 0), 0);
+                    // Match by canonical commodity ID OR raw-journal-format ID for backwards compat.
+                    // FC items captured before the server-dict was complete were stored as e.g.
+                    // '$emergencypowercells_name;' instead of 'emergencypowercells'. The on-tick
+                    // backfill normalises new captures, but in-flight UI matches need to handle
+                    // both forms so users see correct stock immediately.
+                    const matchesCommodity = (itemId: string): boolean => {
+                      if (itemId === c.commodityId) return true;
+                      // Strip $..._name; wrapper and compare lowercased
+                      const stripped = itemId.replace(/^\$|_name;$/g, '').toLowerCase();
+                      return stripped === c.commodityId.toLowerCase();
+                    };
+                    const shipCount = shipCargo?.items.find((i) => matchesCommodity(i.commodityId))?.count;
+                    const myFcCount = multiCarrierCargo?.myCarrier?.items.find((i) => matchesCommodity(i.commodityId))?.count;
+                    const sqCount = squadronCargos.reduce((s, sc) => s + (sc.items.find((i) => matchesCommodity(i.commodityId))?.count || 0), 0);
 
                     return (
                       <tr

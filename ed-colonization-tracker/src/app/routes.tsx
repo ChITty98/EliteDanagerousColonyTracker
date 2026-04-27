@@ -18,6 +18,7 @@ import { CompanionPage } from '@/features/companion/CompanionPage';
 import { ArchitectDomainPage } from '@/features/domain/ArchitectDomainPage';
 import { ColonyMapPage } from '@/features/map/ColonyMapPage';
 import { SystemViewPage } from '@/features/system-view/SystemViewPage';
+import { WarPeacePage } from '@/features/war-peace/WarPeacePage';
 
 export const router = createBrowserRouter([
   {
@@ -38,6 +39,7 @@ export const router = createBrowserRouter([
       { path: 'map', element: <ColonyMapPage /> },
       { path: 'system-view', element: <SystemViewPage /> },
       { path: 'companion', element: <CompanionPage /> },
+      { path: 'war-peace', element: <WarPeacePage /> },
       { path: 'journal-stats', element: <JournalStatsPage /> },
       { path: 'settings', element: <SettingsPage /> },
       { path: 'wiki', element: <WikiPage /> },

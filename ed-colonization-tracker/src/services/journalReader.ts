@@ -939,9 +939,14 @@ export function parseJournalLines(lines: string[]) {
 
 // ===== Fleet Carrier Helpers =====
 
-/** Fleet Carrier MarketIDs are >= 3700000000 */
-export function isFleetCarrierMarketId(marketId: number): boolean {
-  return marketId >= 3700000000;
+/**
+ * MarketId-only FC detection is unreliable — player-built stations live in the
+ * same range and were getting false-positived as FCs. Stub returns false; callers
+ * should rely on stationType === 'FleetCarrier' or the stationName-as-callsign
+ * check (XXX-XXX pattern) instead.
+ */
+export function isFleetCarrierMarketId(_marketId: number): boolean {
+  return false;
 }
 
 /** Fleet Carrier callsigns match pattern XXX-XXX */
@@ -950,12 +955,13 @@ export function isFleetCarrierCallsign(name: string): boolean {
   return FC_CALLSIGN_REGEX.test(name);
 }
 
-/** Check if a station is a Fleet Carrier by type or market ID */
-export function isFleetCarrier(stationType?: string, marketId?: number): boolean {
+/** Check if a station is a Fleet Carrier — type first, then callsign pattern as fallback */
+export function isFleetCarrier(stationType?: string, marketId?: number, stationName?: string): boolean {
   if (stationType === 'FleetCarrier') return true;
-  // If we know the station type and it's not a FC, trust that over market ID range
   if (stationType && stationType !== 'FleetCarrier') return false;
-  if (marketId && isFleetCarrierMarketId(marketId)) return true;
+  // No reliable type — fall back to callsign pattern (FCs are XXX-XXX)
+  if (stationName && FC_CALLSIGN_REGEX.test(stationName)) return true;
+  void marketId; // legacy param retained for call-site compatibility; no longer trusted
   return false;
 }
 
@@ -968,7 +974,7 @@ export function isFleetCarrier(stationType?: string, marketId?: number): boolean
  * Excluded from dock dossiers, most-visited stats, and rank computation.
  */
 export function isEphemeralStation(stationName?: string, stationType?: string, marketId?: number): boolean {
-  if (isFleetCarrier(stationType, marketId)) return true;
+  if (isFleetCarrier(stationType, marketId, stationName)) return true;
   if (!stationName) return false;
   if (/^Trailblazer /i.test(stationName)) return true;
   if (/Colonisation Ship/i.test(stationName)) return true;

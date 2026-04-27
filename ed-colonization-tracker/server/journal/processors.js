@@ -47,6 +47,7 @@ import {
   isPermanentlyEphemeral,
   isColonisationShip,
   isConstructionStationName,
+  registerFcMarketId,
 } from './util.js';
 import { findCommodityByJournalName, findCommodityByDisplayName } from './commodities.js';
 import {
@@ -387,6 +388,42 @@ function processDepotEvents(parsed, existing, patch) {
   };
 }
 
+// ===== Carrier-cargo backfill — fix broken $xxx_name; commodity IDs =====
+//
+// Server-side commodity dictionary was missing 27 entries until 2026-04-27, which
+// meant any FC items captured during that window stored the raw journal name
+// ($emergencypowercells_name;) as the commodityId instead of the canonical id
+// (emergencypowercells). Project tracker matches by canonical id so those items
+// appeared as "need to buy" even though the FC had stock.
+//
+// This walks every carrierCargo entry on each pollCompanionFiles tick (cheap —
+// ~10 carriers × ~30 items each) and rewrites broken IDs using the now-complete
+// dictionary. Idempotent: items already on canonical IDs pass through unchanged.
+
+function backfillCarrierCargoIds(carrierCargo) {
+  const upserts = {};
+  let itemsFixed = 0;
+  for (const callsign of Object.keys(carrierCargo)) {
+    const entry = carrierCargo[callsign];
+    if (!entry || !Array.isArray(entry.items)) continue;
+    let changed = false;
+    const items = entry.items.map((it) => {
+      const id = String(it.commodityId || '');
+      // Match raw journal format like '$emergencypowercells_name;'
+      if (!/^\$[a-z0-9]+_name;$/i.test(id)) return it;
+      const def = findCommodityByJournalName(id);
+      if (!def) return it; // still unknown — leave as-is
+      changed = true;
+      itemsFixed++;
+      return { ...it, commodityId: def.id, name: def.name };
+    });
+    if (changed) {
+      upserts[callsign] = { ...entry, items };
+    }
+  }
+  return { changed: Object.keys(upserts).length > 0, upserts, itemsFixed };
+}
+
 // ===== Companion feed SSE + state writes (non-overlay) =====
 
 function processCompanionFeedEvents(parsed, existing, settings, patch, extraEvents, deps) {
@@ -590,6 +627,12 @@ function processDockEvents(parsed, existing, patch, extraEvents, deps) {
   // Here we persist the dock to the dossier (recordStationDock equivalent),
   // broadcast a `docked` Companion event.
   for (const ev of parsed.dockedEvents) {
+    // Register Fleet Carriers in the runtime FC registry so isFleetCarrier()
+    // can identify them by MarketID without the broken 3.7B threshold guess.
+    // StationType from Docked is authoritative.
+    if (ev.StationType === 'FleetCarrier' && typeof ev.MarketID === 'number') {
+      registerFcMarketId(ev.MarketID);
+    }
     extraEvents.push({
       type: 'docked',
       station: ev.StationName,
@@ -609,9 +652,201 @@ function processDockEvents(parsed, existing, patch, extraEvents, deps) {
         timestamp: ev.timestamp,
         faction: ev.StationFaction && ev.StationFaction.Name,
         factionState: ev.StationFaction && ev.StationFaction.FactionState,
+        services: Array.isArray(ev.StationServices) ? ev.StationServices.slice() : null,
+        economies: Array.isArray(ev.StationEconomies) ? ev.StationEconomies.map((e) => ({
+          name: e.Name_Localised || e.Name || '',
+          proportion: typeof e.Proportion === 'number' ? e.Proportion : 0,
+        })) : null,
+        primaryEconomy: ev.StationEconomy_Localised || null,
+        government: ev.StationGovernment_Localised || null,
+        allegiance: ev.StationAllegiance || null,
       });
+      // Bottom-stack overlay banner (services / economy / established-by-you)
+      // fires AFTER welcome (DockingGranted) so we have ev.StationServices etc.
+      try { renderDockInfoBanner(ev, existing, deps); } catch (e) { console.error('[Overlay] DockInfoBanner error:', e && e.message); }
     }
   }
+}
+
+// ===== Dock info banner (services / economy / established-by-you) =====
+//
+// Fires on Docked, BELOW the DockingGranted welcome stack. Welcome owns slots 0-5
+// at Y_DOCK..Y_DOCK+5*LINE_HEIGHT; this banner uses slots 6/7/8.
+// Three lines, all conditional:
+//   slot 6: Economy — "🏭 High Tech / Tourism (mixed)"
+//   slot 7: Services — "🗺 Cartographics · 💸 Factors · 🔧 Tech Broker · ⚫ Black Market"
+//   slot 8: Established — "🛠 You established this on 2026-03-15 (42 days ago)"
+
+const NOTEWORTHY_SERVICES = [
+  // Order = display order. Values that are ubiquitous (dock, refuel, commodities,
+  // contacts, repair, missions, outfitting, shipyard, engineer, registeringcolonisation,
+  // stationoperations, flightcontroller, crewlounge, socialspace, etc.) are NOT here.
+  // Search & Rescue dropped per user — not used. Colonisation contact dropped — too common.
+  // Vista Genomics dropped — most major stations have it, not a useful guide.
+  { key: 'exploration',      label: '🗺 Cartographics' },
+  { key: 'facilitator',      label: '💸 Factors' },
+  { key: 'techBroker',       label: '🔧 Tech Broker' },
+  { key: 'materialtrader',   label: '🧪 Material Trader' }, // type filled in dynamically from economy
+  { key: 'blackmarket',      label: '⚫ Black Market' },
+];
+
+// Heuristic: ED's Material Trader specialisation is keyed off the system's primary economy.
+// Mapping per the community-documented ruleset (approximate — FDev occasionally tweaks).
+function materialTraderType(primaryEconomy) {
+  const e = (primaryEconomy || '').toLowerCase();
+  if (e === 'industrial') return 'Manufactured';
+  if (e === 'extraction' || e === 'refinery') return 'Raw';
+  if (e === 'high tech' || e === 'military') return 'Encoded';
+  return null; // unknown — fall back to generic label
+}
+
+const ECONOMY_EMOJI = {
+  'Agriculture': '🌾',
+  'Extraction':  '⛏',
+  'Industrial':  '🏭',
+  'High Tech':   '💻',
+  'Refinery':    '🔥',
+  'Service':     '🛠',
+  'Tourism':     '🎢',
+  'Military':    '⚔',
+  'Colony':      '🏗',
+  'Terraforming':'🌍',
+  'Damaged':     '🛡',
+  'Rescue':      '🆘',
+  'Repair':      '🔧',
+  'Prison':      '⛓',
+  'Private Enterprise': '', // FC — skip below
+};
+
+/**
+ * DockingGranted variant — uses cached dossier data (services/economies persisted
+ * from previous Docked visit) since DockingGranted itself only carries name/type/marketId.
+ * First-visit stations have nothing to show here; the Docked-time refresh fills it in.
+ */
+function renderDockInfoBannerFromDossier(station, ev, existing, deps) {
+  if (!deps.sendOverlay) return;
+  const settings = (existing && existing.settings) || {};
+  if (settings.overlayEnabled === false) return;
+  if (!station) return; // first visit — wait for Docked
+
+  const LINE_HEIGHT = 26;
+  const slotY = (i) => Y_DOCK + i * LINE_HEIGHT;
+  const TTL = 12;
+
+  // Reconstruct ev-shape data from dossier so existing format helpers work
+  const cachedEcons = Array.isArray(station.economies)
+    ? station.economies.map((e) => ({ Name_Localised: e.name, Proportion: e.proportion }))
+    : [];
+  const econLine = formatEconomyLine(station.primaryEconomy || (cachedEcons[0] && cachedEcons[0].Name_Localised) || null, cachedEcons);
+  const services = Array.isArray(station.services) ? station.services : [];
+  const serviceLine = formatServicesLine(services, station.primaryEconomy);
+  const establishedLine = formatEstablishedLine({ MarketID: ev.MarketID, StationName: ev.StationName }, existing);
+
+  if (econLine) {
+    deps.sendOverlay({ id: 'edcolony_dock_econ', text: econLine, color: '#fbbf24', x: X_LEFT, y: slotY(6), ttl: TTL });
+  } else {
+    deps.sendOverlay({ id: 'edcolony_dock_econ', text: '', color: '#ffffff', x: X_LEFT, y: slotY(6), ttl: 1 });
+  }
+  if (serviceLine) {
+    deps.sendOverlay({ id: 'edcolony_dock_svc', text: serviceLine, color: '#7fd7ff', x: X_LEFT, y: slotY(7), ttl: TTL });
+  } else {
+    deps.sendOverlay({ id: 'edcolony_dock_svc', text: '', color: '#ffffff', x: X_LEFT, y: slotY(7), ttl: 1 });
+  }
+  if (establishedLine) {
+    deps.sendOverlay({ id: 'edcolony_dock_built', text: establishedLine, color: '#86efac', x: X_LEFT, y: slotY(8), ttl: TTL });
+  } else {
+    deps.sendOverlay({ id: 'edcolony_dock_built', text: '', color: '#ffffff', x: X_LEFT, y: slotY(8), ttl: 1 });
+  }
+}
+
+function renderDockInfoBanner(ev, existing, deps) {
+  if (!deps.sendOverlay) return;
+  const settings = (existing && existing.settings) || {};
+  if (settings.overlayEnabled === false) return;
+
+  const LINE_HEIGHT = 26;
+  const slotY = (i) => Y_DOCK + i * LINE_HEIGHT;
+  const TTL = 12;
+
+  // --- slot 6: Economy ---
+  const econs = Array.isArray(ev.StationEconomies) ? ev.StationEconomies : [];
+  const econLine = formatEconomyLine(ev.StationEconomy_Localised, econs);
+  if (econLine) {
+    deps.sendOverlay({ id: 'edcolony_dock_econ', text: econLine, color: '#fbbf24', x: X_LEFT, y: slotY(6), ttl: TTL });
+  } else {
+    deps.sendOverlay({ id: 'edcolony_dock_econ', text: '', color: '#ffffff', x: X_LEFT, y: slotY(6), ttl: 1 });
+  }
+
+  // --- slot 7: Noteworthy services ---
+  const services = Array.isArray(ev.StationServices) ? ev.StationServices : [];
+  const serviceLine = formatServicesLine(services, ev.StationEconomy_Localised);
+  if (serviceLine) {
+    deps.sendOverlay({ id: 'edcolony_dock_svc', text: serviceLine, color: '#7fd7ff', x: X_LEFT, y: slotY(7), ttl: TTL });
+  } else {
+    deps.sendOverlay({ id: 'edcolony_dock_svc', text: '', color: '#ffffff', x: X_LEFT, y: slotY(7), ttl: 1 });
+  }
+
+  // --- slot 8: Established by you (if a completed project matches this MarketID) ---
+  const establishedLine = formatEstablishedLine(ev, existing);
+  if (establishedLine) {
+    deps.sendOverlay({ id: 'edcolony_dock_built', text: establishedLine, color: '#86efac', x: X_LEFT, y: slotY(8), ttl: TTL });
+  } else {
+    deps.sendOverlay({ id: 'edcolony_dock_built', text: '', color: '#ffffff', x: X_LEFT, y: slotY(8), ttl: 1 });
+  }
+}
+
+function formatEconomyLine(primaryLocalised, economies) {
+  if (!primaryLocalised) return '';
+  // FC/Carrier — "Private Enterprise" — always the same, useless. Skip.
+  if (primaryLocalised === 'Private Enterprise') return '';
+  // Sort by proportion desc, take top 2 if both >= 0.3
+  const sorted = (economies || []).slice().sort((a, b) => (b.Proportion || 0) - (a.Proportion || 0));
+  const top = sorted[0];
+  const second = sorted[1];
+  const topName = (top && (top.Name_Localised || top.Name)) || primaryLocalised;
+  const topEmoji = ECONOMY_EMOJI[topName] || '';
+  if (second && (second.Proportion || 0) >= 0.3) {
+    const secName = second.Name_Localised || second.Name || '';
+    const secEmoji = ECONOMY_EMOJI[secName] || '';
+    return `${topEmoji ? topEmoji + ' ' : ''}${topName} · ${secEmoji ? secEmoji + ' ' : ''}${secName} (mixed)`;
+  }
+  return `${topEmoji ? topEmoji + ' ' : ''}${topName}`;
+}
+
+function formatServicesLine(services, primaryEconomy) {
+  if (!services || services.length === 0) return '';
+  const present = NOTEWORTHY_SERVICES.filter((s) => services.includes(s.key));
+  if (present.length === 0) return '';
+  return present.map((s) => {
+    if (s.key === 'materialtrader') {
+      const type = materialTraderType(primaryEconomy);
+      return type ? `🧪 ${type} Materials` : s.label;
+    }
+    return s.label;
+  }).join(' · ');
+}
+
+function formatEstablishedLine(ev, existing) {
+  const projects = Array.isArray(existing && existing.projects) ? existing.projects : [];
+  // Match either by current MarketID (preserved across construction → finished station)
+  // or by station name on completed-station fields.
+  const match = projects.find((p) =>
+    p && p.status === 'completed' && (
+      p.marketId === ev.MarketID ||
+      (p.completedStationName && ev.StationName && p.completedStationName === ev.StationName)
+    ));
+  if (!match || !match.completedAt) return '';
+  const completedAt = new Date(match.completedAt);
+  if (isNaN(completedAt.getTime())) return '';
+  const days = Math.max(0, Math.floor((Date.now() - completedAt.getTime()) / 86400000));
+  const dateStr = completedAt.toISOString().slice(0, 10);
+  let ago;
+  if (days === 0) ago = 'today';
+  else if (days === 1) ago = 'yesterday';
+  else if (days < 30) ago = `${days} days ago`;
+  else if (days < 365) ago = `${Math.floor(days / 30)} months ago`;
+  else ago = `${Math.floor(days / 365)}y ${Math.floor((days % 365) / 30)}mo ago`;
+  return `🛠 You established this on ${dateStr} (${ago})`;
 }
 
 /**
@@ -674,6 +909,14 @@ function applyDockToStationPatch(patch, existing, marketId, payload) {
     factionState: currentState,
     factionHistory: newFactionHistory,
     stateHistory: newStateHistory,
+    // Always overwrite services/economies with the latest dock — game state wins
+    // over any stale cached value. Only overwrite when payload supplied them
+    // (Docked has them, FSS-only KB events do not).
+    services: Array.isArray(payload.services) ? payload.services : base.services,
+    economies: Array.isArray(payload.economies) ? payload.economies : base.economies,
+    primaryEconomy: payload.primaryEconomy != null ? payload.primaryEconomy : (base.primaryEconomy || null),
+    government: payload.government != null ? payload.government : (base.government || null),
+    allegiance: payload.allegiance != null ? payload.allegiance : (base.allegiance || null),
     lastSeen: now,
   });
 
@@ -727,6 +970,14 @@ function handleDockingGranted(ev, existing, extraEvents, deps) {
   };
 
   renderDockWelcomeOverlay(summary, station, deps);
+  // Bottom-stack info banner from CACHED dossier — fires on DockingGranted so
+  // the player sees economy/services/established info before they've actually
+  // landed. Refreshed on Docked with live ev data in case anything changed.
+  try {
+    renderDockInfoBannerFromDossier(station, ev, existing, deps);
+  } catch (e) {
+    console.error('[Overlay] DockInfoBanner (DockingGranted) error:', e && e.message);
+  }
   extraEvents.push({
     type: 'station_dock_summary',
     marketId: summary.marketId,
@@ -863,6 +1114,16 @@ export function pollCompanionFiles(journalDir, deps) {
   const existing = readState();
   const settings = existing.settings || {};
 
+  // Backfill: walk all existing carrierCargo entries and rewrite any broken
+  // commodityIds in raw journal format ($xxx_name;) to canonical IDs. Required
+  // because the server-side commodities dictionary was missing 27 entries until
+  // now — items captured during that window stored the raw name as the ID.
+  const carrierCargoFix = backfillCarrierCargoIds(existing.carrierCargo || {});
+  if (carrierCargoFix.changed) {
+    patch.carrierCargo = { __upsert: carrierCargoFix.upserts };
+    console.log(`[CarrierCargo] Backfill normalised IDs for ${Object.keys(carrierCargoFix.upserts).length} carrier(s) (${carrierCargoFix.itemsFixed} items)`);
+  }
+
   const shipCargo = readShipCargo(journalDir);
   if (shipCargo) {
     extra.push({ type: 'ship_cargo', cargo: shipCargo, timestamp: new Date().toISOString() });
@@ -900,10 +1161,18 @@ export function pollCompanionFiles(journalDir, deps) {
             items,
             earliestTransfer: market.timestamp,
             latestTransfer: market.timestamp,
+            updatedAt: market.timestamp || new Date().toISOString(),
             isEstimate: false,
             carrierCallsign: ownerCallsign,
           },
         },
+      };
+      outcome = {
+        kind: 'fc_cargo',
+        callsign: ownerCallsign,
+        marketId: market.marketId,
+        savedCount: items.length,
+        rawItemCount: market.items.length,
       };
       extra.push({
         type: 'carrier_cargo_updated',
@@ -922,7 +1191,7 @@ export function pollCompanionFiles(journalDir, deps) {
           ttl: 6,
         });
       }
-    } else if (!isEphemeralStation(market.stationName, undefined, market.marketId)) {
+    } else if (!isEphemeralStation(market.stationName, market.stationType, market.marketId)) {
       // Capture every item Market.json lists (sell-side + buy-side). Fall back to raw
       // Spansh name when commodity isn't in the colonisation dictionary so data isn't lost.
       // Always save the snapshot — even a zero-commodity one preserves station metadata.
@@ -947,7 +1216,7 @@ export function pollCompanionFiles(journalDir, deps) {
         marketId: market.marketId,
         stationName: market.stationName,
         systemName: market.systemName,
-        stationType: '',
+        stationType: market.stationType || '',
         isPlanetary: false,
         hasLargePads: false,
         commodities: allCommodities,

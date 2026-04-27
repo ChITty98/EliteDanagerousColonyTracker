@@ -130,6 +130,7 @@ export function readMarketJson(journalDir) {
   return {
     marketId: data.MarketID,
     stationName: data.StationName,
+    stationType: data.StationType || '',
     systemName: data.StarSystem,
     items,
     timestamp: data.timestamp,

@@ -135,6 +135,7 @@ const MERGE_STRATEGIES: Record<string, MergeStrategy> = {
   bodyVisits: { kind: 'map' },
   bodyNotes: { kind: 'map' },
   fleetCarrierSpaceUsage: { kind: 'map' },
+  scoutedConflicts: { kind: 'map' },
   // Array with id field
   projects: { kind: 'arrayById', idKey: 'id' },
   sessions: { kind: 'arrayById', idKey: 'id' },
@@ -259,6 +260,15 @@ const serverStorage: StateStorage = {
       const data = await res.json();
       hydrationComplete = true;
       if (!data || Object.keys(data).length === 0) { setBaseline({}); return null; }
+      // Cancel any pending setItem timer so a stale diff (computed before this
+      // baseline update) can't fire after we land. Without this, a 300ms-debounced
+      // setItem queued before rehydrate would diff against the NEW baseline using
+      // the OLD store state, generate __remove ops for entries we just received,
+      // and PATCH them right back off the server. (The migration-stomp bug.)
+      if (setItemDebounceTimer) {
+        clearTimeout(setItemDebounceTimer);
+        setItemDebounceTimer = null;
+      }
       // Capture baseline so subsequent setItem calls can diff against it.
       setBaseline(data);
       return JSON.stringify({ state: data, version: 20 });
@@ -278,6 +288,45 @@ const serverStorage: StateStorage = {
         const current = parsed.state as Record<string, unknown>;
         const patch = computeStateDiff(current);
         if (!patch) return; // nothing changed
+
+        // Diagnostic: log any __remove operations before sending. The append-only
+        // server guard blocks these for protected keys, but knowing WHAT tab + WHAT
+        // page generated the bad diff helps trace the stale-baseline race.
+        try {
+          const removeOps: Array<{ key: string; count: number; sample: unknown[]; baselineSize: number; currentSize: number }> = [];
+          for (const [k, v] of Object.entries(patch)) {
+            if (v && typeof v === 'object' && Array.isArray((v as Record<string, unknown>).__remove)) {
+              const removeArr = (v as { __remove: unknown[] }).__remove;
+              if (removeArr.length > 0) {
+                const baselineVal = (stateBaseline as Record<string, unknown>)[k];
+                const currentVal = (current as Record<string, unknown>)[k];
+                const sizeOf = (x: unknown): number => {
+                  if (Array.isArray(x)) return x.length;
+                  if (x && typeof x === 'object') return Object.keys(x as object).length;
+                  return 0;
+                };
+                removeOps.push({
+                  key: k,
+                  count: removeArr.length,
+                  sample: removeArr.slice(0, 5),
+                  baselineSize: sizeOf(baselineVal),
+                  currentSize: sizeOf(currentVal),
+                });
+              }
+            }
+          }
+          if (removeOps.length > 0) {
+            const tk = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
+            const route = (() => { try { return window.location.pathname + window.location.hash; } catch { return '?'; } })();
+            const summary = removeOps.map((r) => `${r.key}: removing ${r.count}/${r.baselineSize}, current=${r.currentSize}, sample=[${r.sample.join(',')}]`).join(' | ');
+            fetch(tk ? `/api/log?token=${tk}` : '/api/log', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ tag: 'PatchRemove', message: `route=${route} ${summary}` }),
+            }).catch(() => {});
+          }
+        } catch { /* diagnostic logging is best-effort */ }
+
         markOwnPatch();
         const res = await fetch(apiUrl('/api/state'), {
           method: 'PATCH',
@@ -306,13 +355,52 @@ function markOwnPatch() {
   lastOwnPatchTime = Date.now();
 }
 
+async function forceStateRehydrate(reason: string): Promise<void> {
+  try {
+    const res = await fetch(apiUrl('/api/state'));
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data || Object.keys(data).length === 0) return;
+    await useAppStore.persist.rehydrate();
+    console.log(`[Store] Forced rehydrate (${reason})`);
+  } catch { /* ignore */ }
+}
+
 function startStateSyncListener() {
   try {
     const url = apiUrl('/api/events');
     const es = new EventSource(url);
     // Track exploration updates to avoid rehydration conflicts
     let lastExplorationUpdate = 0;
+    // Track connection state so we can detect reconnect (error → open → run a
+    // catch-up rehydrate to pull anything that fired during the disconnect gap).
+    let wasErrored = false;
+    // Last SSE traffic timestamp (any message, including heartbeats). Used by
+    // the watchdog below to detect silent SSE death (iPad sometimes loses the
+    // connection without firing onerror — a polite poll fallback catches that).
+    let lastSseTraffic = Date.now();
+    es.onopen = () => {
+      lastSseTraffic = Date.now();
+      if (wasErrored) {
+        wasErrored = false;
+        void forceStateRehydrate('sse-reconnect');
+      }
+    };
+
+    // Watchdog: server emits a heartbeat every 30s. If we've gone >45s without
+    // ANY SSE message (heartbeat or event), assume the connection is silently
+    // stale and force a state rehydrate. Cheap insurance for the iPad case
+    // where SSE can die without firing onerror.
+    setInterval(() => {
+      if (Date.now() - lastSseTraffic > 45_000) {
+        const stale = Math.round((Date.now() - lastSseTraffic) / 1000);
+        lastSseTraffic = Date.now(); // avoid hammering until next gap
+        void forceStateRehydrate(`sse-stale-${stale}s`);
+      }
+    }, 15_000);
+
     es.onmessage = async (e) => {
+      lastSseTraffic = Date.now();
       try {
         const ev = JSON.parse(e.data);
         // Track exploration updates — system view handles these via inline SSE data
@@ -354,7 +442,10 @@ function startStateSyncListener() {
       } catch { /* ignore */ }
     };
     es.onerror = () => {
-      // SSE will auto-reconnect
+      // Mark errored so the next onopen triggers a catch-up rehydrate. SSE
+      // auto-reconnects but events fired during the gap are lost; without this
+      // the iPad stays on stale state until something else triggers a fetch.
+      wasErrored = true;
     };
   } catch { /* SSE not available */ }
 }
@@ -584,6 +675,10 @@ interface AppState {
   scoutedSystems: Record<number, ScoutedSystemData>; // keyed by id64
   upsertScoutedSystem: (data: ScoutedSystemData) => void;
   clearScoutedSystems: (preserveFavorites?: boolean) => void;
+
+  // War & Peace scout reports — persisted enriched conflict data per system
+  scoutedConflicts: Record<number, import('./types').ScoutReport>; // keyed by systemAddress
+  upsertScoutedConflict: (report: import('./types').ScoutReport) => void;
 
   // Manual population overrides (keyed by lowercase system name)
   populationOverrides: Record<string, { population: number; updatedAt: string }>;
@@ -1356,6 +1451,13 @@ export const useAppStore = create<AppState>()(
           return { scoutedSystems: kept };
         }),
 
+      // War & Peace scout reports
+      scoutedConflicts: {},
+      upsertScoutedConflict: (report) =>
+        set((state) => ({
+          scoutedConflicts: { ...state.scoutedConflicts, [report.systemAddress]: report },
+        })),
+
       // Session summary
       lastSessionSummaryShown: null,
       setLastSessionSummaryShown: (ts) => set({ lastSessionSummaryShown: ts }),
@@ -1387,6 +1489,7 @@ export const useAppStore = create<AppState>()(
         sessions: state.sessions,
         activeSessionId: state.activeSessionId,
         customSources: state.customSources,
+        fleetCarriers: state.fleetCarriers, // MUST be persisted — was missing, caused __remove diff bug
         knownSystems: state.knownSystems,
         knownStations: state.knownStations,
         systemAddressMap: state.systemAddressMap, // Needed for FSS signal → system mapping
@@ -1400,6 +1503,7 @@ export const useAppStore = create<AppState>()(
         carrierCargo: state.carrierCargo,
         journalExplorationCache: state.journalExplorationCache,
         scoutedSystems: state.scoutedSystems,
+        scoutedConflicts: state.scoutedConflicts,
         bodyVisits: state.bodyVisits,
         bodyNotes: state.bodyNotes,
         populationOverrides: state.populationOverrides,

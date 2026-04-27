@@ -305,6 +305,86 @@ const faqItems: FaqItem[] = [
     ),
   },
 
+  // --- War & Peace (BGS conflicts) ---
+  {
+    category: 'War & Peace',
+    question: 'What is the War & Peace tab for?',
+    answer: (
+      <>
+        <p>
+          Find systems near you with active <strong>conflicts</strong> &mdash; faction states like
+          War, Civil War, or Election. Combat zones spawn during <span className="text-red-400">War</span>
+          and <span className="text-orange-400">Civil War</span>; Election is mission-only (no CZs).
+          Useful for finding combat work, BGS pushes, or Naval-rank progression.
+        </p>
+        <p className="mt-2">
+          Reference defaults to your current commander system. Adjust radius, conflict states, system
+          allegiance, and combatant allegiance. The combatant filter is a post-filter that catches
+          systems where the controlling faction is NOT in your power but a minor faction at conflict IS.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'War & Peace',
+    question: 'How fresh is the War & Peace data?',
+    answer: (
+      <>
+        <p>
+          Spansh data is community-aggregated and updates daily-ish. Faction states only change weekly
+          on the BGS tick (<strong>Thursday 07:00 UTC</strong>), so search results are cached server-side
+          per tick. Cache hits are free; cache misses fire a single Spansh API call.
+        </p>
+        <p className="mt-2 text-amber-400/90">
+          Spansh can be days behind reality. Use the <strong>Scout</strong> button on a candidate
+          before flying &mdash; that pulls live EDSM data and gives you the actually-current state.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'War & Peace',
+    question: 'What does the Scout button do?',
+    answer: (
+      <>
+        <p>
+          Click the row to expand it, then hit <strong>🔍 Scout system</strong>. Server fetches in parallel:
+        </p>
+        <ul className="list-disc ml-5 mt-2 space-y-1">
+          <li><strong>EDSM</strong> for live faction states (closer to real-time than Spansh)</li>
+          <li><strong>Spansh</strong> system dump for full station / installation detail</li>
+        </ul>
+        <p className="mt-2">The synthesized scout report shows:</p>
+        <ul className="list-disc ml-5 mt-2 space-y-1">
+          <li><strong>Conflict pairs</strong> &mdash; "Faction A vs Faction B" with allegiance tags. Marked "multiple conflicts" if 3+ same-state factions exist (verify in-game CZ list).</li>
+          <li><strong>Combat anchors</strong> &mdash; installations / settlements owned by war factions, sorted by distance from arrival. Surface CZs spawn near these.</li>
+          <li><strong>Service stations</strong> &mdash; refuel + repair + rearm sorted by distance, so you know where to bounce between fights.</li>
+          <li><strong>Notes</strong> &mdash; warnings about multiple simultaneous conflicts, missing data sources.</li>
+        </ul>
+        <p className="mt-2">Reports persisted in <code>scoutedConflicts[systemAddress]</code> and stay valid until the next BGS tick.</p>
+      </>
+    ),
+  },
+  {
+    category: 'War & Peace',
+    question: 'Why does the in-game CZ list show different factions than the app?',
+    answer: (
+      <>
+        <p>
+          In a system with multiple simultaneous wars (especially high-population systems), the app
+          can tell you "Faction X is in some war here" but Spansh / EDSM don't expose the exact faction
+          pairing. ED's in-game Conflict Zone list shows "[Faction A] vs [Faction B]" per CZ &mdash; pick
+          the CZ where your aligned faction is one of the two combatants.
+        </p>
+        <p className="mt-2">
+          The Scout report's "Conflict pairs" section uses a heuristic: if exactly 2 factions share a
+          state, they're paired. With 3+ same-state factions, it lists them all and warns to verify
+          in-game.
+        </p>
+      </>
+    ),
+  },
+
   // --- In-Game Overlay ---
   {
     category: 'In-Game Overlay',
@@ -615,6 +695,45 @@ const faqItems: FaqItem[] = [
   },
   {
     category: 'Projects & Data',
+    question: 'How do I find stations matching a specific economy?',
+    answer: (
+      <>
+        <p>
+          On the <strong>Sources</strong> page, the <em>Browse Market Data</em> section has an
+          <strong> Economy</strong> filter row (chips below the search box). Select one or more
+          economies (Industrial, High Tech, Refinery, etc.) to keep only stations with that economy
+          in their mix. Cross-references your <code>knownStations</code> dossier so it includes any
+          station you&rsquo;ve docked at, not just those with live market data.
+        </p>
+        <p className="mt-2">
+          Each result row shows the top 1&ndash;2 economy names as small badges so you can see why
+          it matched. Empty filter = all economies match.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Projects & Data',
+    question: 'Where do travel times in Sources come from?',
+    answer: (
+      <>
+        <p>
+          Travel times are extracted from your <code>SupercruiseExit</code> &rarr; <code>Docked</code>
+          journal events (or supercruise drop &rarr; dock for surface stations). The app builds a
+          per-ship matrix keyed by <code>fromMarketId:toMarketId:shipId</code>.
+        </p>
+        <p className="mt-2">
+          The displayed value is the <strong>average of your last 10 trips</strong> with outliers
+          (&gt;2&times; median) trimmed &mdash; kills the "I went AFK on the way" data points. The
+          fallback chain is: from your current dock first, then from your fleet carrier, then from
+          your most-recent dock; the badge tells you which one (<em>via FC</em> / <em>via last</em>).
+          Hover for trip count.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Projects & Data',
     question: 'Can I assign bodies to stations/installations?',
     answer: (
       <p>
@@ -652,6 +771,51 @@ const faqItems: FaqItem[] = [
         <p className="mt-2">
           For the most accurate readings, dock at your FC periodically during
           hauling sessions. The Market.json snapshot resets the estimate.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Fleet Carrier',
+    question: 'My commodity is on my FC but the project tracker says I need to buy more — why?',
+    answer: (
+      <>
+        <p>
+          The app only tracks <strong>commodities you have set to sell</strong> in your FC&rsquo;s
+          in-game Commodities Market. Items physically on the carrier without a sell order do not
+          appear in <code>Market.json</code> &mdash; the app has no way to see them.
+        </p>
+        <p className="mt-2">
+          To make a commodity visible to the project tracker:
+        </p>
+        <ol className="list-decimal ml-5 mt-1 space-y-1">
+          <li>Dock at your FC</li>
+          <li>Open the Commodities Market</li>
+          <li>Set a sell order for the commodity</li>
+          <li>Open the market again so Elite writes the updated <code>Market.json</code></li>
+        </ol>
+      </>
+    ),
+  },
+  {
+    category: 'Fleet Carrier',
+    question: 'I set the sell order but I don\'t want other commanders buying my hauled cargo. What do I do?',
+    answer: (
+      <>
+        <p>
+          <strong>Set the sell price absurdly high</strong> &mdash; e.g. 999,999,999 credits per ton.
+          This still creates a real sell order (so <code>Market.json</code> lists it and the app
+          tracks it), but no commander will buy at that price.
+        </p>
+        <p className="mt-2">
+          If your FC docking access is set to <em>All</em> or <em>Squadron + Friends</em>, this is
+          the safe way to make your stockpile visible to the app without risking it being bought out
+          by passing players. You only need a sell order to <em>exist</em> &mdash; the price doesn&rsquo;t
+          have to be sane.
+        </p>
+        <p className="mt-2 text-muted-foreground text-sm">
+          Setting docking access to <em>Owner only</em> also works, but isolates you from squadron
+          help.
         </p>
       </>
     ),
@@ -714,6 +878,12 @@ const faqItems: FaqItem[] = [
           <li>Current faction state &mdash; Boom / Bust / War / Expansion / Election etc.</li>
           <li>Milestone bursts at 10, 25, 50, 100, 250, 500 visits</li>
           <li>Month and year anniversaries of your first dock</li>
+        </ul>
+        <p className="mt-2"><strong>v1.4.0 added a second info banner</strong> on actual Docked event:</p>
+        <ul className="list-disc ml-5 mt-1 space-y-1">
+          <li><strong>Economy</strong> &mdash; e.g. <code>🏭 Industrial</code> or <code>🔥 Refinery · 💻 High Tech (mixed)</code> if the station has a strongly mixed economy</li>
+          <li><strong>Noteworthy services</strong> &mdash; Cartographics, Interstellar Factors, Tech Broker, Material Trader (with type derived from system economy: Raw / Manufactured / Encoded), Black Market</li>
+          <li><strong>&ldquo;Established by you on…&rdquo;</strong> &mdash; for any station that matches a completed colonization project, shows the establishment date and how long ago</li>
         </ul>
         <p className="mt-2">
           Fleet carriers, colonisation ships, Trailblazer NPCs, and construction

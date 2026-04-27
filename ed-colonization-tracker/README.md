@@ -20,6 +20,9 @@ A showcase of everything remarkable across your territory. Highlights rare stars
 ### Expansion Scouting
 Find your next colony. Search nearby systems by radius, score them for colonization potential, and compare candidates side-by-side. Scoring evaluates landable body count, atmosphere diversity, star rarity, ring presence, agricultural potential, and more. Supports both Spansh API data and your own journal scans — whichever has better data wins.
 
+### War & Peace (BGS conflicts)
+Find systems near you with active conflicts — War, Civil War, or Election. Filter by distance, conflict state, system allegiance, and combatant allegiance. Combat zones spawn during War and Civil War; Election is mission-only. Click any result to expand and hit **🔍 Scout system** for a deeper Spansh + EDSM pull: live conflict pairs (X vs Y with allegiance tags), combat anchors (war-faction installations sorted by distance from arrival), and full-service stations (refuel + repair + rearm) for hopping between fights. Cached server-side per BGS tick (Thursday 07:00 UTC) so repeat searches are free.
+
 ### Chain Planner
 Multi-hop route pathfinder for building colony chains. Set a start and target system, and the planner finds optimal routes where each hop is within 15 ly. Uses a two-phase approach: fast beam search to find candidate routes (no API calls), then detailed scoring of the ~20-30 best routes. Shows hop distances, body counts, and aggregate scores.
 

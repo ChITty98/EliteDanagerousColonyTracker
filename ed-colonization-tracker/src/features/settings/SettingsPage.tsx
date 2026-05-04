@@ -110,8 +110,10 @@ export function SettingsPage() {
     }
   };
 
-  // Parse squadron callsigns from comma-separated input
-  const squadronCallsignsStr = settings.squadronCarrierCallsigns.join(', ');
+  // Parse squadron callsigns from comma-separated input. Defensive `?? []` —
+  // brand-new users whose settings haven't been initialized with this field
+  // would otherwise crash here with "Cannot read properties of undefined".
+  const squadronCallsignsStr = (settings.squadronCarrierCallsigns ?? []).join(', ');
 
   return (
     <div>

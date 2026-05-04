@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from '@/store';
 import { FC_MAX_CAPACITY } from '@/store/types';
+import { sseSubscribe } from '@/services/sseBus';
 import {
   computeNeedsContent,
   computeScoreContent,
@@ -29,11 +30,6 @@ interface CompanionEvent {
   population?: number;
   systemAddress?: number;
   [key: string]: unknown;
-}
-
-// --- Token helper ---
-function getToken(): string | null {
-  try { return sessionStorage.getItem('colony-token') || null; } catch { return null; }
 }
 
 // --- Event icons/colors by type ---
@@ -170,79 +166,94 @@ export function CompanionPage() {
   const [threatAlert, setThreatAlert] = useState<CompanionEvent | null>(null);
   const threatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
-  const eventSourceRef = useRef<EventSource | null>(null);
 
   // Active session info
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const activeProject = activeSession ? projects.find((p) => p.id === activeSession.projectId) : null;
 
-  // Connect to SSE stream
+  // Subscribe to SSE bus events. The bus opens its single EventSource on first
+  // subscribe — no checkServerStorage gate, no setTimeout. Same connection used
+  // by the store's state-sync listener, so target alerts and project updates
+  // either both work or both fail (no asymmetry).
   useEffect(() => {
-    const token = getToken();
-    const url = token ? `/api/events?token=${token}` : '/api/events';
-    const es = new EventSource(url);
+    const unsubs: Array<() => void> = [];
 
-    es.onopen = () => setConnected(true);
-    es.onerror = () => setConnected(false);
-    es.onmessage = (msg) => {
+    unsubs.push(sseSubscribe('__open', () => setConnected(true)));
+    unsubs.push(sseSubscribe('__error', () => setConnected(false)));
+
+    unsubs.push(sseSubscribe('fsd_jump', (ev) => {
+      const e = ev as CompanionEvent;
+      if (e.systemAddress && e.system) {
+        setLastSystem(e.systemAddress as number, e.system as string);
+      }
+      // Left the system — dock welcome is now stale, clear banner
+      setLastDockSummary(null);
+      setEvents((prev) => [e, ...prev].slice(0, 50));
+    }));
+
+    unsubs.push(sseSubscribe('commander_position', (ev) => {
+      const e = ev as CompanionEvent;
+      if (!e.systemName) return;
+      useAppStore.getState().setCommanderPosition({
+        systemName: e.systemName as string,
+        systemAddress: e.systemAddress as number,
+        coordinates: e.coordinates as { x: number; y: number; z: number },
+        source: (e.source as import('@/store').PositionSource) || 'Server',
+        updatedAt: e.updatedAt as string,
+      });
       try {
-        const ev: CompanionEvent = JSON.parse(msg.data);
-        if (ev.type === 'heartbeat') return; // Silent keepalive
-        // Track current system so "Show Score" works on iPad/remote devices
-        if (ev.type === 'fsd_jump' && ev.systemAddress && ev.system) {
-          setLastSystem(ev.systemAddress as number, ev.system as string);
-          // commanderPosition is handled via the dedicated 'commander_position'
-          // event (below). Nothing else to do here.
-        }
-        // commander_position — authoritative location update from watcher
-        if (ev.type === 'commander_position' && ev.systemName) {
-          useAppStore.getState().setCommanderPosition({
-            systemName: ev.systemName as string,
-            systemAddress: ev.systemAddress as number,
-            coordinates: ev.coordinates as { x: number; y: number; z: number },
-            source: (ev.source as import('@/store').PositionSource) || 'Server',
-            updatedAt: ev.updatedAt as string,
-          });
-          // Log to server terminal so we can see the pipeline
-          try {
-            const tk = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
-            fetch(tk ? `/api/log?token=${tk}` : '/api/log', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ tag: 'Companion', message: `Received commander_position ${ev.systemName} via ${ev.source}` }),
-            }).catch(() => {});
-          } catch { /* ignore */ }
-        }
-        // Track docked station for "Buy Here" button
-        if (ev.type === 'docked' && ev.marketId && ev.station && ev.system) {
-          setLastDocked(ev.marketId as number, ev.station as string, ev.system as string);
-        }
-        // Persist the most recent target alert in its own banner
-        if (ev.type === 'target_selected') {
-          setLastTarget(ev);
-        }
-        if (ev.type === 'nav_route_cleared') {
-          setLastTarget(null);
-        }
-        // Persist the most recent dock welcome as a banner until next jump or new dock
-        if (ev.type === 'station_dock_summary') {
-          setLastDockSummary(ev);
-        }
-        // NPC threat — flash a red banner for 15 seconds then auto-dismiss
-        if (ev.type === 'npc_threat') {
-          setThreatAlert(ev);
-          if (threatTimerRef.current) clearTimeout(threatTimerRef.current);
-          threatTimerRef.current = setTimeout(() => setThreatAlert(null), 15000);
-        }
-        if (ev.type === 'fsd_jump') {
-          // Left the system — dock welcome is now stale, clear banner
-          setLastDockSummary(null);
-        }
-        setEvents((prev) => [ev, ...prev].slice(0, 50));
-      } catch { /* ignore parse errors */ }
-    };
+        const tk = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
+        fetch(tk ? `/api/log?token=${tk}` : '/api/log', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tag: 'Companion', message: `Received commander_position ${e.systemName} via ${e.source}` }),
+        }).catch(() => {});
+      } catch { /* ignore */ }
+      setEvents((prev) => [e, ...prev].slice(0, 50));
+    }));
 
-    eventSourceRef.current = es;
-    return () => { es.close(); eventSourceRef.current = null; };
+    unsubs.push(sseSubscribe('docked', (ev) => {
+      const e = ev as CompanionEvent;
+      if (e.marketId && e.station && e.system) {
+        setLastDocked(e.marketId as number, e.station as string, e.system as string);
+      }
+      setEvents((prev) => [e, ...prev].slice(0, 50));
+    }));
+
+    unsubs.push(sseSubscribe('target_selected', (ev) => {
+      const e = ev as CompanionEvent;
+      setLastTarget(e);
+      setEvents((prev) => [e, ...prev].slice(0, 50));
+    }));
+
+    unsubs.push(sseSubscribe('nav_route_cleared', (ev) => {
+      setLastTarget(null);
+      setEvents((prev) => [ev as CompanionEvent, ...prev].slice(0, 50));
+    }));
+
+    unsubs.push(sseSubscribe('station_dock_summary', (ev) => {
+      const e = ev as CompanionEvent;
+      setLastDockSummary(e);
+      setEvents((prev) => [e, ...prev].slice(0, 50));
+    }));
+
+    unsubs.push(sseSubscribe('npc_threat', (ev) => {
+      const e = ev as CompanionEvent;
+      setThreatAlert(e);
+      if (threatTimerRef.current) clearTimeout(threatTimerRef.current);
+      threatTimerRef.current = setTimeout(() => setThreatAlert(null), 15000);
+      setEvents((prev) => [e, ...prev].slice(0, 50));
+    }));
+
+    // Catch-all for other event types we want in the live feed but don't
+    // process specially (contribution / fc_jump_scheduled / scan_highlight / etc.)
+    const FEED_ONLY_TYPES = ['contribution', 'fc_jump_scheduled', 'fc_jump_cancelled', 'fc_space_update', 'scan_highlight', 'first_footfall', 'fss_complete', 'sc_drop', 'supercruise_exit', 'companion_action', 'carrier_jump', 'carrier_cargo_updated', 'ship_cargo', 'market_snapshot_updated'];
+    for (const type of FEED_ONLY_TYPES) {
+      unsubs.push(sseSubscribe(type, (ev) => {
+        setEvents((prev) => [ev as CompanionEvent, ...prev].slice(0, 50));
+      }));
+    }
+
+    return () => { unsubs.forEach((fn) => fn()); };
   }, []);
 
   // Auto-scroll feed

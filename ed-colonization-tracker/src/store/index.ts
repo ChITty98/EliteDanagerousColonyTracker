@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage, type StateStorage } from 'zustand/middleware';
 import type { VisitedMarket, ShipCargo, JournalExplorationSystem } from '@/services/journalReader';
+import { sseSubscribe } from '@/services/sseBus';
 
 // --- Server-side storage adapter ---
 // Stores state in colony-data.json on the server instead of browser IndexedDB.
@@ -363,99 +364,60 @@ async function forceStateRehydrate(reason: string): Promise<void> {
     if (!data || Object.keys(data).length === 0) return;
     await useAppStore.persist.rehydrate();
     console.log(`[Store] Forced rehydrate (${reason})`);
+    // Surface to server terminal so we can see when this fires on iPad
+    try {
+      const tk = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
+      fetch(tk ? `/api/log?token=${tk}` : '/api/log', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tag: 'StorePoll', message: `rehydrate (${reason})` }),
+      }).catch(() => {});
+    } catch { /* ignore */ }
   } catch { /* ignore */ }
 }
 
 function startStateSyncListener() {
-  try {
-    const url = apiUrl('/api/events');
-    const es = new EventSource(url);
-    // Track exploration updates to avoid rehydration conflicts
-    let lastExplorationUpdate = 0;
-    // Track connection state so we can detect reconnect (error → open → run a
-    // catch-up rehydrate to pull anything that fired during the disconnect gap).
-    let wasErrored = false;
-    // Last SSE traffic timestamp (any message, including heartbeats). Used by
-    // the watchdog below to detect silent SSE death (iPad sometimes loses the
-    // connection without firing onerror — a polite poll fallback catches that).
-    let lastSseTraffic = Date.now();
-    es.onopen = () => {
-      lastSseTraffic = Date.now();
-      if (wasErrored) {
-        wasErrored = false;
-        void forceStateRehydrate('sse-reconnect');
-      }
-    };
+  let lastExplorationUpdate = 0;
 
-    // Watchdog: server emits a heartbeat every 30s. If we've gone >45s without
-    // ANY SSE message (heartbeat or event), assume the connection is silently
-    // stale and force a state rehydrate. Cheap insurance for the iPad case
-    // where SSE can die without firing onerror.
-    setInterval(() => {
-      if (Date.now() - lastSseTraffic > 45_000) {
-        const stale = Math.round((Date.now() - lastSseTraffic) / 1000);
-        lastSseTraffic = Date.now(); // avoid hammering until next gap
-        void forceStateRehydrate(`sse-stale-${stale}s`);
-      }
-    }, 15_000);
+  // Subscribe to state-changing events on the shared SSE bus. The bus opens
+  // its single EventSource on the first subscribe — no checkServerStorage()
+  // gate, no setTimeout, no race conditions that would prevent it from
+  // starting on iPad.
 
-    es.onmessage = async (e) => {
-      lastSseTraffic = Date.now();
-      try {
-        const ev = JSON.parse(e.data);
-        // Track exploration updates — system view handles these via inline SSE data
-        if (ev.type === 'exploration_update') {
-          lastExplorationUpdate = Date.now();
-          return;
-        }
-        if (ev.type === 'heartbeat') return;
-        // Diagnostic — log every event we receive so we can see in DevTools / terminal
-        // whether the server is actually pushing to this client.
-        try {
-          const tk = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
-          fetch(tk ? `/api/log?token=${tk}` : '/api/log', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tag: 'StoreSSE', message: `received ${ev.type}${ev.source ? ' source=' + ev.source : ''}` }),
-          }).catch(() => {});
-        } catch { /* ignore */ }
-        if (ev.type !== 'state_updated') return;
-        // Server-initiated updates (journal watcher, sync-all, companion refresh)
-        // always apply — they're not echoes of our own PATCH, so PATCH_IGNORE_WINDOW
-        // shouldn't suppress them. Only gate client-originated sources.
-        const serverSourced = ev.source === 'watcher'
-          || ev.source === 'sync-all'
-          || ev.source === 'refresh-companion-files'
-          || ev.source === 'sync-market';
-        if (!serverSourced) {
-          // Skip if this was likely our own PATCH
-          if (Date.now() - lastOwnPatchTime < PATCH_IGNORE_WINDOW) return;
-          // Skip if a recent exploration update caused this — system view handles it directly
-          if (Date.now() - lastExplorationUpdate < 5000) return;
-        }
-        // Re-fetch state from server and merge into store
-        const res = await fetch(apiUrl('/api/state'));
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!data || Object.keys(data).length === 0) return;
-        // Rehydrate the store with server state
-        useAppStore.persist.rehydrate();
-      } catch { /* ignore */ }
-    };
-    es.onerror = () => {
-      // Mark errored so the next onopen triggers a catch-up rehydrate. SSE
-      // auto-reconnects but events fired during the gap are lost; without this
-      // the iPad stays on stale state until something else triggers a fetch.
-      wasErrored = true;
-    };
-  } catch { /* SSE not available */ }
+  // Track exploration updates so we can dedupe with the system-view inline path
+  sseSubscribe('exploration_update', () => {
+    lastExplorationUpdate = Date.now();
+  });
+
+  sseSubscribe('state_updated', async (ev) => {
+    const source = (ev as { source?: string }).source;
+    const serverSourced = source === 'watcher'
+      || source === 'sync-all'
+      || source === 'refresh-companion-files'
+      || source === 'sync-market';
+    if (!serverSourced) {
+      if (Date.now() - lastOwnPatchTime < PATCH_IGNORE_WINDOW) return;
+      if (Date.now() - lastExplorationUpdate < 5000) return;
+    }
+    try {
+      const res = await fetch(apiUrl('/api/state'));
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data || Object.keys(data).length === 0) return;
+      await useAppStore.persist.rehydrate();
+    } catch { /* ignore */ }
+  });
+
+  // On (re)connect, force a catch-up rehydrate. Browser EventSource fires
+  // onopen on initial connect AND after auto-reconnect, so this also handles
+  // the disconnect-recovery case without needing manual error tracking.
+  sseSubscribe('__open', () => {
+    void forceStateRehydrate('sse-open');
+  });
 }
 
-// Start SSE sync after a short delay to let the store initialize
-setTimeout(() => {
-  checkServerStorage().then((available) => {
-    if (available) startStateSyncListener();
-  });
-}, 1000);
+// Start SSE sync immediately. The bus handles the actual EventSource creation
+// lazily on first subscribe, so this just registers handlers.
+startStateSyncListener();
 
 import type {
   ColonizationProject,

@@ -137,6 +137,7 @@ const MERGE_STRATEGIES: Record<string, MergeStrategy> = {
   bodyNotes: { kind: 'map' },
   fleetCarrierSpaceUsage: { kind: 'map' },
   scoutedConflicts: { kind: 'map' },
+  stationBodyOverrides: { kind: 'map' },
   // Array with id field
   projects: { kind: 'arrayById', idKey: 'id' },
   sessions: { kind: 'arrayById', idKey: 'id' },

@@ -3073,10 +3073,10 @@ export interface JournalHistoryStats {
   topSystems: { name: string; visits: number; lastVisited: string }[];
   /** All system visits — full dataset for search/filter */
   allSystemVisits: { name: string; visits: number; firstVisited: string; lastVisited: string }[];
-  /** Top stations by dock count (per system:station composite) */
-  topStations: { name: string; systemName: string; visits: number; firstVisited: string; lastVisited: string }[];
+  /** Top stations by dock count (keyed by MarketID so renames merge). */
+  topStations: { name: string; systemName: string; visits: number; firstVisited: string; lastVisited: string; previousNames?: string[] }[];
   /** All station visits — full dataset for search/filter */
-  allStationVisits: { name: string; systemName: string; visits: number; firstVisited: string; lastVisited: string }[];
+  allStationVisits: { name: string; systemName: string; visits: number; firstVisited: string; lastVisited: string; previousNames?: string[] }[];
 
   // Exploration
   bodiesScanned: number;
@@ -3181,12 +3181,17 @@ export async function scanJournalHistory(
   const systemVisits = new Map<string, number>();
   const systemFirstVisited = new Map<string, string>();
   const systemLastVisited = new Map<string, string>();
-  const stationSet = new Set<string>();
-  // Per-station visit tracking — keyed by "system:station" to disambiguate
-  const stationVisits = new Map<string, number>();
-  const stationSystems = new Map<string, string>(); // key → system name
-  const stationFirstSeen = new Map<string, string>();
-  const stationLastSeen = new Map<string, string>();
+  // Per-station visit tracking — keyed by MarketID so renamed stations
+  // (e.g. Rao Refinery → Kalian Port — same marketId, new name) merge into
+  // a single entry instead of forking by name.
+  const stationSet = new Set<number>();
+  const stationVisits = new Map<number, number>();
+  const stationSystems = new Map<number, string>();
+  const stationFirstSeen = new Map<number, string>();
+  const stationLastSeen = new Map<number, string>();
+  // Most-recent-name-wins per marketId, with previous names tracked for display.
+  const stationLatestName = new Map<number, { name: string; ts: string }>();
+  const stationPreviousNames = new Map<number, Set<string>>();
   const commoditiesBought = new Map<string, number>();
   const commoditiesSold = new Map<string, number>();
   let firstTimestamp: string | null = null;
@@ -3283,18 +3288,34 @@ export async function scanJournalHistory(
       }
     }
 
-    // Docking — skip ephemeral stations (FCs, Trailblazers, construction sites)
+    // Docking — skip ephemeral stations (FCs, Trailblazers, construction sites).
+    // Key by MarketID so renames merge into one entry. Skip events without a
+    // MarketID (very old journals) since we can't disambiguate without it.
     for (const e of parsed.dockedEvents) {
       if (isEphemeralStation(e.StationName, e.StationType, e.MarketID)) continue;
-      const key = `${e.StarSystem}:${e.StationName}`;
-      stationSet.add(key);
-      stationVisits.set(key, (stationVisits.get(key) ?? 0) + 1);
-      stationSystems.set(key, e.StarSystem);
-      if (!stationFirstSeen.has(key) || e.timestamp < stationFirstSeen.get(key)!) {
-        stationFirstSeen.set(key, e.timestamp);
+      if (!e.MarketID) continue;
+      const mid = e.MarketID;
+      stationSet.add(mid);
+      stationVisits.set(mid, (stationVisits.get(mid) ?? 0) + 1);
+      stationSystems.set(mid, e.StarSystem);
+      // Track latest name for display, accumulate previous names for "(formerly …)".
+      const latest = stationLatestName.get(mid);
+      if (!latest || e.timestamp > latest.ts) {
+        if (latest && latest.name !== e.StationName) {
+          if (!stationPreviousNames.has(mid)) stationPreviousNames.set(mid, new Set());
+          stationPreviousNames.get(mid)!.add(latest.name);
+        }
+        stationLatestName.set(mid, { name: e.StationName, ts: e.timestamp });
+      } else if (e.StationName !== latest.name) {
+        // Older event with a different name — record as a previous name.
+        if (!stationPreviousNames.has(mid)) stationPreviousNames.set(mid, new Set());
+        stationPreviousNames.get(mid)!.add(e.StationName);
       }
-      if (!stationLastSeen.has(key) || e.timestamp > stationLastSeen.get(key)!) {
-        stationLastSeen.set(key, e.timestamp);
+      if (!stationFirstSeen.has(mid) || e.timestamp < stationFirstSeen.get(mid)!) {
+        stationFirstSeen.set(mid, e.timestamp);
+      }
+      if (!stationLastSeen.has(mid) || e.timestamp > stationLastSeen.get(mid)!) {
+        stationLastSeen.set(mid, e.timestamp);
       }
     }
 
@@ -3411,14 +3432,17 @@ export async function scanJournalHistory(
   const topSystems = allSystemVisits.slice(0, 20);
 
   const allStationVisits = [...stationVisits.entries()]
-    .map(([key, visits]) => {
-      const stationName = key.substring(key.indexOf(':') + 1);
+    .map(([mid, visits]) => {
+      const latest = stationLatestName.get(mid);
+      const previousSet = stationPreviousNames.get(mid);
+      const previousNames = previousSet && previousSet.size > 0 ? [...previousSet] : undefined;
       return {
-        name: stationName,
-        systemName: stationSystems.get(key) ?? '',
+        name: latest ? latest.name : `MarketID ${mid}`,
+        systemName: stationSystems.get(mid) ?? '',
         visits,
-        firstVisited: stationFirstSeen.get(key) ?? '',
-        lastVisited: stationLastSeen.get(key) ?? '',
+        firstVisited: stationFirstSeen.get(mid) ?? '',
+        lastVisited: stationLastSeen.get(mid) ?? '',
+        previousNames,
       };
     })
     .sort((a, b) => b.visits - a.visits);

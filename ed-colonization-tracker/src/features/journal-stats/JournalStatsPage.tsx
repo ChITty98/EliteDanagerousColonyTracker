@@ -232,7 +232,7 @@ export function JournalStatsPage() {
               items={stats.topStations.map((s) => ({
                 name: s.name,
                 value: formatNumber(s.visits),
-                sub: `${s.systemName}${s.lastVisited ? ` \u00B7 last ${new Date(s.lastVisited).toLocaleDateString()}` : ''}`,
+                sub: `${s.systemName}${s.lastVisited ? ` \u00B7 last ${new Date(s.lastVisited).toLocaleDateString()}` : ''}${s.previousNames && s.previousNames.length > 0 ? ` \u00B7 formerly ${s.previousNames.join(', ')}` : ''}`,
               }))}
               valueLabel="docks"
             />

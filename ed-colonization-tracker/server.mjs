@@ -184,6 +184,7 @@ const APPEND_ONLY_KEYS = new Set([
   'scoutedSystems',           // scouted system summaries
   'stationTravelTimes',       // travel-time matrix (per-ship-per-station)
   'scoutedConflicts',         // War & Peace scout reports — refresh by re-scout, not delete
+  'stationBodyOverrides',     // user-set body for stations without marketId
 ]);
 
 // Sparse per-key merge. Incoming values can be marker objects with:
@@ -764,6 +765,14 @@ const server = http.createServer((req, res) => {
             const dh = dockHistory.get(st.marketId);
             const prior = existingStations[key];
             const merged = Object.assign({}, prior || {}, st);
+            // Preserve user-set body / bodyType across journal sync. The journal's
+            // Docked event may not include Body for some stations, and Object.assign
+            // with an undefined-valued property still overwrites the prior value —
+            // wiping the user's manual setting (set via Set Body in System Detail).
+            // User edits always win for these fields; if the user wants journal data,
+            // they can clear their setting first.
+            if (prior && prior.body) merged.body = prior.body;
+            if (prior && prior.bodyType) merged.bodyType = prior.bodyType;
             if (dh) {
               merged.firstDocked = dh.firstDocked;
               merged.lastDocked = dh.lastDocked;

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from '@/store';
 import { FC_MAX_CAPACITY } from '@/store/types';
-import { sseSubscribe } from '@/services/sseBus';
+import { sseSubscribe, sseBusStatus } from '@/services/sseBus';
 import {
   computeNeedsContent,
   computeScoreContent,
@@ -178,6 +178,12 @@ export function CompanionPage() {
   useEffect(() => {
     const unsubs: Array<() => void> = [];
 
+    // Seed initial connection state from the bus. The store's state listener
+    // typically subscribes first (on app load) and triggers ensureOpen, so by
+    // the time CompanionPage mounts the SSE may already be open — meaning the
+    // '__open' synthetic event has already fired and our handler would miss it,
+    // leaving the badge stuck on "Disconnected" forever.
+    setConnected(sseBusStatus().connected);
     unsubs.push(sseSubscribe('__open', () => setConnected(true)));
     unsubs.push(sseSubscribe('__error', () => setConnected(false)));
 

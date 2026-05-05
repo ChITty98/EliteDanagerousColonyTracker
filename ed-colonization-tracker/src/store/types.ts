@@ -316,3 +316,15 @@ export interface FleetCarrierSpaceUsage {
   freeSpace: number;
   updatedAt: string; // ISO timestamp
 }
+
+// Ship-engineering materials inventory — derived from journal events
+// (`Materials` snapshot + delta events). No live snapshot file from ED.
+// Server is the only writer; replace strategy in MERGE_STRATEGIES.
+// Keys are canonical journal Names (lowercase, e.g. "iron", "improvisedcomponents").
+export interface MaterialInventory {
+  raw: Record<string, number>;
+  manufactured: Record<string, number>;
+  encoded: Record<string, number>;
+  updatedAt: string;
+  baselineFrom: string | null; // journal file the baseline came from
+}

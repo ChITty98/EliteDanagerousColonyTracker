@@ -17,6 +17,7 @@ const navItems = [
   { to: '/sessions', label: 'Sessions', icon: '\u25F7' },
   { to: '/companion', label: 'Companion', icon: '\u{1F4E1}' },
   { to: '/war-peace', label: 'War & Peace', icon: '⚔\u{FE0F}' },
+  { to: '/materials', label: 'Materials', icon: '\u{1F6E0}\u{FE0F}' },
   { to: '/journal-stats', label: 'Journal Stats', icon: '\u{1F4D6}' },
   { to: '/settings', label: 'Settings', icon: '\u2699' },
   { to: '/wiki', label: 'Wiki', icon: '\u{1F4DA}' },
@@ -73,7 +74,7 @@ export function Layout() {
           ))}
         </div>
         <div className="p-4 border-t border-border text-xs text-muted-foreground">
-          v1.4.4
+          v1.5.1
         </div>
       </nav>
 

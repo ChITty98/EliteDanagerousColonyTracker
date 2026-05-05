@@ -41,6 +41,7 @@ import {
   findCommodityByDisplayName,
 } from './server/journal/commodities.js';
 import { isEphemeralStation } from './server/journal/util.js';
+import { extractMaterialInventory, applyMaterialDeltaEvent } from './server/journal/materials.js';
 import {
   startServerWatcher,
   stopServerWatcher,
@@ -185,6 +186,9 @@ const APPEND_ONLY_KEYS = new Set([
   'stationTravelTimes',       // travel-time matrix (per-ship-per-station)
   'scoutedConflicts',         // War & Peace scout reports — refresh by re-scout, not delete
   'stationBodyOverrides',     // user-set body for stations without marketId
+  'materialInventory',        // ship engineering mats — derived from journals, hard to re-acquire
+  'populationOverrides',      // user-edited system populations
+  'stationDistOverrides',     // user-edited station distances
 ]);
 
 // Sparse per-key merge. Incoming values can be marker objects with:
@@ -748,8 +752,12 @@ const server = http.createServer((req, res) => {
           const currentMarket = readMarketJson(journalDir);
           const currentCargo = readShipCargo(journalDir);
           const latestPosition = fetchLatestPositionFromJournal(journalDir);
+          const materialInventory = extractMaterialInventory(journalDir);
           const ms = Date.now() - t0;
-          console.log(`[SyncAll] Extracted ${kb.systems.length} systems / ${kb.stations.length} stations / ${Object.keys(travelStats).length} travel-time pairs / ${exploration.size} explored systems / ${depots.length} depots in ${ms}ms`);
+          const matCounts = materialInventory
+            ? `R${Object.keys(materialInventory.raw).length}/M${Object.keys(materialInventory.manufactured).length}/E${Object.keys(materialInventory.encoded).length}`
+            : 'none';
+          console.log(`[SyncAll] Extracted ${kb.systems.length} systems / ${kb.stations.length} stations / ${Object.keys(travelStats).length} travel-time pairs / ${exploration.size} explored systems / ${depots.length} depots / mats:${matCounts} in ${ms}ms`);
 
           // Merge knownStations with dock history. Three-way merge:
           //   1. Start with existing.knownStations[marketId] (keeps dossier if
@@ -773,6 +781,7 @@ const server = http.createServer((req, res) => {
             // they can clear their setting first.
             if (prior && prior.body) merged.body = prior.body;
             if (prior && prior.bodyType) merged.bodyType = prior.bodyType;
+            if (prior && prior.stationType) merged.stationType = prior.stationType;
             if (dh) {
               merged.firstDocked = dh.firstDocked;
               merged.lastDocked = dh.lastDocked;
@@ -826,6 +835,18 @@ const server = http.createServer((req, res) => {
               __upsert: Object.fromEntries(visitedMarkets.map((m) => [String(m.marketId), m])),
             },
           };
+
+          // Material inventory (replace strategy — server is sole writer, every
+          // sync-all produces a complete snapshot).
+          if (materialInventory) {
+            patch.materialInventory = {
+              raw: materialInventory.raw,
+              manufactured: materialInventory.manufactured,
+              encoded: materialInventory.encoded,
+              updatedAt: materialInventory.updatedAt,
+              baselineFrom: materialInventory.baselineFrom,
+            };
+          }
 
           // === Migration: visitedMarkets → marketSnapshots ===
           // Single source of truth at render time. For every visitedMarkets entry

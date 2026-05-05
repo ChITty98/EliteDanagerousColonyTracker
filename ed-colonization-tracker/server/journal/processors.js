@@ -50,6 +50,7 @@ import {
   registerFcMarketId,
 } from './util.js';
 import { findCommodityByJournalName, findCommodityByDisplayName } from './commodities.js';
+import { applyMaterialDeltaEvent } from './materials.js';
 import {
   handleFSDJumpOverlay,
   handleDockedOverlay,
@@ -113,6 +114,7 @@ export function processNewEvents(parsed, deps) {
   processCompanionFeedEvents(parsed, existing, settings, patch, extraEvents, deps);
   processDockEvents(parsed, existing, patch, extraEvents, deps);
   processNpcThreat(parsed, extraEvents, deps);
+  processMaterialEvents(parsed, existing, patch, extraEvents);
 
   // Overlay message builders (run AFTER other processors so they see a
   // consistent view of the state — e.g. handleDockedOverlay checks
@@ -312,6 +314,16 @@ function processKBEvents(parsed, existing, settings, patch) {
           stationName: (s.stationName && !/\$EXT_PANEL_ColonisationShip|Construction Site/i.test(s.stationName))
             ? s.stationName
             : (priorEntry.stationName || s.stationName),
+          // Preserve user-set body / bodyType / stationType across live journal
+          // events. Same rationale as the v1.4.4 sync-all fix: Object.assign with
+          // undefined-valued props from the kb extractor would overwrite the
+          // user's manual setting otherwise. User edits always win.
+          // (Without this, a single Docked event after the user sets a body
+          // wipes the body silently because journal Body fields can be missing
+          // or differ from the body the user actually wants tracked.)
+          body: (priorEntry.body) || s.body,
+          bodyType: (priorEntry.bodyType) || s.bodyType,
+          stationType: (priorEntry.stationType) || s.stationType,
         });
       } else {
         upsert[key] = s;
@@ -1101,6 +1113,59 @@ function processNpcThreat(parsed, extraEvents, deps) {
       timestamp: new Date().toISOString(),
     });
   }
+}
+
+// ===== Material inventory deltas =====
+// Apply ship-engineering material events to existing materialInventory in
+// memory, then patch the new snapshot back. Replace strategy — entire
+// inventory is rewritten each tick (cheap, server is sole writer).
+
+function processMaterialEvents(parsed, existing, patch, extraEvents) {
+  const matEvents = [
+    ...(parsed.materialsEvents || []),
+    ...(parsed.materialCollectedEvents || []),
+    ...(parsed.materialDiscardedEvents || []),
+    ...(parsed.engineerCraftEvents || []),
+    ...(parsed.synthesisEvents || []),
+    ...(parsed.technologyBrokerEvents || []),
+    ...(parsed.materialTradeEvents || []),
+    ...(parsed.scientificResearchEvents || []),
+    ...(parsed.engineerContributionEvents || []),
+  ];
+  if (matEvents.length === 0) return;
+
+  // Sort by timestamp so deltas apply in order. Without this, a Materials
+  // snapshot embedded mid-batch could clobber a later collected event.
+  matEvents.sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''));
+
+  // Clone existing inventory so we don't mutate the readState() result in place.
+  const prior = existing.materialInventory || {};
+  const inv = {
+    raw: { ...(prior.raw || {}) },
+    manufactured: { ...(prior.manufactured || {}) },
+    encoded: { ...(prior.encoded || {}) },
+  };
+
+  let changed = false;
+  for (const ev of matEvents) {
+    if (applyMaterialDeltaEvent(ev, inv)) changed = true;
+  }
+  if (!changed) return;
+
+  patch.materialInventory = {
+    raw: inv.raw,
+    manufactured: inv.manufactured,
+    encoded: inv.encoded,
+    updatedAt: new Date().toISOString(),
+    baselineFrom: prior.baselineFrom || null,
+  };
+  extraEvents.push({
+    type: 'materials_updated',
+    rawCount: Object.keys(inv.raw).length,
+    manufacturedCount: Object.keys(inv.manufactured).length,
+    encodedCount: Object.keys(inv.encoded).length,
+    timestamp: new Date().toISOString(),
+  });
 }
 
 // ===== Companion files (Cargo.json / Market.json) =====

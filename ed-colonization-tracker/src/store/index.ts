@@ -158,6 +158,11 @@ const MERGE_STRATEGIES: Record<string, MergeStrategy> = {
   fssSignals: { kind: 'replace' }, // no canonical unique id
   // Travel-time matrix — map of "from:to:shipId" → stat
   stationTravelTimes: { kind: 'map' },
+  // Material inventory — server is sole writer, every update is a complete snapshot
+  materialInventory: { kind: 'replace' },
+  // User-authored override maps — sparse merge so cross-tab races can't wipe them
+  populationOverrides: { kind: 'map' },
+  stationDistOverrides: { kind: 'map' },
 };
 
 // Baseline = last-known server state. Populated on hydrate + after each PATCH.
@@ -628,6 +633,10 @@ interface AppState {
   bodyNotes: Record<string, string>;
   setBodyNote: (systemName: string, bodyName: string, note: string) => void;
 
+  // Ship-engineering material inventory — server-derived, replace strategy.
+  materialInventory: import('./types').MaterialInventory | null;
+  setMaterialInventory: (inv: import('./types').MaterialInventory) => void;
+
   // Journal exploration cache — raw journal data extracted but NOT scored
   // Populated by "Process Journals" on expansion tab, used when scouting
   journalExplorationCache: Record<number, JournalExplorationSystem>; // keyed by systemAddress
@@ -841,13 +850,15 @@ export const useAppStore = create<AppState>()(
         set((state) => {
           const existing = state.knownStations[station.marketId];
           if (!existing || station.lastSeen >= existing.lastSeen) {
-            // Preserve manually-set body if new data doesn't have one
+            // Preserve manually-set body / bodyType if new data doesn't have one.
+            // (Spread alone would clobber existing values when station.* is undefined.)
             const body = station.body || existing?.body;
+            const bodyType = station.bodyType || existing?.bodyType;
             // Preserve user-set installation type (contains '_') when journal provides a generic type
             const stationType = (existing?.stationType?.includes('_') && !station.stationType?.includes('_'))
               ? existing.stationType
               : station.stationType;
-            return { knownStations: { ...state.knownStations, [station.marketId]: { ...station, body, stationType } } };
+            return { knownStations: { ...state.knownStations, [station.marketId]: { ...station, body, bodyType, stationType } } };
           }
           return {};
         }),
@@ -857,8 +868,9 @@ export const useAppStore = create<AppState>()(
           for (const station of stations) {
             const existing = updated[station.marketId];
             if (!existing || station.lastSeen >= existing.lastSeen) {
-              // Preserve manually-set body if new data doesn't have one
+              // Preserve manually-set body / bodyType if new data doesn't have one
               const body = station.body || existing?.body;
+              const bodyType = station.bodyType || existing?.bodyType;
               // Preserve user-set installation type (contains '_') when journal provides a generic type
               const stationType = (existing?.stationType?.includes('_') && !station.stationType?.includes('_'))
                 ? existing.stationType
@@ -868,6 +880,7 @@ export const useAppStore = create<AppState>()(
               updated[station.marketId] = {
                 ...station,
                 body,
+                bodyType,
                 stationType,
                 firstDocked: existing?.firstDocked,
                 lastDocked: existing?.lastDocked,
@@ -1398,6 +1411,10 @@ export const useAppStore = create<AppState>()(
       setJournalExplorationCache: (cache) => set({ journalExplorationCache: cache }),
       clearJournalExplorationCache: () => set({ journalExplorationCache: {} }),
 
+      // Material inventory (ship engineering mats)
+      materialInventory: null,
+      setMaterialInventory: (inv) => set({ materialInventory: inv }),
+
       // Scouted systems
       scoutedSystems: {},
       upsertScoutedSystem: (data) =>
@@ -1473,6 +1490,7 @@ export const useAppStore = create<AppState>()(
         stationDistOverrides: state.stationDistOverrides,
         lastSessionSummaryShown: state.lastSessionSummaryShown,
         stationBodyOverrides: state.stationBodyOverrides,
+        materialInventory: state.materialInventory,
         commanderPosition: state.commanderPosition,
         currentBody: state.currentBody,
         currentShip: state.currentShip,

@@ -55,10 +55,19 @@ function ensureOpen(): void {
       } catch { /* malformed payload — drop */ }
     };
     es.onerror = () => {
-      // Browser auto-reconnects. We don't tear down or recreate; we just wait
-      // for the next onopen which will fire '__open' for catch-up.
-      // Fire '__error' for consumers that want to show a "disconnected" UI badge.
+      // Browser auto-reconnects in CONNECTING state (1). If the connection
+      // is dead-permanent (CLOSED = 2), the browser gave up and won't retry;
+      // we have to tear down and re-open ourselves. Otherwise we'd be stuck
+      // showing "Disconnected" forever.
+      // Fire '__error' for consumers that want a "disconnected" UI badge.
       dispatch({ type: '__error' });
+      if (es && es.readyState === EventSource.CLOSED) {
+        try { es.close(); } catch { /* ignore */ }
+        es = null;
+        // Wait a moment before retry so we don't hammer the server during a
+        // legitimate restart window.
+        setTimeout(() => { ensureOpen(); }, 3000);
+      }
     };
   } catch {
     es = null;

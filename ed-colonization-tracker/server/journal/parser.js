@@ -72,6 +72,16 @@ export function parseJournalLines(lines) {
   const supercruiseExitEvents = [];
   const receiveTextEvents = [];
   const undockedEvents = [];
+  // Materials (engineering inventory deltas)
+  const materialsEvents = [];          // Materials (full snapshot)
+  const materialCollectedEvents = [];
+  const materialDiscardedEvents = [];
+  const engineerCraftEvents = [];
+  const synthesisEvents = [];
+  const technologyBrokerEvents = [];
+  const materialTradeEvents = [];
+  const scientificResearchEvents = [];
+  const engineerContributionEvents = [];
 
   for (const line of lines) {
     if (!line || !line.trim()) continue;
@@ -130,6 +140,16 @@ export function parseJournalLines(lines) {
       case 'SupercruiseExit': supercruiseExitEvents.push(event); break;
       case 'ReceiveText': receiveTextEvents.push(event); break;
       case 'Undocked': undockedEvents.push(event); break;
+      case 'Materials': materialsEvents.push(event); break;
+      case 'MaterialCollected': materialCollectedEvents.push(event); break;
+      case 'MaterialDiscarded': materialDiscardedEvents.push(event); break;
+      case 'EngineerCraft':
+      case 'EngineerLegacyConvert': engineerCraftEvents.push(event); break;
+      case 'Synthesis': synthesisEvents.push(event); break;
+      case 'TechnologyBroker': technologyBrokerEvents.push(event); break;
+      case 'MaterialTrade': materialTradeEvents.push(event); break;
+      case 'ScientificResearch': scientificResearchEvents.push(event); break;
+      case 'EngineerContribution': engineerContributionEvents.push(event); break;
       default: break;
     }
   }
@@ -180,6 +200,15 @@ export function parseJournalLines(lines) {
     supercruiseExitEvents,
     receiveTextEvents,
     undockedEvents,
+    materialsEvents,
+    materialCollectedEvents,
+    materialDiscardedEvents,
+    engineerCraftEvents,
+    synthesisEvents,
+    technologyBrokerEvents,
+    materialTradeEvents,
+    scientificResearchEvents,
+    engineerContributionEvents,
   };
 }
 

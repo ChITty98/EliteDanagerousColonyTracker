@@ -2,6 +2,35 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.5.1] — 2026-05-05
+
+### Fixed
+- **Live journal watcher was clobbering user-set body / bodyType / stationType.** v1.4.4 patched the sync-all path's `Object.assign({}, prior, st)` clobber, but missed the *exact same bug pattern* in `server/journal/processors.js` `processKBEvents` (line 304) — the live event handler that fires on every Docked / Location / FSDJump / FSS / Touchdown / SupercruiseEntry. Even when the user wasn't docking at the affected station, ambient journal events triggered the kb extractor and Object.assign overwrote the user's manual settings with `undefined` from the journal extract. Now mirrors the v1.4.4 sync-all preservation: `body`, `bodyType`, `stationType` from prior always win when set.
+- **Client `upsertKnownStation` / `upsertKnownStations` were dropping `bodyType`.** The spread pattern `{...station, body, stationType}` preserved body and stationType but let `station.bodyType` (often undefined from the kb extractor) clobber prior. Added bodyType to the explicit preservation list.
+- **`populationOverrides` and `stationDistOverrides` were vulnerable to cross-tab clobber.** Both are user-authored maps but were not in `MERGE_STRATEGIES` (defaulted to `replace` strategy → cross-tab race could wipe entire map) and not in `APPEND_ONLY_KEYS` (no protection against stale `__remove` ops). Now both are `kind: 'map'` (sparse merge) and append-only protected — same family as `stationBodyOverrides` was hardened in v1.4.4.
+- **SSE bus never recovered when EventSource entered CLOSED state.** Browser auto-reconnect runs while readyState=CONNECTING, but if the connection dies hard (auth failure, server gone for too long, certain network conditions) readyState transitions to CLOSED and the browser stops retrying. The bus had no detection or recovery — page sat there with a dead handle showing stale data forever (events not arriving after FSDJump etc.). `onerror` now checks `readyState === EventSource.CLOSED`, tears down the dead handle, and schedules `ensureOpen()` 3s later. Self-heals once the server is reachable again.
+- **CompanionPage "Disconnected" badge stuck `false` even when SSE was healthy.** Initial state was `useState(false)` and only flipped true on receiving an `__open` event. If the bus already opened before CompanionPage mounted (because the store's state-sync listener subscribed first and triggered `ensureOpen`), the `__open` event already fired and was missed. Badge seeded from `sseBusStatus().connected` on mount.
+
+### Recovery
+- One-shot recovery script `scripts/recover-body-types.mjs` — restored 24 body assignments and 19 refined station types from the April 15 backup that had been silently wiped by the live-path clobber pattern over the preceding weeks. Pre-recovery snapshot saved alongside the data file.
+
+---
+
+## [1.5.0] — 2026-05-04
+
+### Added
+- **Materials tab (new feature)** — full ship-engineering materials inventory + trade planner + engineering capacity calculator. ED doesn't write a live snapshot file for ship materials (Raw / Manufactured / Encoded), so state is derived server-side from journal events: latest `Materials` snapshot + forward-applied `MaterialCollected` / `MaterialDiscarded` / `EngineerCraft` / `Synthesis` / `TechnologyBroker` / `MaterialTrade` / `MissionCompleted` / `EngineerContribution` / `ScientificResearch` deltas. Sync All populates the inventory; live deltas update via the journal watcher and broadcast `materials_updated` SSE.
+  - **Inventory tab**: per-category sections (Raw / Manufactured / Encoded), grouped by trader line, with grade × cap progress bars and ★ for capped materials.
+  - **Trade Planner tab**: pick a target material → ranked sources (within-line first using the standard 1:6 up / 3:1 down ladder, cross-line below using the wiki's "Conversion to another category" table, 6× penalty per grade). Shows total yield given current stock.
+  - **Engineering Capacity tab**: pick a blueprint, set ships / G5 rolls per ship / unlock rolls per stage. Shows max rolls per grade with bottleneck material highlighted, plus full material budget vs current stock with red gaps for shortages.
+  - Initial blueprint catalog: **Dirty Drive Tuning** (Thrusters, +speed) and **Increased Range FSD** (FSD, +jump distance). Recipes flagged `verified: false` until spot-checked in-game.
+- New module `server/journal/materials.js` with `extractMaterialInventory(journalDir)` (one-shot scan) and `applyMaterialDeltaEvent(ev, inventory)` (live patch).
+- New data file `src/data/engineeringMaterials.ts` — 109-material universe with line, grade, cap, plus the `CROSS_LINE_TRADE` lookup table and `tradeYieldPerSource()` helper.
+- New data file `src/data/blueprints.ts` — extensible blueprint catalog with `computeGradeCapacity()` for inventory-aware roll planning.
+- `materialInventory` added to `MERGE_STRATEGIES` (replace), `partialize`, and `APPEND_ONLY_KEYS` — server is sole writer, snapshots are complete, hard to re-acquire.
+
+---
+
 ## [1.4.4] — 2026-05-04
 
 ### Fixed

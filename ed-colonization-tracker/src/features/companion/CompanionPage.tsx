@@ -14,6 +14,16 @@ import {
   setLastDocked,
   type CompanionContent,
 } from '@/services/overlayService';
+import { friendlyStarName, colonizationOutlook, type ColonizationRating } from '@/lib/starNaming';
+
+// Colonization-outlook chip colors by rating.
+const RATING_STYLE: Record<ColonizationRating, string> = {
+  worthwhile: 'bg-green-500/25 text-green-200 border-green-500/40',
+  decent: 'bg-sky-500/25 text-sky-200 border-sky-500/40',
+  marginal: 'bg-amber-500/20 text-amber-200 border-amber-500/40',
+  skip: 'bg-slate-600/30 text-slate-300 border-slate-600/50',
+  unknown: 'bg-slate-600/20 text-slate-400 border-slate-600/40',
+};
 
 interface CompanionEvent {
   type: string;
@@ -286,6 +296,12 @@ export function CompanionPage() {
     });
   }, [overlayEnabled]);
 
+  // Colonization outlook for the current target — from the system NAME (mass
+  // code) + the FSDTarget primary class. Works even for systems not in Spansh.
+  const targetOutlook = lastTarget
+    ? colonizationOutlook(String(lastTarget.system || ''), lastTarget.starClass ? String(lastTarget.starClass) : null)
+    : null;
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between mb-4">
@@ -447,10 +463,29 @@ export function CompanionPage() {
                   {String(lastTarget.system)}
                   {lastTarget.starClass ? (
                     <span className="ml-2 text-sm font-normal text-muted-foreground">
-                      [{String(lastTarget.starClass)}]
+                      {friendlyStarName(String(lastTarget.starClass))}
                     </span>
                   ) : null}
                 </div>
+                {targetOutlook && targetOutlook.code ? (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${RATING_STYLE[targetOutlook.rating]}`}>
+                      Mass {targetOutlook.code} {'·'} {targetOutlook.label}
+                    </span>
+                    {typeof targetOutlook.bodies === 'number' ? (
+                      <span className="text-[11px] text-slate-400">
+                        ~{targetOutlook.bodies.toFixed(0)} bodies
+                        {typeof targetOutlook.goodAtmo === 'number' && targetOutlook.goodAtmo > 0
+                          ? `, ~${targetOutlook.goodAtmo.toFixed(2)} interesting atmo`
+                          : ''}
+                        {targetOutlook.basis === 'code' ? ' (by code)' : ''}
+                      </span>
+                    ) : null}
+                    {typeof lastTarget.starCount === 'number' && (lastTarget.starCount as number) >= 2 ? (
+                      <span className="text-[11px] text-indigo-300">{'★'} {String(lastTarget.starCount)} stars</span>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className="flex flex-wrap items-center gap-3 mt-1 text-sm">
                   <span className={lastTarget.visited ? 'text-green-400' : 'text-slate-400'}>
                     {lastTarget.visited ? '\u2713 Visited' : '\u2717 Never been there'}

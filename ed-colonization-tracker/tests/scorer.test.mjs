@@ -206,6 +206,16 @@ describe('scoreSystem components', () => {
     expect(r.starPoints).toBe(0);
   });
 
+  it('starCount counts every star including brown dwarfs (0 points still counts)', () => {
+    const r = scoreSystem(sys(
+      star('K (Yellow-Orange) Star', { main: true }),
+      star('M (Red dwarf) Star'),
+      star('Y (Brown dwarf) Star'),
+      planet({ atmo: 'Thin Oxygen' }),
+    ));
+    expect(r.starCount).toBe(3);
+  });
+
   it('proximity: two bodies within 100ls of each other under the same star', () => {
     const s = star('K (Yellow-Orange) Star', { main: true });
     const r = scoreSystem(sys(s,

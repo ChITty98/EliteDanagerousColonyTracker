@@ -792,6 +792,7 @@ export async function handleTargetSelectedOverlay(ev, existing, deps) {
     bodyCount,
     wasColonised: (scouted && scouted.isColonised) || false,
     score: (scouted && scouted.score && scouted.score.total) || null,
+    starCount: (scouted && scouted.score && scouted.score.starCount) || null,
     bodyString: (scouted && scouted.bodyString) || null,
     scoreSource: scouted ? (scouted.fromJournal ? 'Journal' : 'Spansh') : null,
     timestamp: new Date().toISOString(),

@@ -503,6 +503,7 @@ export function scoreSystem(bodies) {
     uniqueEconomies,
     bodyCountPoints,
     bodyCount,
+    starCount: stars.length, // all stars (incl. brown dwarfs / remnants), for the "multiple stars" note
     total,
     hasRingedLandable: ringCount > 0,
     // Consistent with oxygenPoints: icy oxygen bodies earn nothing, so they
@@ -535,6 +536,7 @@ export function emptyScore() {
     uniqueEconomies: [],
     bodyCountPoints: 0,
     bodyCount: 0,
+    starCount: 0,
     total: 0,
     hasRingedLandable: false,
     hasOxygenAtmosphere: false,

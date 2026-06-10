@@ -990,12 +990,29 @@ const faqItems: FaqItem[] = [
           Companion page banner updates with:
         </p>
         <ul className="list-disc ml-5 mt-2 space-y-1">
+          <li><strong>Star type</strong> &mdash; the primary star&rsquo;s friendly name (e.g. &ldquo;Red Dwarf (M)&rdquo;), from the FSDTarget star class</li>
+          <li><strong>Mass code &amp; colonization outlook</strong> &mdash; see below; works even for systems Spansh has never seen</li>
           <li><strong>Visited</strong> &mdash; whether you&rsquo;ve jumped to this system before (from knownSystems)</li>
           <li><strong>Spansh</strong> &mdash; whether Spansh has body data for it (body count shown if yes)</li>
-          <li><strong>Score</strong> &mdash; the cached scouting score if you&rsquo;ve scored it before</li>
+          <li><strong>Score / stars</strong> &mdash; the cached scouting score and star count if you&rsquo;ve scored it before</li>
           <li><strong>Colonised</strong> &mdash; if the system is flagged as colonised</li>
           <li><strong>Body string</strong> &mdash; highlights from the scoring run if available</li>
         </ul>
+        <p className="mt-2">
+          <strong>Mass code &amp; colonization outlook.</strong> Procedural system
+          names carry a single letter (a&ndash;h, the &ldquo;mass code&rdquo;) just
+          after the boxel block &mdash; e.g. Col&nbsp;173&nbsp;Sector&nbsp;AX-J&nbsp;
+          <em>d</em>9-52. It tracks total system mass (a&nbsp;=&nbsp;lightest,
+          h&nbsp;=&nbsp;heaviest), and analysis of ~1.4M Spansh systems shows it
+          tracks colonization value too: body count, landable count, and
+          interesting (non-icy) atmospheres all climb a&rarr;d, peaking around
+          code&nbsp;d and falling at&nbsp;e (hot massive stars). Combined with the
+          primary star class, the banner gives a per-jump outlook
+          (&ldquo;body-rich&rdquo; &rarr; &ldquo;skip&rdquo;) so you can judge an
+          unexplored target from its name alone &mdash; a brown-dwarf primary at
+          code&nbsp;a is a likely lone iceball; a code&nbsp;c&ndash;d system with an
+          F/G/K/A primary is the sweet spot.
+        </p>
         <p className="mt-2">
           Route plotted via NavRoute? The banner summarises the whole route
           (hop count, destination, how many stops you&rsquo;ve visited, how many

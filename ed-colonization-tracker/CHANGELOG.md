@@ -2,6 +2,15 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.7.0] — 2026-06-10
+
+### Added
+- **Companion target alert now reads the system from its name.** When you target a system (FSDTarget), the banner shows the primary star's friendly name (e.g. "Red Dwarf (M)"), the **mass code** (the a–h letter in the procedural name — a total-system-mass proxy), and a **colonization outlook** — *worthwhile / decent / marginal / skip* — with expected body count and interesting-atmosphere count. Crucially this works for systems **not in Spansh** (the pool you target when hunting unscanned systems): the estimate comes from the name's mass code plus the FSDTarget primary class via a baked lookup, not a Spansh query.
+  - Backed by analysis of ~1.4M Spansh systems (`tools/analyze-masscode-colonization.mjs` → `src/data/massCodeColonization.ts`): body count, landables, and non-icy atmospheres all climb mass code a→d, peak at d, and fall at e (hot massive primaries). Sweet spot = **code c–d with an F/G/K/A primary**; a brown-dwarf primary at code a is a likely lone iceball ("skip").
+- **`starCount`** added to the canonical score breakdown (`scoreSystem`) — the "multiple stars" count, shown in the alert for systems you've already scored. Covered by `tests/scorer.test.mjs`.
+
+---
+
 ## [1.6.1] — 2026-06-09
 
 ### Fixed

@@ -50,6 +50,7 @@ export interface ScoreBreakdown {
   uniqueEconomies: string[];
   bodyCountPoints: number;
   bodyCount: number;
+  starCount: number;
   total: number;
   hasRingedLandable: boolean;
   hasOxygenAtmosphere: boolean;

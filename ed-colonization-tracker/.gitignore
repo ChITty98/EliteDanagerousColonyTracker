@@ -40,8 +40,8 @@ sea-prep.blob
 server-bundled.cjs
 ed-colony-tracker.bat
 
-# Runtime data
-colony-data.json
+# Runtime data (colony-data*.json also covers timestamped recovery snapshots)
+colony-data*.json
 colony-token.txt
 colony-images/
 colony-gallery.json

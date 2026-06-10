@@ -177,8 +177,15 @@ function slimBody(b) {
     terraform: b.terraformingState && b.terraformingState !== 'Not terraformable' ? b.terraformingState : null,
     wasDiscovered: b.wasDiscovered === true,
     wasMapped: b.wasMapped === true,
-    bioSignals: b.signals && b.signals.signals && b.signals.signals.$SAA_SignalType_Biological ? b.signals.signals.$SAA_SignalType_Biological : null,
-    geoSignals: b.signals && b.signals.signals && b.signals.signals.$SAA_SignalType_Geological ? b.signals.signals.$SAA_SignalType_Geological : null,
+    // Spansh keys carry a trailing semicolon ($SAA_SignalType_Biological;). The
+    // old code read the no-semicolon key, so bio/geo were always null. Read both
+    // forms to be robust to either schema.
+    bioSignals: b.signals && b.signals.signals
+      ? (b.signals.signals['$SAA_SignalType_Biological;'] ?? b.signals.signals['$SAA_SignalType_Biological'] ?? null)
+      : null,
+    geoSignals: b.signals && b.signals.signals
+      ? (b.signals.signals['$SAA_SignalType_Geological;'] ?? b.signals.signals['$SAA_SignalType_Geological'] ?? null)
+      : null,
   };
 }
 

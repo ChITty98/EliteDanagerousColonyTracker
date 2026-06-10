@@ -66,6 +66,64 @@ const faqItems: FaqItem[] = [
     ),
   },
 
+  {
+    category: 'About',
+    question: 'Credits & data sources',
+    answer: (
+      <>
+        <p>
+          This app stands on the shoulders of community work. Specifically:
+        </p>
+        <ul className="list-disc ml-5 mt-2 space-y-2">
+          <li>
+            <strong>CMDR Mechan&rsquo;s <em>Elite Dangerous Colonization Mega Guide</em></strong> &mdash;
+            the authoritative reference for colonization mechanics, base inheritable
+            economies, strong/weak link rules, body modifiers, system scoring,
+            and per-facility data. The installation-type catalog in this app uses
+            its <code>systemScore</code> values (Appendix C) and its strong-link /
+            economy modifier semantics for the build-optimizer logic.
+            <br />
+            Find it linked from the &ldquo;Colonization Mega Guide&rdquo; thread
+            on the Frontier Forums or via{' '}
+            <a href="https://www.youtube.com/c/Astyrrean" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+              CMDR Mechan&rsquo;s YouTube channel
+            </a>.
+          </li>
+          <li>
+            <strong>Raven Colonial</strong> by CMDR Grinning2001 &mdash; canonical
+            installation type list (the 55 entries that seed
+            <code> src/data/installationTypes.ts</code>) and the colonization
+            bridge plotter that complements this app for system planning.
+          </li>
+          <li>
+            <strong>Spansh galaxy data</strong> by CMDR Spansh &mdash; powers the
+            Sources page system lookups, War &amp; Peace conflict search, and
+            scouting reports. Free public API.
+          </li>
+          <li>
+            <strong>Ardent Insight</strong> &mdash; live commodity market data
+            for the Sources page. Updated continuously from EDDN traders&rsquo;
+            uploads.
+          </li>
+          <li>
+            <strong>EDSM &amp; INARA</strong> &mdash; engineer blueprint references,
+            station / station-type lookups, faction data.
+          </li>
+          <li>
+            <strong>EDMC (Elite Dangerous Market Connector)</strong> &mdash;
+            provides the in-game overlay socket this app pushes messages to.
+          </li>
+        </ul>
+        <p className="mt-2">
+          User&rsquo;s own build-plan reference (Col 173 Sector AX-J d9-52) supplied
+          the per-facility commodity tonnage data for the 8 most-built installation
+          types. Empirical medians from your own completed projects can be regenerated
+          via <code>tools/backfill-installation-builds.mjs</code>.
+        </p>
+      </>
+    ),
+  },
+
   // --- Getting Started ---
   {
     category: 'Getting Started',
@@ -197,7 +255,7 @@ const faqItems: FaqItem[] = [
       <>
         <p>
           Each system is scored on how suitable it is for colonization. The score is
-          a sum of category points, with a theoretical maximum around 160+:
+          a sum of category points, with a theoretical maximum around 230+:
         </p>
         <table className="mt-2 text-xs w-full">
           <thead>
@@ -220,8 +278,13 @@ const faqItems: FaqItem[] = [
             </tr>
             <tr className="border-b border-border/30">
               <td className="py-1 pr-4 text-foreground">Oxygen Bonus</td>
-              <td className="py-1 pr-4">up to 20</td>
-              <td className="py-1">First oxygen atmosphere: +10, each additional: +5</td>
+              <td className="py-1 pr-4">up to 45</td>
+              <td className="py-1">+15 per oxygen atmosphere, <strong>non-icy bodies only</strong>. Distance decay applies.</td>
+            </tr>
+            <tr className="border-b border-border/30">
+              <td className="py-1 pr-4 text-foreground">Exotic Atmospheres</td>
+              <td className="py-1 pr-4">up to 50</td>
+              <td className="py-1">Bonus for rare <strong>non-icy</strong> landable atmospheres: Neon / Silicate Vapour +25, Argon-rich +12, Water / Methane-rich +8, Methane / Argon +4. Distance decay applies. Icy bodies score nothing here.</td>
             </tr>
             <tr className="border-b border-border/30">
               <td className="py-1 pr-4 text-foreground">Rings</td>

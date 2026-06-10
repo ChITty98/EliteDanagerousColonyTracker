@@ -964,6 +964,7 @@ function NodeDetail({ node, prevNode, hopIndex, isLast }: { node: ChainNode; pre
             {node.score.starPoints > 0 && <span>Stars: {node.score.starPoints}</span>}
             {node.score.atmospherePoints > 0 && <span>Atmo: {node.score.atmospherePoints}</span>}
             {node.score.oxygenPoints > 0 && <span>O{'\u2082'}: {node.score.oxygenPoints}</span>}
+            {node.score.exoticPoints > 0 && <span>Exotic: {node.score.exoticPoints}</span>}
             {node.score.ringPoints > 0 && <span>Rings: {node.score.ringPoints}</span>}
             {node.score.proximityPoints > 0 && <span>Prox: {node.score.proximityPoints}</span>}
             {node.score.economyPoints > 0 && <span>Econ: {node.score.economyPoints}</span>}

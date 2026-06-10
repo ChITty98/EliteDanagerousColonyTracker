@@ -2,6 +2,20 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.6.0] — 2026-06-08
+
+### Changed
+- **Colonization scoring now rewards rare non-icy atmospheres.** New "Exotic Atmosphere" component on the scout score for landable bodies carrying scarce atmospheres on rocky/HMC (non-icy) surfaces: Neon / Silicate Vapour +25, Argon-rich +12, Water / Methane-rich +8, Methane / Argon +4 per body. Distance decay applies (full ≤4,000 ls, tapering beyond); icy bodies score nothing here. Capped at 50.
+- **Oxygen bonus reworked to non-icy only and bumped.** Was +10 first / +5 each, counting icy oxygen too (cap 20). Now +15 per oxygen atmosphere on non-icy bodies, distance-decayed, cap 45. Since ~71% of oxygen landables sit on icy surfaces, icy-oxygen worlds no longer earn the oxygen bonus — the score now tracks the rocky/HMC oxygen worlds you can actually build on.
+- Theoretical max score moves ~160 → ~230. Change mirrored across the client scorer (`src/lib/scoutingScorer.ts`) and the indexer scorer (`server/journal/scorer.js`).
+
+### Updated
+- FAQ scoring table documents the new Exotic Atmosphere row and the non-icy oxygen rework.
+- Galaxy Wiki atmosphere-rarity section notes the scout-score bonus tiers, and its counts were recomputed for the merged Col 173 (700 ly) + Praea Euq (500 ly) dataset (415,267 landable-atmo bodies, up from 390,103).
+- New tool `tools/rescore-regions.mjs` re-applies the bonus to existing region indexes without a full galaxy re-extraction.
+
+---
+
 ## [1.5.1] — 2026-05-05
 
 ### Fixed

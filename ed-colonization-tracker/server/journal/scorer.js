@@ -204,6 +204,23 @@ function distanceDecay(distanceLs) {
   return 0.15;
 }
 
+// Base bonus for rare ("exotic") non-icy atmospheres, before distance decay.
+// Oxygen is scored separately (oxygenPoints). The common CO2/SO2/Ammonia/Nitrogen
+// and the more-abundant "-rich" variants (Neon-rich etc.) are intentionally 0.
+// Order matters: check "-rich" / "vapour" before the bare type.
+function exoticAtmoPoints(atmosphereType) {
+  const a = (atmosphereType || '').toLowerCase();
+  if (a.includes('silicate vapour')) return 25;
+  if (a.includes('neon')) return a.includes('neon-rich') ? 0 : 25;
+  if (a.includes('argon-rich')) return 12;
+  if (a.includes('argon')) return 4;
+  if (a.includes('methane-rich')) return 8;
+  if (a.includes('methane')) return 4;
+  if (a.includes('water-rich')) return 0;
+  if (a.includes('water')) return 8;
+  return 0;
+}
+
 // --- Body String Builder ---
 
 export function buildBodyString(qualBodies, stars) {
@@ -414,16 +431,36 @@ export function scoreSystem(bodies) {
     atmospherePoints += Math.round(basePoints * decay * icyPenalty);
   }
 
-  // --- Oxygen Atmosphere Bonus (cap 20) ---
+  // --- Oxygen Atmosphere Bonus (non-icy only, distance-decayed, cap 45) ---
   let oxygenPoints = 0;
   let oxygenCount = 0;
   for (const qb of qualBodies) {
-    if (qb.hasAtmosphere && /oxygen/i.test(qb.body.atmosphereType || '')) {
+    if (
+      qb.hasAtmosphere &&
+      /oxygen/i.test(qb.body.atmosphereType || '') &&
+      !ICY_SUBTYPES.has(qb.body.subType)
+    ) {
       oxygenCount++;
-      oxygenPoints += oxygenCount === 1 ? 10 : 5; // 10 for first, 5 for each additional
+      const decay = qb.isPrimaryStar ? distanceDecay(qb.distanceLs) : 1.0;
+      oxygenPoints += Math.round(15 * decay);
     }
   }
-  oxygenPoints = Math.min(oxygenPoints, 20);
+  oxygenPoints = Math.min(oxygenPoints, 45);
+
+  // --- Exotic Atmosphere Bonus (rare non-icy atmospheres, distance-decayed, cap 50) ---
+  // Neon/Silicate vapour +25, Argon-rich +12, Water/Methane-rich +8, Methane/Argon +4.
+  // Icy bodies score nothing here. Oxygen handled above.
+  let exoticPoints = 0;
+  let exoticCount = 0;
+  for (const qb of qualBodies) {
+    if (!qb.hasAtmosphere || ICY_SUBTYPES.has(qb.body.subType)) continue;
+    const base = exoticAtmoPoints(qb.body.atmosphereType);
+    if (base <= 0) continue;
+    exoticCount++;
+    const decay = qb.isPrimaryStar ? distanceDecay(qb.distanceLs) : 1.0;
+    exoticPoints += Math.round(base * decay);
+  }
+  exoticPoints = Math.min(exoticPoints, 50);
 
   // --- Rings (cap 30) ---
   let ringPoints = 0;
@@ -462,7 +499,7 @@ export function scoreSystem(bodies) {
   const bodyCountPoints = Math.min(bodyCount * 2, 15);
 
   const total =
-    starPoints + atmospherePoints + oxygenPoints + ringPoints + proximityPoints + economyPoints + bodyCountPoints;
+    starPoints + atmospherePoints + oxygenPoints + exoticPoints + ringPoints + proximityPoints + economyPoints + bodyCountPoints;
 
   return {
     starPoints,
@@ -471,6 +508,8 @@ export function scoreSystem(bodies) {
     atmosphereCount,
     oxygenPoints,
     oxygenCount,
+    exoticPoints,
+    exoticCount,
     ringPoints,
     ringCount,
     proximityPoints,

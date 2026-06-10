@@ -72,28 +72,29 @@ type UniqueRow = {
   note: string;
 };
 
-const TOTAL_NON_ICY_LANDABLE_ATMO = 122914;
-const TOTAL_ALL_LANDABLE_ATMO = 390103;
+const TOTAL_NON_ICY_LANDABLE_ATMO = 131539;
+const TOTAL_ALL_LANDABLE_ATMO = 415267;
 
+// Merged dataset: Col 173 700 ly bubble + Praea Euq 500 ly bubble (deduped by id64).
 const ATMO_RARITY: AtmoRow[] = [
-  { atmo: 'Thin Neon',                 allLandable: 123760, nonIcy: 2,     icyOnly: 123758, pctNonIcy: 0.002 },
-  { atmo: 'Hot thin Silicate vapour',  allLandable: 7,      nonIcy: 7,     icyOnly: 0,      pctNonIcy: 0.006 },
-  { atmo: 'Hot thin Carbon dioxide',   allLandable: 68,     nonIcy: 68,    icyOnly: 0,      pctNonIcy: 0.055 },
-  { atmo: 'Hot thin Sulphur dioxide',  allLandable: 222,    nonIcy: 222,   icyOnly: 0,      pctNonIcy: 0.181 },
-  { atmo: 'Thin Argon-rich',           allLandable: 5665,   nonIcy: 289,   icyOnly: 5376,   pctNonIcy: 0.235 },
-  { atmo: 'Thin Oxygen',               allLandable: 1163,   nonIcy: 339,   icyOnly: 824,    pctNonIcy: 0.276 },
-  { atmo: 'Thin Methane-rich',         allLandable: 459,    nonIcy: 459,   icyOnly: 0,      pctNonIcy: 0.373 },
-  { atmo: 'Thin Methane',              allLandable: 20531,  nonIcy: 627,   icyOnly: 19904,  pctNonIcy: 0.510 },
-  { atmo: 'Thin Water',                allLandable: 779,    nonIcy: 779,   icyOnly: 0,      pctNonIcy: 0.634 },
-  { atmo: 'Thin Argon',                allLandable: 69531,  nonIcy: 1128,  icyOnly: 68403,  pctNonIcy: 0.918 },
-  { atmo: 'Thin Neon-rich',            allLandable: 39418,  nonIcy: 1361,  icyOnly: 38057,  pctNonIcy: 1.107 },
-  { atmo: 'Thin Carbon dioxide-rich',  allLandable: 2158,   nonIcy: 2069,  icyOnly: 89,     pctNonIcy: 1.684 },
-  { atmo: 'Thin Nitrogen',             allLandable: 10877,  nonIcy: 2867,  icyOnly: 8010,   pctNonIcy: 2.333 },
-  { atmo: 'Thin Helium',               allLandable: 4701,   nonIcy: 2995,  icyOnly: 1706,   pctNonIcy: 2.437 },
-  { atmo: 'Thin Water-rich',           allLandable: 89,     nonIcy: 0,     icyOnly: 89,     pctNonIcy: 0 },
-  { atmo: 'Thin Ammonia',              allLandable: 19367,  nonIcy: 19318, icyOnly: 49,     pctNonIcy: 15.72 },
-  { atmo: 'Thin Sulphur dioxide',      allLandable: 36640,  nonIcy: 35739, icyOnly: 901,    pctNonIcy: 29.08 },
-  { atmo: 'Thin Carbon dioxide',       allLandable: 54668,  nonIcy: 54645, icyOnly: 23,     pctNonIcy: 44.46 },
+  { atmo: 'Thin Neon',                 allLandable: 131492, nonIcy: 2,     icyOnly: 131490, pctNonIcy: 0.002 },
+  { atmo: 'Hot thin Silicate vapour',  allLandable: 7,      nonIcy: 7,     icyOnly: 0,      pctNonIcy: 0.005 },
+  { atmo: 'Hot thin Carbon dioxide',   allLandable: 70,     nonIcy: 70,    icyOnly: 0,      pctNonIcy: 0.053 },
+  { atmo: 'Hot thin Sulphur dioxide',  allLandable: 243,    nonIcy: 243,   icyOnly: 0,      pctNonIcy: 0.185 },
+  { atmo: 'Thin Argon-rich',           allLandable: 6016,   nonIcy: 315,   icyOnly: 5701,   pctNonIcy: 0.239 },
+  { atmo: 'Thin Oxygen',               allLandable: 1241,   nonIcy: 367,   icyOnly: 874,    pctNonIcy: 0.279 },
+  { atmo: 'Thin Methane-rich',         allLandable: 499,    nonIcy: 499,   icyOnly: 0,      pctNonIcy: 0.379 },
+  { atmo: 'Thin Methane',              allLandable: 21675,  nonIcy: 663,   icyOnly: 21012,  pctNonIcy: 0.504 },
+  { atmo: 'Thin Water',                allLandable: 833,    nonIcy: 833,   icyOnly: 0,      pctNonIcy: 0.633 },
+  { atmo: 'Thin Argon',                allLandable: 73873,  nonIcy: 1189,  icyOnly: 72684,  pctNonIcy: 0.904 },
+  { atmo: 'Thin Neon-rich',            allLandable: 41858,  nonIcy: 1433,  icyOnly: 40425,  pctNonIcy: 1.089 },
+  { atmo: 'Thin Carbon dioxide-rich',  allLandable: 2308,   nonIcy: 2211,  icyOnly: 97,     pctNonIcy: 1.681 },
+  { atmo: 'Thin Nitrogen',             allLandable: 11517,  nonIcy: 3036,  icyOnly: 8481,   pctNonIcy: 2.308 },
+  { atmo: 'Thin Helium',               allLandable: 5004,   nonIcy: 3193,  icyOnly: 1811,   pctNonIcy: 2.427 },
+  { atmo: 'Thin Water-rich',           allLandable: 97,     nonIcy: 0,     icyOnly: 97,     pctNonIcy: 0 },
+  { atmo: 'Thin Ammonia',              allLandable: 20698,  nonIcy: 20648, icyOnly: 50,     pctNonIcy: 15.697 },
+  { atmo: 'Thin Sulphur dioxide',      allLandable: 39336,  nonIcy: 38354, icyOnly: 982,    pctNonIcy: 29.158 },
+  { atmo: 'Thin Carbon dioxide',       allLandable: 58500,  nonIcy: 58476, icyOnly: 24,     pctNonIcy: 44.455 },
 ];
 
 const RING_EDGE_TOP20: RingEdgeRow[] = [
@@ -231,6 +232,12 @@ export function WikiPage() {
           All figures below come from the Spansh galaxy dump pulled 2026-04-20 and
           region-indexed into a 700 ly sphere around your home colony.
         </p>
+        <p className="text-xs text-muted-foreground">
+          Note: the <strong className="text-foreground">Atmosphere rarity</strong> table reflects
+          the merged <strong>Col 173 (700 ly) + Praea Euq (500 ly)</strong> dataset (1,379,463
+          systems). The Dramatic-skies and Notable-systems sections below are still the original
+          Col 173 700 ly scan.
+        </p>
         <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-sm">
           <div className="flex justify-between border-b border-border/50 py-1">
             <dt className="text-muted-foreground">Scan center</dt>
@@ -286,12 +293,12 @@ export function WikiPage() {
         <div>
           <h2 className="text-lg font-semibold text-foreground">Atmosphere rarity</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            Landable bodies in the 700 ly bubble, broken down by atmosphere. The
-            &ldquo;Including icy&rdquo; column counts every landable body with that atmosphere.
-            The &ldquo;Non-icy&rdquo; column excludes Icy body and Rocky ice world types — which
-            matters because 71% of Thin Oxygen landables, 99% of Thin Neon landables, and 98% of
-            Thin Argon landables sit on icy surfaces. If you&rsquo;re looking for a rocky/HMC
-            body you can actually work with, the non-icy count is the real rarity.
+            Landable bodies in the merged Col 173 (700 ly) + Praea Euq (500 ly) dataset, broken
+            down by atmosphere. The &ldquo;Including icy&rdquo; column counts every landable body
+            with that atmosphere. The &ldquo;Non-icy&rdquo; column excludes Icy body and Rocky ice
+            world types — which matters because 70% of Thin Oxygen landables, 99% of Thin Neon
+            landables, and 98% of Thin Argon landables sit on icy surfaces. If you&rsquo;re looking
+            for a rocky/HMC body you can actually work with, the non-icy count is the real rarity.
           </p>
         </div>
         <div className="text-xs text-muted-foreground grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -349,22 +356,31 @@ export function WikiPage() {
         <div className="text-xs text-muted-foreground space-y-1 border-t border-border/50 pt-3">
           <p>
             <strong className="text-foreground">What &ldquo;icy only&rdquo; tells you:</strong>{' '}
-            Thin Neon has 123,760 landable instances in the bubble, but only 2 are on non-icy
+            Thin Neon has 131,492 landable instances in the region, but only 2 are on non-icy
             bodies. It&rsquo;s the most &ldquo;common&rdquo; atmosphere by raw count and the
             rarest in practical terms.
           </p>
           <p>
             <strong className="text-foreground">The flip case:</strong>{' '}
-            Thin Water shows 779 in both columns — every Thin Water landable in the bubble is on
+            Thin Water shows 833 in both columns — every Thin Water landable in the region is on
             a rocky or HMC body, none on icy. Same for Thin Methane-rich, Hot thin CO2/SO2/Silicate.
           </p>
           <p>
             <strong className="text-foreground">The hidden rarity:</strong>{' '}
-            Thin Oxygen looks moderate at 1,163 total landables, but 824 of those are on icy
-            surfaces. Only <strong className="text-primary">339</strong> sit on a rocky or HMC
-            body — roughly 1 in 363 of non-icy landable atmospheres. Excluding icy flips Oxygen
+            Thin Oxygen looks moderate at 1,241 total landables, but 874 of those are on icy
+            surfaces. Only <strong className="text-primary">367</strong> sit on a rocky or HMC
+            body — roughly 1 in 358 of non-icy landable atmospheres. Excluding icy flips Oxygen
             from being ~50% more common than Water to being <strong className="text-primary">2.3×
             rarer</strong> than Water.
+          </p>
+          <p>
+            <strong className="text-foreground">Scout-score bonus:</strong>{' '}
+            These rare non-icy atmospheres now lift a system&rsquo;s colonization scout score,
+            tiered by this rarity:{' '}
+            <strong className="text-primary">Neon / Silicate Vapour +25</strong>, Oxygen +15,
+            Argon-rich +12, Water / Methane-rich +8, Methane / Argon +4 per body — distance-decayed,
+            and icy bodies score nothing. See <em>FAQ &rarr; &ldquo;How does the colonization
+            scoring system work?&rdquo;</em>
           </p>
         </div>
       </section>
@@ -509,13 +525,6 @@ export function WikiPage() {
             Two landable Thin Water rocky/HMC bodies orbiting each other at under 0.2 Ls SMA
             around their shared barycentre. Each body has another Thin Water moon in its sky.
           </p>
-          <p className="text-sm text-destructive/90 bg-destructive/10 border border-destructive/20 rounded p-2">
-            <strong>Calibration correction:</strong> my initial hype said these would fill 30-50°
-            of sky. In-game scouting of Wregoe FH-W b44-1 A 4 confirmed the actual apparent size
-            is ~4° — much smaller. Reason: the Thin Water landables here are very low gravity
-            (0.05g → radius ~220 km). A small body 6,000 km away subtends only ~4°. For actual
-            sky dominance, skip water binaries and jump to Category H (big non-landable sibling).
-          </p>
 
           <div className="overflow-x-auto">
             <table className="w-full text-xs border-collapse">
@@ -617,7 +626,7 @@ export function WikiPage() {
           <p className="text-sm text-foreground/90">
             Reference calibration: <strong>HD 76412 7 a (Class IV GG parent)</strong> gives
             ~12.7° apparent = &ldquo;pretty darn good&rdquo; per scouting. Category H picks at
-            25-100°+ apparent are a whole different tier — &ldquo;fuckin&rsquo; big&rdquo;.
+            25-100°+ apparent are a whole different tier — &ldquo;BIG&rdquo;.
           </p>
 
           <div className="overflow-x-auto">
@@ -654,7 +663,7 @@ export function WikiPage() {
               * Ultra-tight pairs where separation rounds to 0 in Spansh data (sub-km precision).
               May be real, may be precision artifacts — worth scouting to verify.
               <br/>
-              <strong className="text-foreground">Safest &ldquo;fuckin&rsquo; big&rdquo; pick: Wregoe AG-A b55-6</strong> — 29 ly HIP, 25 ly pop, verified 3,000 km
+              <strong className="text-foreground">Safest &ldquo;BIG&rdquo; pick: Wregoe AG-A b55-6</strong> — 29 ly HIP, 25 ly pop, verified 3,000 km
               separation (same scale as your HIP 64049 screenshot). Expected ~38° apparent sibling.
             </p>
           </div>

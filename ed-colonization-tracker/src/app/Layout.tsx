@@ -74,7 +74,7 @@ export function Layout() {
           ))}
         </div>
         <div className="p-4 border-t border-border text-xs text-muted-foreground">
-          v1.5.1
+          v1.6.0
         </div>
       </nav>
 

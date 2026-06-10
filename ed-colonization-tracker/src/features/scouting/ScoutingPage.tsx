@@ -848,6 +848,7 @@ export function ScoutingPage() {
                   ['Stars', 'starPoints'],
                   ['Atmosphere', 'atmospherePoints'],
                   ['Oxygen', 'oxygenPoints'],
+                  ['Exotic atmo', 'exoticPoints'],
                   ['Rings', 'ringPoints'],
                   ['Proximity', 'proximityPoints'],
                   ['Economy', 'economyPoints'],
@@ -863,6 +864,7 @@ export function ScoutingPage() {
                         let detail = '';
                         if (key === 'atmospherePoints') detail = `(${sd?.score.atmosphereCount ?? 0})`;
                         if (key === 'oxygenPoints') detail = `(${sd?.score.oxygenCount ?? 0})`;
+                        if (key === 'exoticPoints') detail = `(${sd?.score.exoticCount ?? 0})`;
                         if (key === 'ringPoints') detail = `(${sd?.score.ringCount ?? 0})`;
                         if (key === 'bodyCountPoints') detail = `(${sd?.score.bodyCount ?? 0})`;
                         if (key === 'economyPoints') detail = sd?.score.uniqueEconomies?.length ? `(${sd.score.uniqueEconomies.join(', ')})` : '';
@@ -1454,7 +1456,7 @@ export function ScoutingPage() {
                           upsertScoutedSystem({
                             id64: sys.search.id64,
                             name: sys.search.name,
-                            score: { starPoints: 0, starDetails: [], atmospherePoints: 0, atmosphereCount: 0, oxygenPoints: 0, oxygenCount: 0, ringPoints: 0, ringCount: 0, proximityPoints: 0, proximityCount: 0, economyPoints: 0, uniqueEconomies: [], bodyCountPoints: 0, bodyCount: 0, total: 0, hasRingedLandable: false, hasOxygenAtmosphere: false, hazardousStars: [] },
+                            score: { starPoints: 0, starDetails: [], atmospherePoints: 0, atmosphereCount: 0, oxygenPoints: 0, oxygenCount: 0, exoticPoints: 0, exoticCount: 0, ringPoints: 0, ringCount: 0, proximityPoints: 0, proximityCount: 0, economyPoints: 0, uniqueEconomies: [], bodyCountPoints: 0, bodyCount: 0, total: 0, hasRingedLandable: false, hasOxygenAtmosphere: false, hazardousStars: [] },
                             bodyString: '',
                             isFavorite: true,
                             fromJournal: false,
@@ -1642,6 +1644,16 @@ export function ScoutingPage() {
                             </div>
                             <div className="text-right text-foreground">
                               +{sys.score.oxygenPoints}
+                            </div>
+                          </>
+                        )}
+                        {sys.score.exoticCount > 0 && (
+                          <>
+                            <div className="text-muted-foreground">
+                              {'✨'} {sys.score.exoticCount} exotic atmosphere{sys.score.exoticCount > 1 ? 's' : ''} (non-icy)
+                            </div>
+                            <div className="text-right text-foreground">
+                              +{sys.score.exoticPoints}
                             </div>
                           </>
                         )}
@@ -1904,7 +1916,7 @@ export function ScoutingPage() {
                                 upsertScoutedSystem({
                                   id64: sys.search.id64,
                                   name: sys.search.name,
-                                  score: { starPoints: 0, starDetails: [], atmospherePoints: 0, atmosphereCount: 0, oxygenPoints: 0, oxygenCount: 0, ringPoints: 0, ringCount: 0, proximityPoints: 0, proximityCount: 0, economyPoints: 0, uniqueEconomies: [], bodyCountPoints: 0, bodyCount: 0, total: 0, hasRingedLandable: false, hasOxygenAtmosphere: false, hazardousStars: [] },
+                                  score: { starPoints: 0, starDetails: [], atmospherePoints: 0, atmosphereCount: 0, oxygenPoints: 0, oxygenCount: 0, exoticPoints: 0, exoticCount: 0, ringPoints: 0, ringCount: 0, proximityPoints: 0, proximityCount: 0, economyPoints: 0, uniqueEconomies: [], bodyCountPoints: 0, bodyCount: 0, total: 0, hasRingedLandable: false, hasOxygenAtmosphere: false, hazardousStars: [] },
                                   bodyString: '',
                                   isFavorite: true,
                                   fromJournal: false,

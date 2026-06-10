@@ -1,9 +1,42 @@
 /**
  * Complete installation type dataset for ED colonization.
- * Sourced from Raven Colonial's verified type list.
  *
- * Each type has fixed properties: pad size, tier, T2/T3 point generation.
+ * Sources:
+ * - Raven Colonial's verified type list (canonical id/name/tier/T2-T3 points)
+ * - CMDR Mechan's Elite Dangerous Colonization Mega Guide v2.3.0
+ *   (https://docs.google.com/document/with-the-guide — Appendix C for systemScore,
+ *   strong-link mechanics for economyBonuses, "How Colony-Type Ports Gain Economies"
+ *   for body-modifier semantics)
+ * - User's own build-plan reference (memory: reference_colony_building.md) for
+ *   commodity buildRequirements on 8 types (Military Outpost, Civilian Surface
+ *   Outpost, Relay Installation, Security Installation, Large Settlements,
+ *   Planetary Port, Dodec, Asteroid Starport).
+ *
+ * Optional fields (buildRequirements, economyBonuses, commodityProduction,
+ * notes, systemScore) populate gradually — sparse data is fine, the optimizer
+ * gracefully degrades when a type is missing data.
  */
+
+export interface BuildRequirement {
+  /** Commodity id matching src/data/commodities.ts */
+  commodityId: string;
+  /** Tonnage required (canonical observed median across user's completed builds) */
+  quantity: number;
+}
+
+export interface EconomyBonus {
+  /**
+   * Economy name as Frontier writes it: 'Agriculture' | 'Extraction' | 'Refinery'
+   * | 'Industrial' | 'HighTech' | 'Military' | 'Tourism' | 'Contraband' | 'Terraforming'
+   */
+  economy: string;
+  /**
+   * Decimal contribution before modifiers, per the Mega Guide's strong-link
+   * strength values: 0.4 (T1), 0.8 (T2), 1.2 (T3) for strong links;
+   * 0.05 for weak links. Modifier multipliers handled by the optimizer.
+   */
+  strength: number;
+}
 
 export interface InstallationType {
   /** Unique identifier, e.g. "coriolis_starport" */
@@ -22,6 +55,36 @@ export interface InstallationType {
   t3Points: number;
   /** Raw journal StationType values that may map to this type */
   journalTypes?: string[];
+  /**
+   * Per-build commodity tonnage required. Sourced from user's reference build
+   * plan + backfilled from observed completed projects (tools/backfill-installation-builds.mjs).
+   * Optional — when absent, the optimizer falls back to typical tier totals.
+   */
+  buildRequirements?: BuildRequirement[];
+  /**
+   * Sum of commodity quantities in buildRequirements — convenience field for
+   * sorting/comparison. Populated lazily; null/undefined means "compute from
+   * buildRequirements if needed".
+   */
+  totalTonnage?: number;
+  /**
+   * Economies this installation type contributes to via strong links when
+   * placed in the same local body as a port, or via weak links to other
+   * ports in the system. Strength values are raw (pre-modifier).
+   */
+  economyBonuses?: EconomyBonus[];
+  /**
+   * Commodity ids this installation type generates / produces (e.g. surface
+   * Refinery → 'cmmcomposite'). Used to identify local-sourcing opportunities.
+   */
+  commodityProduction?: string[];
+  /**
+   * Appendix C system score value from the Mega Guide. Tier 1 typically 3,
+   * Tier 2 small settlements 1-2, Tier 2 hubs 4-5, T3 starports 15, etc.
+   */
+  systemScore?: number;
+  /** Freeform notes for special cases / known bugs / build-order tips. */
+  notes?: string;
 }
 
 export const INSTALLATION_TYPES: InstallationType[] = [
@@ -109,11 +172,280 @@ export const INSTALLATION_TYPES: InstallationType[] = [
   { id: 'industrial_hub', name: 'Industrial Hub', location: 'Surface', padSize: null, tier: 2, t2Points: 0, t3Points: 1, journalTypes: ['OnFootSettlement'] },
 ];
 
+// =============================================================================
+// systemScore values per Appendix C of the Colonization Mega Guide v2.3.0
+// by CMDR Mechan. Single-system contribution to the system score metric.
+// =============================================================================
+const SYSTEM_SCORES: Record<string, number> = {
+  coriolis_starport: 8,
+  asteroid_starport: 8,
+  dodec_starport: 15,
+  ocellus_starport: 15,
+  orbis_starport: 15,
+  commercial_outpost: 3,
+  industrial_outpost: 3,
+  pirate_outpost: 3,
+  civilian_outpost: 3,
+  scientific_outpost: 3,
+  military_outpost: 3,
+  satellite_installation: 3,
+  communication_installation: 3,
+  space_farm: 2,
+  pirate_base_installation: 3,
+  mining_industrial_installation: 2,
+  relay_installation: 3,
+  military_installation: 4,
+  security_installation: 3,
+  government_installation: 3,
+  medical_installation: 4,
+  research_installation: 4,
+  tourist_installation: 3,
+  space_bar_installation: 4,
+  civilian_surface_outpost: 4,
+  industrial_surface_outpost: 4,
+  scientific_surface_outpost: 4,
+  large_planetary_port: 15,
+  agriculture_settlement_small: 1,
+  agriculture_settlement_medium: 2,
+  agriculture_settlement_large: 4,
+  mining_settlement_small: 1,
+  mining_settlement_medium: 2,
+  mining_settlement_large: 4,
+  industrial_settlement_small: 1,
+  industrial_settlement_medium: 2,
+  industrial_settlement_large: 4,
+  military_settlement_small: 1,
+  military_settlement_medium: 2,
+  military_settlement_large: 4,
+  bio_settlement_small: 2,
+  bio_settlement_medium: 2,
+  bio_settlement_large: 4,
+  tourist_settlement_small: 1,
+  tourist_settlement_medium: 2,
+  tourist_settlement_large: 4,
+  extraction_hub: 5,
+  civilian_hub: 5,
+  exploration_hub: 5,
+  outpost_hub: 5,
+  scientific_hub: 5,
+  military_hub: 5,
+  refinery_hub: 5,
+  high_tech_hub: 5,
+  industrial_hub: 5,
+};
+
+// =============================================================================
+// buildRequirements — observed median commodity tonnage per build.
+// Source: user's `reference_colony_building.md` build-plan reference (8 types).
+// Remaining types populated lazily via tools/backfill-installation-builds.mjs
+// which derives medians from completed-project depot data.
+// =============================================================================
+const BUILD_REQUIREMENTS: Record<string, BuildRequirement[]> = {
+  // Military Outpost (T1 orbital) — 18,988t
+  military_outpost: [
+    { commodityId: 'steel', quantity: 5588 },
+    { commodityId: 'cmmcomposite', quantity: 3912 },
+    { commodityId: 'titanium', quantity: 4843 },
+    { commodityId: 'aluminium', quantity: 515 },
+    { commodityId: 'water', quantity: 1553 },
+    { commodityId: 'ceramiccomposites', quantity: 497 },
+    { commodityId: 'polymers', quantity: 497 },
+    { commodityId: 'semiconductors', quantity: 56 },
+    { commodityId: 'superconductors', quantity: 100 },
+    { commodityId: 'copper', quantity: 217 },
+    { commodityId: 'liquidoxygen', quantity: 1553 },
+    { commodityId: 'insulatingmembrane', quantity: 311 },
+    { commodityId: 'computercomponents', quantity: 50 },
+    { commodityId: 'foodcartridges', quantity: 94 },
+  ],
+  // Civilian Surface Outpost (T1 surface) — 36,829t
+  civilian_surface_outpost: [
+    { commodityId: 'steel', quantity: 10164 },
+    { commodityId: 'cmmcomposite', quantity: 6776 },
+    { commodityId: 'titanium', quantity: 5760 },
+    { commodityId: 'aluminium', quantity: 7047 },
+    { commodityId: 'water', quantity: 2372 },
+    { commodityId: 'ceramiccomposites', quantity: 814 },
+    { commodityId: 'polymers', quantity: 678 },
+    { commodityId: 'copper', quantity: 407 },
+    { commodityId: 'buildingfabricators', quantity: 678 },
+    { commodityId: 'surfacestabilisers', quantity: 610 },
+    { commodityId: 'structuralregulators', quantity: 204 },
+    { commodityId: 'landenrichmentsystems', quantity: 68 },
+    { commodityId: 'evacuationshelter', quantity: 68 },
+    { commodityId: 'emergencypowercells', quantity: 55 },
+    { commodityId: 'semiconductors', quantity: 102 },
+    { commodityId: 'superconductors', quantity: 136 },
+    { commodityId: 'computercomponents', quantity: 102 },
+    { commodityId: 'foodcartridges', quantity: 136 },
+  ],
+  // Relay Installation (T1 orbital) — 6,721t
+  relay_installation: [
+    { commodityId: 'steel', quantity: 2437 },
+    { commodityId: 'titanium', quantity: 1755 },
+    { commodityId: 'aluminium', quantity: 1033 },
+    { commodityId: 'water', quantity: 780 },
+    { commodityId: 'ceramiccomposites', quantity: 98 },
+    { commodityId: 'polymers', quantity: 195 },
+    { commodityId: 'semiconductors', quantity: 39 },
+    { commodityId: 'superconductors', quantity: 59 },
+    { commodityId: 'insulatingmembrane', quantity: 122 },
+    { commodityId: 'copper', quantity: 88 },
+    { commodityId: 'computercomponents', quantity: 25 },
+    { commodityId: 'foodcartridges', quantity: 30 },
+  ],
+  // Security Installation (T2 orbital) — 10,082t
+  security_installation: [
+    { commodityId: 'steel', quantity: 3645 },
+    { commodityId: 'titanium', quantity: 2309 },
+    { commodityId: 'aluminium', quantity: 1774 },
+    { commodityId: 'water', quantity: 1458 },
+    { commodityId: 'polymers', quantity: 243 },
+    { commodityId: 'insulatingmembrane', quantity: 183 },
+    { commodityId: 'ceramiccomposites', quantity: 122 },
+    { commodityId: 'copper', quantity: 122 },
+    { commodityId: 'semiconductors', quantity: 13 },
+    { commodityId: 'battleweapons', quantity: 25 },
+    { commodityId: 'microcontrollers', quantity: 19 },
+    { commodityId: 'structuralregulators', quantity: 13 },
+  ],
+  // Planetary Port (T3 surface) — 216,030t
+  large_planetary_port: [
+    { commodityId: 'steel', quantity: 60984 },
+    { commodityId: 'cmmcomposite', quantity: 40656 },
+    { commodityId: 'titanium', quantity: 34560 },
+    { commodityId: 'aluminium', quantity: 42282 },
+    { commodityId: 'water', quantity: 14232 },
+    { commodityId: 'ceramiccomposites', quantity: 4884 },
+    { commodityId: 'polymers', quantity: 2712 },
+    { commodityId: 'buildingfabricators', quantity: 2712 },
+    { commodityId: 'surfacestabilisers', quantity: 3660 },
+    { commodityId: 'landenrichmentsystems', quantity: 272 },
+    { commodityId: 'copper', quantity: 2442 },
+    { commodityId: 'semiconductors', quantity: 408 },
+    { commodityId: 'superconductors', quantity: 544 },
+    { commodityId: 'computercomponents', quantity: 408 },
+    { commodityId: 'emergencypowercells', quantity: 220 },
+    { commodityId: 'evacuationshelter', quantity: 272 },
+    { commodityId: 'structuralregulators', quantity: 816 },
+    { commodityId: 'foodcartridges', quantity: 544 },
+    { commodityId: 'liquidoxygen', quantity: 14232 },
+  ],
+  // Dodec Starport (T3 orbital) — ~210,000t (estimate; user reference notes Dodec not in DaftMav CSV)
+  dodec_starport: [
+    { commodityId: 'steel', quantity: 56304 },
+    { commodityId: 'cmmcomposite', quantity: 45044 },
+    { commodityId: 'titanium', quantity: 32820 },
+    { commodityId: 'aluminium', quantity: 40220 },
+    { commodityId: 'water', quantity: 6436 },
+    { commodityId: 'liquidoxygen', quantity: 15124 },
+  ],
+  // Asteroid Starport (T2 orbital) — 53,723t
+  asteroid_starport: [
+    { commodityId: 'steel', quantity: 14076 },
+    { commodityId: 'cmmcomposite', quantity: 11261 },
+    { commodityId: 'titanium', quantity: 8205 },
+    { commodityId: 'aluminium', quantity: 10055 },
+    { commodityId: 'water', quantity: 1609 },
+    { commodityId: 'liquidoxygen', quantity: 3781 },
+    { commodityId: 'ceramiccomposites', quantity: 1207 },
+    { commodityId: 'polymers', quantity: 1046 },
+    { commodityId: 'insulatingmembrane', quantity: 644 },
+    { commodityId: 'copper', quantity: 644 },
+    { commodityId: 'powergenerators', quantity: 65 },
+    { commodityId: 'waterpurifiers', quantity: 105 },
+    { commodityId: 'computercomponents', quantity: 145 },
+    { commodityId: 'semiconductors', quantity: 161 },
+    { commodityId: 'superconductors', quantity: 282 },
+  ],
+};
+
+// Apply systemScore and buildRequirements to INSTALLATION_TYPES entries.
+// Mutation is fine here — these are tagged data sources applied once at module load.
+for (const t of INSTALLATION_TYPES) {
+  if (SYSTEM_SCORES[t.id] !== undefined) t.systemScore = SYSTEM_SCORES[t.id];
+  const reqs = BUILD_REQUIREMENTS[t.id];
+  if (reqs) {
+    t.buildRequirements = reqs;
+    t.totalTonnage = reqs.reduce((sum, r) => sum + r.quantity, 0);
+  }
+}
+
 /** Lookup by id */
 export const INSTALLATION_TYPE_MAP: Record<string, InstallationType> = {};
 for (const t of INSTALLATION_TYPES) {
   INSTALLATION_TYPE_MAP[t.id] = t;
 }
+
+/**
+ * Colony-type ports: their economy is inherited from the host body's base
+ * economies. Specialized ports (Industrial Outpost, Scientific Outpost,
+ * Military Outpost, Pirate Outpost, Asteroid Starport, etc.) have fixed
+ * economy types and ignore body inheritance.
+ *
+ * Source: CMDR Mechan's Colonization Mega Guide v2.3.0 — "How Colony-Type
+ * Ports Gain Economies".
+ */
+export const COLONY_PORT_IDS = new Set<string>([
+  'civilian_outpost',
+  'commercial_outpost',
+  'coriolis_starport',
+  'orbis_starport',
+  'ocellus_starport',
+  'dodec_starport',
+  'civilian_surface_outpost',
+  'large_planetary_port',
+]);
+
+/**
+ * Specialized installations whose economy is fixed by their type (not inherited).
+ * Used when a station's journal-reported `economies` array is empty and we need
+ * to infer what economy it provides.
+ */
+export const SPECIALIZED_TYPE_ECONOMY: Record<string, string> = {
+  industrial_outpost: 'Industrial',
+  scientific_outpost: 'HighTech',
+  military_outpost: 'Military',
+  asteroid_starport: 'Extraction',
+  industrial_surface_outpost: 'Industrial',
+  scientific_surface_outpost: 'HighTech',
+  // Hubs
+  extraction_hub: 'Extraction',
+  refinery_hub: 'Refinery',
+  industrial_hub: 'Industrial',
+  high_tech_hub: 'HighTech',
+  military_hub: 'Military',
+  scientific_hub: 'HighTech',
+  exploration_hub: 'HighTech',
+  // Settlements (large/medium/small share economy by family)
+  agriculture_settlement_small: 'Agriculture',
+  agriculture_settlement_medium: 'Agriculture',
+  agriculture_settlement_large: 'Agriculture',
+  mining_settlement_small: 'Extraction',
+  mining_settlement_medium: 'Extraction',
+  mining_settlement_large: 'Extraction',
+  industrial_settlement_small: 'Industrial',
+  industrial_settlement_medium: 'Industrial',
+  industrial_settlement_large: 'Industrial',
+  military_settlement_small: 'Military',
+  military_settlement_medium: 'Military',
+  military_settlement_large: 'Military',
+  bio_settlement_small: 'HighTech',
+  bio_settlement_medium: 'HighTech',
+  bio_settlement_large: 'HighTech',
+  tourist_settlement_small: 'Tourism',
+  tourist_settlement_medium: 'Tourism',
+  tourist_settlement_large: 'Tourism',
+  // Other named installations
+  space_farm: 'Agriculture',
+  military_installation: 'Military',
+  security_installation: 'Military',
+  medical_installation: 'HighTech',
+  research_installation: 'HighTech',
+  tourist_installation: 'Tourism',
+  space_bar_installation: 'Tourism',
+  mining_industrial_installation: 'Extraction',
+};
 
 /** Get installation type by id */
 export function getInstallationTypeById(id: string): InstallationType | undefined {

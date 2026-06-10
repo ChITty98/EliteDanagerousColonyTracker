@@ -88,8 +88,19 @@ export function setLastSystem(address: number, name: string): void {
   lastSystemAddress = address;
   lastSystemName = name;
 }
-/** Allow companion to read last docked station */
+/** Allow companion to read last docked station.
+ * Prefers the persisted state.currentDock (server-managed via Docked/Undocked
+ * journal events) over the module-level cache. The module-level state only
+ * updates when CompanionPage is mounted and an SSE 'docked' event arrives —
+ * so it misses dock events when other pages are active and never sees undocks.
+ * state.currentDock is authoritative; module state is just a legacy fallback. */
 export function getLastDocked(): { marketId: number | null; stationName: string | null; systemName: string | null } {
+  const dock = useAppStore.getState().currentDock;
+  if (dock) {
+    return { marketId: dock.marketId, stationName: dock.stationName, systemName: dock.systemName };
+  }
+  // No persisted dock — fall back to module-level state (in case the server
+  // hasn't broadcast state_updated yet for a brand-new dock).
   return { marketId: lastDockedMarketId, stationName: lastDockedStationName, systemName: lastDockedSystemName };
 }
 /** Set last docked from SSE event */

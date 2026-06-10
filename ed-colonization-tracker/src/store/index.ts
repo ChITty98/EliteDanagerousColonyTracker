@@ -160,6 +160,8 @@ const MERGE_STRATEGIES: Record<string, MergeStrategy> = {
   stationTravelTimes: { kind: 'map' },
   // Material inventory — server is sole writer, every update is a complete snapshot
   materialInventory: { kind: 'replace' },
+  // Current dock — server is sole writer, replace strategy (null when undocked)
+  currentDock: { kind: 'replace' },
   // User-authored override maps — sparse merge so cross-tab races can't wipe them
   populationOverrides: { kind: 'map' },
   stationDistOverrides: { kind: 'map' },
@@ -333,6 +335,57 @@ const serverStorage: StateStorage = {
             }).catch(() => {});
           }
         } catch { /* diagnostic logging is best-effort */ }
+
+        // SAFETY GUARD: detect mass-wipe PATCHes and abort.
+        // The rehydrate-race bug periodically causes setItem to fire with
+        // empty/initial-state current values, which would __remove every
+        // entry from server's baseline. This guard checks: for any field,
+        // does this PATCH wipe more than 50% of a non-trivial baseline?
+        // If yes, abort and log — do NOT send the destructive PATCH.
+        try {
+          const sizeOf = (x: unknown): number => {
+            if (x == null) return 0;
+            if (Array.isArray(x)) return x.length;
+            if (typeof x === 'object') return Object.keys(x as object).length;
+            return 1;
+          };
+          const wipeFlags: string[] = [];
+          for (const [k, v] of Object.entries(patch)) {
+            const baselineVal = (stateBaseline as Record<string, unknown>)[k];
+            const baselineSize = sizeOf(baselineVal);
+            if (baselineSize < 6) continue; // skip trivial fields — noise threshold
+            if (v && typeof v === 'object' && !Array.isArray(v) && '__remove' in (v as object)) {
+              // map / arrayById / set with __remove
+              const removeArr = ((v as Record<string, unknown>).__remove) as unknown[] | undefined;
+              const removeCount = Array.isArray(removeArr) ? removeArr.length : 0;
+              if (removeCount > baselineSize * 0.5) {
+                wipeFlags.push(`${k}: __remove ${removeCount}/${baselineSize}`);
+              }
+            } else {
+              // replace-strategy field: check if it's wiping a populated baseline to empty/null
+              const newSize = sizeOf(v);
+              if (newSize === 0 && baselineSize > 5) {
+                wipeFlags.push(`${k}: replace ${baselineSize} → empty`);
+              }
+            }
+          }
+          if (wipeFlags.length > 0) {
+            console.error(`[Store] BLOCKED mass-wipe PATCH: ${wipeFlags.join(' | ')}`);
+            const tk = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
+            const route = (() => { try { return window.location.pathname + window.location.hash; } catch { return '?'; } })();
+            fetch(tk ? `/api/log?token=${tk}` : '/api/log', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                tag: 'PatchBlocked',
+                message: `route=${route} BLOCKED mass-wipe — ${wipeFlags.join(' | ')} (rehydrate race?)`,
+              }),
+            }).catch(() => {});
+            return; // do NOT send the destructive PATCH
+          }
+        } catch (e) {
+          console.error('[Store] safety guard error (allowing PATCH):', e);
+        }
 
         markOwnPatch();
         const res = await fetch(apiUrl('/api/state'), {
@@ -636,6 +689,12 @@ interface AppState {
   // Ship-engineering material inventory — server-derived, replace strategy.
   materialInventory: import('./types').MaterialInventory | null;
   setMaterialInventory: (inv: import('./types').MaterialInventory) => void;
+
+  // Current dock state — set on Docked, cleared on Undocked. Replaces the
+  // module-level lastDocked* variables which only updated when CompanionPage
+  // was mounted at the moment of the dock event.
+  currentDock: import('./types').CurrentDock | null;
+  setCurrentDock: (dock: import('./types').CurrentDock | null) => void;
 
   // Journal exploration cache — raw journal data extracted but NOT scored
   // Populated by "Process Journals" on expansion tab, used when scouting
@@ -1011,6 +1070,36 @@ export const useAppStore = create<AppState>()(
           };
           return { knownStations: { ...s.knownStations, [marketId]: updated } };
         });
+
+        // Auto-resolve completedStationName on matching completed project.
+        // Fires when the user docks at a finalized station whose construction
+        // project completed without a resolved name (the most common reason the
+        // "Dock to Register" dashboard banner gets stuck). Guard against
+        // construction-site / colonisation-ship names so we never overwrite
+        // a completed project with a placeholder.
+        const isConstructionName = /\$EXT_PANEL_ColonisationShip|Construction Site/i.test(payload.stationName || '');
+        if (!isConstructionName) {
+          set((s) => {
+            const match = s.projects.find(
+              (p) => p.status === 'completed'
+                && p.marketId === marketId
+                && !p.completedStationName,
+            );
+            if (!match) return {};
+            return {
+              projects: s.projects.map((p) =>
+                p.id === match.id
+                  ? {
+                      ...p,
+                      completedStationName: payload.stationName,
+                      completedStationType: existing?.stationType || p.stationType || 'Outpost',
+                      lastUpdatedAt: now,
+                    }
+                  : p
+              ),
+            };
+          });
+        }
 
         // Compute rank: count stations with dockedCount >= newDockedCount
         const allCounts = Object.values(state.knownStations)
@@ -1415,6 +1504,10 @@ export const useAppStore = create<AppState>()(
       materialInventory: null,
       setMaterialInventory: (inv) => set({ materialInventory: inv }),
 
+      // Current dock — server-managed via Docked/Undocked events
+      currentDock: null,
+      setCurrentDock: (dock) => set({ currentDock: dock }),
+
       // Scouted systems
       scoutedSystems: {},
       upsertScoutedSystem: (data) =>
@@ -1491,6 +1584,7 @@ export const useAppStore = create<AppState>()(
         lastSessionSummaryShown: state.lastSessionSummaryShown,
         stationBodyOverrides: state.stationBodyOverrides,
         materialInventory: state.materialInventory,
+        currentDock: state.currentDock,
         commanderPosition: state.commanderPosition,
         currentBody: state.currentBody,
         currentShip: state.currentShip,

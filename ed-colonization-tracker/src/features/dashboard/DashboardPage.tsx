@@ -498,6 +498,17 @@ export function DashboardPage() {
       // the depot-processing loop below sees fresh knownStations.
       try { await useAppStore.persist.rehydrate(); } catch { /* best-effort */ }
 
+      // CRITICAL: re-read projects FROM the store after rehydrate. The
+      // closure-captured `allProjects` is the React-state value from BEFORE
+      // rehydrate — if the user clicked Sync All before the initial rehydrate
+      // completed (or if hydration was stale), allProjects could be empty.
+      // Using stale allProjects in the depot loops below causes addProject to
+      // fire for every depot, creating duplicate projects with new UUIDs and
+      // losing all completed-status / completedAt / completedStationName data.
+      // This is what caused the May 13 disaster — recover-projects.mjs cleaned
+      // that up, this guard prevents recurrence.
+      const projectsAfterRehydrate = useAppStore.getState().projects;
+
       const depots = sync.depots;
       const activeDepots = depots.filter((d) => !d.isComplete);
 
@@ -553,7 +564,7 @@ export function DashboardPage() {
       const currentStations = useAppStore.getState().knownStations;
       const completeDepots = depots.filter((d) => d.isComplete);
       for (const depot of completeDepots) {
-        const existing = allProjects.find((p) => p.marketId === depot.marketId);
+        const existing = projectsAfterRehydrate.find((p) => p.marketId === depot.marketId);
         if (existing && existing.status === 'active') {
           // Try to resolve the real station name from knownStations (the non-construction entry)
           const resolved = depot.marketId ? currentStations[depot.marketId] : undefined;
@@ -566,7 +577,7 @@ export function DashboardPage() {
       }
 
       for (const depot of activeDepots) {
-        const existing = allProjects.find((p) => p.marketId === depot.marketId);
+        const existing = projectsAfterRehydrate.find((p) => p.marketId === depot.marketId);
         if (existing) {
           if (existing.status === 'completed') continue;
           useAppStore.getState().updateAllCommodities(existing.id, depot.commodities);
@@ -817,7 +828,20 @@ export function DashboardPage() {
             {'\u{1F3D7}\u{FE0F}'} New Station{needsDockingProjects.length > 1 ? 's' : ''} Ready — Dock to Register
           </h3>
           <div className="space-y-1">
-            {needsDockingProjects.map((p) => (
+            {needsDockingProjects.map((p) => {
+              const rawStation = p.stationName || p.name || '';
+              const cleanedName = rawStation
+                .replace(/^\$EXT_PANEL_ColonisationShip;\s*/i, '')
+                .replace(/^Orbital Construction Site:\s*/i, '')
+                .replace(/^Construction Site:\s*/i, '')
+                .trim();
+              const handleDismiss = () => {
+                useAppStore.getState().updateProject(p.id, {
+                  completedStationName: cleanedName || rawStation,
+                  completedStationType: p.completedStationType || p.stationType || 'Outpost',
+                });
+              };
+              return (
               <div key={p.id} className="flex items-center gap-2 text-sm">
                 <span className="text-yellow-300">{'\u25CF'}</span>
                 <span className="text-foreground font-medium">
@@ -826,8 +850,17 @@ export function DashboardPage() {
                 <span className="text-muted-foreground">
                   in {p.systemName || 'unknown system'} — dock at the new station for the app to identify it
                 </span>
+                <button
+                  type="button"
+                  onClick={handleDismiss}
+                  title={`Mark as resolved — sets station name to "${cleanedName || rawStation}"`}
+                  className="ml-auto px-2 py-0.5 text-xs text-yellow-300/70 hover:text-yellow-200 hover:bg-yellow-500/20 rounded transition-colors"
+                >
+                  {'✕'} Dismiss
+                </button>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

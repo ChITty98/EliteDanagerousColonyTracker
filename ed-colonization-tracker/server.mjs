@@ -836,6 +836,31 @@ const server = http.createServer((req, res) => {
             },
           };
 
+          // Auto-update populationOverrides when journal has fresher Population
+          // than the existing user-edited override. Mirrors the client-side
+          // upsertKnownSystems logic that only fires from legacy paths. Without
+          // this, the override stays stale forever and the Dashboard shows old
+          // population (since populationOverrides takes priority over
+          // knownSystems.population in the UI).
+          const existingPopOverrides = existing.populationOverrides || {};
+          const popOverrideUpserts = {};
+          for (const s of kb.systems) {
+            if (!s.population || s.population <= 0) continue;
+            const key = s.systemName.toLowerCase();
+            const ov = existingPopOverrides[key];
+            // Update if no override exists OR override is older than journal lastSeen.
+            // Note: we update regardless of whether the new population is higher
+            // or lower — Frontier's BGS tick can move populations either way and
+            // the journal is authoritative.
+            if (!ov || (s.lastSeen && (!ov.updatedAt || s.lastSeen > ov.updatedAt))) {
+              popOverrideUpserts[key] = { population: s.population, updatedAt: s.lastSeen || new Date().toISOString() };
+            }
+          }
+          if (Object.keys(popOverrideUpserts).length > 0) {
+            patch.populationOverrides = { __upsert: popOverrideUpserts };
+            console.log(`[SyncAll] Auto-updated populationOverrides for ${Object.keys(popOverrideUpserts).length} system(s) from fresher journal data`);
+          }
+
           // Material inventory (replace strategy — server is sole writer, every
           // sync-all produces a complete snapshot).
           if (materialInventory) {

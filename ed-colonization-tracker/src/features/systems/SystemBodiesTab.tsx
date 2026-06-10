@@ -17,6 +17,7 @@ import {
   type StarInfo,
   type QualifyingBody,
 } from '@/lib/scoutingScorer';
+import { BodyAnalysisModal } from './BodyAnalysisModal';
 
 interface SystemBodiesTabProps {
   systemName: string;
@@ -197,6 +198,8 @@ export function SystemBodiesTab({ systemName, id64, systemAddress }: SystemBodie
   const [hideNonQualifying, setHideNonQualifying] = useState(false);
   const [expandedBodyId, setExpandedBodyId] = useState<number | null>(null);
   const [fillingFromSpansh, setFillingFromSpansh] = useState(false);
+  // Body analysis modal — opens when user clicks the analyze button on a body row
+  const [analyzingBody, setAnalyzingBody] = useState<SpanshDumpBody | null>(null);
 
   // Step 1: Load from cache or journal (local only, no network)
   const loadLocal = useCallback(async () => {
@@ -395,6 +398,7 @@ export function SystemBodiesTab({ systemName, id64, systemAddress }: SystemBodie
             expandedBodyId={expandedBodyId}
             setExpandedBodyId={setExpandedBodyId}
             bodyHasImages={bodyHasImages}
+            onAnalyze={setAnalyzingBody}
           />
         ))}
         {orphanRoots.length > 0 && (
@@ -414,11 +418,19 @@ export function SystemBodiesTab({ systemName, id64, systemAddress }: SystemBodie
                 expandedBodyId={expandedBodyId}
                 setExpandedBodyId={setExpandedBodyId}
                 bodyHasImages={bodyHasImages}
+                onAnalyze={setAnalyzingBody}
               />
             ))}
           </>
         )}
       </div>
+      {analyzingBody && (
+        <BodyAnalysisModal
+          body={analyzingBody}
+          systemName={systemName}
+          onClose={() => setAnalyzingBody(null)}
+        />
+      )}
     </div>
   );
 }
@@ -437,6 +449,7 @@ interface TreeSectionProps {
   expandedBodyId: number | null;
   setExpandedBodyId: (id: number | null) => void;
   bodyHasImages: (bodyName: string) => boolean;
+  onAnalyze: (body: SpanshDumpBody) => void;
 }
 
 function TreeSection({
@@ -451,6 +464,7 @@ function TreeSection({
   expandedBodyId,
   setExpandedBodyId,
   bodyHasImages,
+  onAnalyze,
 }: TreeSectionProps) {
   const { body, children } = node;
   const isStar = body.type === 'Star';
@@ -493,6 +507,7 @@ function TreeSection({
           isExpanded={isExpanded}
           onToggleExpand={() => setExpandedBodyId(isExpanded ? null : body.bodyId)}
           systemName={systemName}
+          onAnalyze={onAnalyze}
         />
       )}
       {children.map((child) => (
@@ -505,6 +520,7 @@ function TreeSection({
           qualMap={qualMap}
           starInfoMap={starInfoMap}
           bodyStations={bodyStations}
+          onAnalyze={onAnalyze}
           hideNonQualifying={hideNonQualifying}
           expandedBodyId={expandedBodyId}
           setExpandedBodyId={setExpandedBodyId}
@@ -600,6 +616,7 @@ function BodyRow({
   isExpanded,
   onToggleExpand,
   systemName,
+  onAnalyze,
 }: {
   body: SpanshDumpBody;
   shortName: string;
@@ -611,6 +628,7 @@ function BodyRow({
   isExpanded: boolean;
   onToggleExpand: () => void;
   systemName: string;
+  onAnalyze: (body: SpanshDumpBody) => void;
 }) {
   const bodyVisits = useAppStore((s) => s.bodyVisits);
   // Look up visit by matching body name across all visits for this system
@@ -710,6 +728,14 @@ function BodyRow({
             {'\u{1F6EC}'}{visit.landingCount > 1 ? `\u00D7${visit.landingCount}` : ''}
           </span>
         )}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onAnalyze(body); }}
+          title="Build analysis for this body (economies + strong-link bonuses)"
+          className="ml-auto text-xs px-1.5 py-0.5 rounded text-muted-foreground hover:text-primary hover:bg-primary/10 shrink-0"
+        >
+          {'\u{1F50D}'}
+        </button>
       </div>
 
       {/* Expanded detail area or auto-show images */}

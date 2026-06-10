@@ -585,6 +585,17 @@ function processCompanionFeedEvents(parsed, existing, settings, patch, extraEven
     }
   }
 
+  // Undocked / FSDJump / CarrierJump — clear currentDock. SupercruiseEntry
+  // alone does NOT clear it (you can supercruise away from a station you're
+  // docked at? — actually you can't, but be conservative and only clear on
+  // explicit undock or system change). Only emit the clear if currentDock
+  // is currently set, to avoid noisy writes.
+  if (parsed.undockedEvents.length > 0 || parsed.fsdJumpEvents.length > 0 || parsed.carrierJumpEvents.length > 0) {
+    if (existing.currentDock && patch.currentDock === undefined) {
+      patch.currentDock = null;
+    }
+  }
+
   // Scan events — Companion highlights (rings, atmosphere) + first-footfall ops
   for (const ev of parsed.scanEvents) {
     if (ev.Landable && (ev.Atmosphere || (ev.Rings && ev.Rings.length))) {
@@ -653,6 +664,18 @@ function processDockEvents(parsed, existing, patch, extraEvents, deps) {
       marketId: ev.MarketID,
       timestamp: new Date().toISOString(),
     });
+    // Persist current dock state. Replaces the unreliable module-level
+    // lastDocked* variables in overlayService that only fire when CompanionPage
+    // is mounted. Now any consumer can read state.currentDock and it'll be
+    // accurate regardless of which page is active.
+    if (typeof ev.MarketID === 'number' && ev.StationName) {
+      patch.currentDock = {
+        marketId: ev.MarketID,
+        stationName: ev.StationName,
+        systemName: ev.StarSystem || '',
+        dockedAt: ev.timestamp || new Date().toISOString(),
+      };
+    }
     // Count docks by MarketID across the full lifecycle — construction-site
     // and colonisation-ship phases accumulate against the eventual station's
     // MarketID. Only skip permanent ephemerals (FCs, Trailblazer NPCs).
@@ -938,6 +961,31 @@ function applyDockToStationPatch(patch, existing, marketId, payload) {
   patch.knownStations = {
     __upsert: Object.assign({}, currentUpsert, { [String(marketId)]: updated }),
   };
+
+  // Auto-resolve completedStationName on a matching completed project.
+  // Mirrors the client-side recordStationDock logic in src/store/index.ts.
+  // Fires when the user docks at a finalized station whose construction
+  // project completed without a resolved name — clears the "Dock to Register"
+  // dashboard banner without requiring manual edits.
+  const isConstructionName = /\$EXT_PANEL_ColonisationShip|Construction Site/i.test(payload.stationName || '');
+  if (!isConstructionName) {
+    const projects = Array.isArray(existing && existing.projects) ? existing.projects : [];
+    const match = projects.find(
+      (p) => p && p.status === 'completed'
+        && p.marketId === marketId
+        && !p.completedStationName,
+    );
+    if (match) {
+      const resolvedType = updated.stationType || match.stationType || 'Outpost';
+      const projUpsert = (patch.projects && patch.projects.__upsert) || {};
+      projUpsert[match.id] = Object.assign({}, match, {
+        completedStationName: payload.stationName,
+        completedStationType: resolvedType,
+        lastUpdatedAt: now,
+      });
+      patch.projects = { __idKey: 'id', __upsert: projUpsert };
+    }
+  }
 }
 
 /**

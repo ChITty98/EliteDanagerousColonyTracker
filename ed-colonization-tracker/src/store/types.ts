@@ -317,6 +317,18 @@ export interface FleetCarrierSpaceUsage {
   updatedAt: string; // ISO timestamp
 }
 
+// Current dock state — server-managed via Docked/Undocked journal events.
+// Persisted so the "Buy Here" overlay (and any other consumer that needs to
+// know which station the commander is currently at) survives page refreshes
+// AND works regardless of which page mounted at the time of the dock event.
+// Replace strategy — server is sole writer, set to null when undocked.
+export interface CurrentDock {
+  marketId: number;
+  stationName: string;
+  systemName: string;
+  dockedAt: string; // ISO timestamp of the Docked event
+}
+
 // Ship-engineering materials inventory — derived from journal events
 // (`Materials` snapshot + delta events). No live snapshot file from ED.
 // Server is the only writer; replace strategy in MERGE_STRATEGIES.

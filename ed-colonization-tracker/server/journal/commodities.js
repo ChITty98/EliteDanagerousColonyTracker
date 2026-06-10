@@ -71,7 +71,7 @@ export const COMMODITIES = [
   { id: 'biowaste', journalName: '$biowaste_name;', name: 'Biowaste', category: 'light', planetaryOnly: false },
   { id: 'grain', journalName: '$grain_name;', name: 'Grain', category: 'light', planetaryOnly: false },
   { id: 'pesticides', journalName: '$pesticides_name;', name: 'Pesticides', category: 'light', planetaryOnly: false },
-  { id: 'agrimedicines', journalName: '$agrimedicines_name;', name: 'Agri-Medicines', category: 'medium', planetaryOnly: false },
+  { id: 'agriculturalmedicines', journalName: '$agriculturalmedicines_name;', name: 'Agri-Medicines', category: 'medium', planetaryOnly: false },
 ];
 
 export const COMMODITY_BY_ID = new Map(COMMODITIES.map((c) => [c.id, c]));

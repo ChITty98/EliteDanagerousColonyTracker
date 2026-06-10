@@ -10,6 +10,7 @@ import { fetchSystemDump } from '@/services/spanshApi';
 import { getSystemTier, getTierProgress, formatPopulation } from '@/features/dashboard/tierUtils';
 import { SystemBodiesTab } from './SystemBodiesTab';
 import { NearbyExpansionTab } from './NearbyExpansionTab';
+import { CommodityRecommendationModal } from './CommodityRecommendationModal';
 import { ImageGallery } from '@/components/ImageGallery';
 import { galleryKey } from '@/store/galleryStore';
 import type { KnownStation, FSSSignal, StationEconomy } from '@/store/types';
@@ -150,6 +151,29 @@ function scoreColorClass(score: number): string {
   return 'text-muted-foreground';
 }
 
+/**
+ * Map an unambiguous journal stationType to its InstallationType id.
+ * Ambiguous types (Outpost, Installation, OnFootSettlement) return undefined
+ * so the recommender falls back to journal-reported economies instead of
+ * guessing the spec.
+ */
+function journalTypeToInstallationId(journalType: string): string | undefined {
+  switch (journalType) {
+    case 'Coriolis': return 'coriolis_starport';
+    case 'Orbis': return 'orbis_starport';
+    case 'Ocellus': return 'ocellus_starport';
+    case 'StationDodec': return 'dodec_starport';
+    case 'AsteroidBase': return 'asteroid_starport';
+    case 'CraterPort':
+    case 'PlanetaryPort':
+    case 'SurfaceStation': return 'large_planetary_port';
+    case 'CraterOutpost':
+    case 'PlanetaryOutpost':
+    case 'SurfaceOutpost': return 'civilian_surface_outpost';
+    default: return undefined;
+  }
+}
+
 type TabKey = 'installations' | 'bodies' | 'expansion';
 
 function EditablePopulation({ systemName, journalPopulation }: { systemName: string; journalPopulation: number }) {
@@ -240,6 +264,7 @@ export function SystemDetailPage() {
   const initialTab = (searchParams.get('tab') as TabKey) || 'installations';
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const [showDataSources, setShowDataSources] = useState(false);
+  const [showRecommender, setShowRecommender] = useState(false);
   const commanderPosition = useAppStore((s) => s.commanderPosition);
   // Body names for the selector dropdown — merge journal-known bodies with Spansh
   // Journal bodies come from station.body fields; Spansh adds any the journal doesn't know
@@ -816,6 +841,18 @@ export function SystemDetailPage() {
           )}
         </div>
 
+        {/* Build planner toolbar */}
+        <div className="flex flex-wrap gap-2 items-center mb-3">
+          <button
+            onClick={() => setShowRecommender(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary/30 hover:bg-secondary/50 text-secondary-foreground text-xs font-medium transition-colors"
+            title="Find an installation that produces a specific commodity for this system"
+          >
+            <span>{'\u{1F50E}'}</span>
+            <span>Find installation for commodity…</span>
+          </button>
+        </div>
+
         {/* Tier progress bar */}
         <div>
           <div className="flex justify-between text-xs mb-1">
@@ -932,6 +969,25 @@ export function SystemDetailPage() {
           systemName={systemName}
           id64={id64}
           systemAddress={systemAddress}
+        />
+      )}
+
+      {showRecommender && (
+        <CommodityRecommendationModal
+          systemName={systemName}
+          id64={id64}
+          stations={systemStations.map((s) => ({
+            stationName: s.stationName,
+            stationType: s.stationType,
+            installationTypeId: journalTypeToInstallationId(s.stationType),
+            body: s.body || journalBodyMap[s.stationName.toLowerCase()] || stationBodyMap[s.stationName.toLowerCase()] || stationBodyOverrides[`${systemName.toLowerCase()}|${s.stationName.toLowerCase()}`] || null,
+            economies: s.economies?.map((e) => ({
+              name: e.name,
+              nameLocalised: e.nameLocalised,
+              proportion: e.proportion,
+            })),
+          }))}
+          onClose={() => setShowRecommender(false)}
         />
       )}
     </div>

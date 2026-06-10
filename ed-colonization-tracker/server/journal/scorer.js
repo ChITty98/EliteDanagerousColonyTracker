@@ -9,10 +9,10 @@
 
 // --- Body Filter Pipeline ---
 
-const ICY_SUBTYPES = new Set(['Icy body', 'Rocky ice world', 'Rocky Ice world']);
+export const ICY_SUBTYPES = new Set(['Icy body', 'Rocky ice world', 'Rocky Ice world']);
 
 /** Check if a body has a real atmosphere (thin counts, but "No atmosphere"/"None"/empty don't) */
-function isColonisableAtmosphere(atmosphereType) {
+export function isColonisableAtmosphere(atmosphereType) {
   if (!atmosphereType) return false;
   const lower = atmosphereType.toLowerCase().trim();
   if (!lower) return false;
@@ -197,7 +197,7 @@ function formatDistanceLs(ls) {
 
 // --- Distance decay multiplier (primary star bodies only) ---
 
-function distanceDecay(distanceLs) {
+export function distanceDecay(distanceLs) {
   if (distanceLs < 4000) return 1.0;
   if (distanceLs < 10000) return 0.7;
   if (distanceLs < 20000) return 0.4;
@@ -208,7 +208,7 @@ function distanceDecay(distanceLs) {
 // Oxygen is scored separately (oxygenPoints). The common CO2/SO2/Ammonia/Nitrogen
 // and the more-abundant "-rich" variants (Neon-rich etc.) are intentionally 0.
 // Order matters: check "-rich" / "vapour" before the bare type.
-function exoticAtmoPoints(atmosphereType) {
+export function exoticAtmoPoints(atmosphereType) {
   const a = (atmosphereType || '').toLowerCase();
   if (a.includes('silicate vapour')) return 25;
   if (a.includes('neon')) return a.includes('neon-rich') ? 0 : 25;
@@ -222,6 +222,24 @@ function exoticAtmoPoints(atmosphereType) {
 }
 
 // --- Body String Builder ---
+
+// Glyph string for one qualifying body: atmosphere emoji + 💍 ring + ◉(dist) + economy emoji.
+// Single source for buildBodyString and buildBodySegments.
+function bodyGlyphString(qb) {
+  let s = '';
+  const atmoType = (qb.body.atmosphereType || '').toLowerCase();
+  if (qb.hasAtmosphere && /oxygen/.test(atmoType)) s += '\u{1F7E2}'; // 🟢 oxygen
+  else if (qb.hasAtmosphere && /nitrogen/.test(atmoType)) s += '\u{1F535}'; // 🔵 nitrogen
+  else if (qb.hasAtmosphere && /ammonia/.test(atmoType)) s += '\u{1F7E1}'; // 🟡 ammonia
+  else if (qb.hasAtmosphere && /helium/.test(atmoType)) s += '\u{1FA76}'; // 🩶 helium
+  else if (qb.hasAtmosphere) s += '\u{1F32B}\u{FE0F}'; // 🌫️
+  if (qb.hasRings) s += '\u{1F48D}'; // 💍
+  s += '◉'; // ◉
+  s += `(${formatDistanceLs(qb.distanceLs)})`;
+  const econ = qb.economy;
+  if (econ !== 'Refinery' && ECONOMY_EMOJI[econ]) s += ECONOMY_EMOJI[econ];
+  return s;
+}
 
 export function buildBodyString(qualBodies, stars) {
   // Group bodies by parent star
@@ -246,20 +264,7 @@ export function buildBodyString(qualBodies, stars) {
     const label = star.name.split(' ').pop() ?? star.name;
     const bodyStrs = bodies
       .sort((a, b) => a.distanceLs - b.distanceLs)
-      .map((qb) => {
-        let s = '';
-        if (qb.hasAtmosphere && /oxygen/i.test(qb.body.atmosphereType || '')) s += '\u{1F7E2}'; // 🟢 oxygen
-        else if (qb.hasAtmosphere && /nitrogen/i.test(qb.body.atmosphereType || '')) s += '\u{1F535}'; // 🔵 nitrogen
-        else if (qb.hasAtmosphere && /ammonia/i.test(qb.body.atmosphereType || '')) s += '\u{1F7E1}'; // 🟡 ammonia
-        else if (qb.hasAtmosphere && /helium/i.test(qb.body.atmosphereType || '')) s += '\u{1FA76}'; // 🩶 helium
-        else if (qb.hasAtmosphere) s += '\u{1F32B}\u{FE0F}'; // 🌫️
-        if (qb.hasRings) s += '\u{1F48D}'; // 💍
-        s += '\u25C9'; // ◉
-        s += `(${formatDistanceLs(qb.distanceLs)})`;
-        const econ = qb.economy;
-        if (econ !== 'Refinery' && ECONOMY_EMOJI[econ]) s += ECONOMY_EMOJI[econ];
-        return s;
-      });
+      .map((qb) => bodyGlyphString(qb));
     parts.push(`${star.emoji}${label}: ${bodyStrs.join(' ')}`);
   }
 
@@ -268,20 +273,7 @@ export function buildBodyString(qualBodies, stars) {
   if (orphans && orphans.length > 0) {
     const bodyStrs = orphans
       .sort((a, b) => a.distanceLs - b.distanceLs)
-      .map((qb) => {
-        let s = '';
-        if (qb.hasAtmosphere && /oxygen/i.test(qb.body.atmosphereType || '')) s += '\u{1F7E2}';
-        else if (qb.hasAtmosphere && /nitrogen/i.test(qb.body.atmosphereType || '')) s += '\u{1F535}';
-        else if (qb.hasAtmosphere && /ammonia/i.test(qb.body.atmosphereType || '')) s += '\u{1F7E1}';
-        else if (qb.hasAtmosphere && /helium/i.test(qb.body.atmosphereType || '')) s += '\u{1FA76}';
-        else if (qb.hasAtmosphere) s += '\u{1F32B}\u{FE0F}';
-        if (qb.hasRings) s += '\u{1F48D}';
-        s += '\u25C9'; // ◉
-        s += `(${formatDistanceLs(qb.distanceLs)})`;
-        const econ = qb.economy;
-        if (econ !== 'Refinery' && ECONOMY_EMOJI[econ]) s += ECONOMY_EMOJI[econ];
-        return s;
-      });
+      .map((qb) => bodyGlyphString(qb));
     parts.push(bodyStrs.join(' '));
   }
 
@@ -301,22 +293,13 @@ export function buildBodySegments(qualBodies, stars) {
   }
 
   function bodyToSegment(qb) {
-    let s = '';
+    const s = bodyGlyphString(qb);
     const atmoType = (qb.body.atmosphereType || '').toLowerCase();
     const isOxygen = qb.hasAtmosphere && /oxygen/.test(atmoType);
     const isNitrogen = qb.hasAtmosphere && /nitrogen/.test(atmoType);
     const isAmmonia = qb.hasAtmosphere && /ammonia/.test(atmoType);
     const isHelium = qb.hasAtmosphere && /helium/.test(atmoType);
-    if (isOxygen) s += '\u{1F7E2}';
-    else if (isNitrogen) s += '\u{1F535}';
-    else if (isAmmonia) s += '\u{1F7E1}';
-    else if (isHelium) s += '\u{1FA76}';
-    else if (qb.hasAtmosphere) s += '\u{1F32B}\u{FE0F}';
-    if (qb.hasRings) s += '\u{1F48D}';
-    s += '\u25C9';
-    s += `(${formatDistanceLs(qb.distanceLs)})`;
     const econ = qb.economy;
-    if (econ !== 'Refinery' && ECONOMY_EMOJI[econ]) s += ECONOMY_EMOJI[econ];
 
     const shortName = qb.body.name.split(' ').pop() ?? qb.body.name;
     const features = [];
@@ -434,6 +417,7 @@ export function scoreSystem(bodies) {
   // --- Oxygen Atmosphere Bonus (non-icy only, distance-decayed, cap 45) ---
   let oxygenPoints = 0;
   let oxygenCount = 0;
+  let hasNonIcyOxygen = false;
   for (const qb of qualBodies) {
     if (
       qb.hasAtmosphere &&
@@ -441,6 +425,7 @@ export function scoreSystem(bodies) {
       !ICY_SUBTYPES.has(qb.body.subType)
     ) {
       oxygenCount++;
+      hasNonIcyOxygen = true;
       const decay = qb.isPrimaryStar ? distanceDecay(qb.distanceLs) : 1.0;
       oxygenPoints += Math.round(15 * decay);
     }
@@ -520,7 +505,39 @@ export function scoreSystem(bodies) {
     bodyCount,
     total,
     hasRingedLandable: ringCount > 0,
-    hasOxygenAtmosphere: qualBodies.some((qb) => qb.hasAtmosphere && /oxygen/i.test(qb.body.atmosphereType || '')),
+    // Consistent with oxygenPoints: icy oxygen bodies earn nothing, so they
+    // don't set the flag either.
+    hasOxygenAtmosphere: hasNonIcyOxygen,
     hazardousStars,
+  };
+}
+
+/**
+ * Zero-valued ScoreBreakdown for placeholder entries (e.g. favorites scouted
+ * without body data). A factory, not a shared const — the arrays inside must
+ * not be shared across entries.
+ */
+export function emptyScore() {
+  return {
+    starPoints: 0,
+    starDetails: [],
+    atmospherePoints: 0,
+    atmosphereCount: 0,
+    oxygenPoints: 0,
+    oxygenCount: 0,
+    exoticPoints: 0,
+    exoticCount: 0,
+    ringPoints: 0,
+    ringCount: 0,
+    proximityPoints: 0,
+    proximityCount: 0,
+    economyPoints: 0,
+    uniqueEconomies: [],
+    bodyCountPoints: 0,
+    bodyCount: 0,
+    total: 0,
+    hasRingedLandable: false,
+    hasOxygenAtmosphere: false,
+    hazardousStars: [],
   };
 }

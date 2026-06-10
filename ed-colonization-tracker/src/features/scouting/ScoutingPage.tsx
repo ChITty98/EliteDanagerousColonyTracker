@@ -14,6 +14,7 @@ import {
   filterQualifyingBodies,
   buildBodyString,
   buildBodySegments,
+  emptyScore,
   type ScoreBreakdown,
   type BodySegment,
 } from '@/lib/scoutingScorer';
@@ -1455,7 +1456,7 @@ export function ScoutingPage() {
                           upsertScoutedSystem({
                             id64: sys.search.id64,
                             name: sys.search.name,
-                            score: { starPoints: 0, starDetails: [], atmospherePoints: 0, atmosphereCount: 0, oxygenPoints: 0, oxygenCount: 0, exoticPoints: 0, exoticCount: 0, ringPoints: 0, ringCount: 0, proximityPoints: 0, proximityCount: 0, economyPoints: 0, uniqueEconomies: [], bodyCountPoints: 0, bodyCount: 0, total: 0, hasRingedLandable: false, hasOxygenAtmosphere: false, hazardousStars: [] },
+                            score: emptyScore(),
                             bodyString: '',
                             isFavorite: true,
                             fromJournal: false,
@@ -1915,7 +1916,7 @@ export function ScoutingPage() {
                                 upsertScoutedSystem({
                                   id64: sys.search.id64,
                                   name: sys.search.name,
-                                  score: { starPoints: 0, starDetails: [], atmospherePoints: 0, atmosphereCount: 0, oxygenPoints: 0, oxygenCount: 0, exoticPoints: 0, exoticCount: 0, ringPoints: 0, ringCount: 0, proximityPoints: 0, proximityCount: 0, economyPoints: 0, uniqueEconomies: [], bodyCountPoints: 0, bodyCount: 0, total: 0, hasRingedLandable: false, hasOxygenAtmosphere: false, hazardousStars: [] },
+                                  score: emptyScore(),
                                   bodyString: '',
                                   isFavorite: true,
                                   fromJournal: false,

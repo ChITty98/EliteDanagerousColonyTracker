@@ -28,7 +28,10 @@ const OUT_CJS = path.join(__dirname, 'server-bundled.cjs');
 // Auto-incrementing build number from timestamp (MMDD.HHmm)
 const now = new Date();
 const BUILD_ID = String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0') + '.' + String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0');
-const VERSION = `v1.2.0-b${BUILD_ID}`;
+// Single version source: package.json. The UI footer gets it via Vite define
+// (__APP_VERSION__ in vite.config.ts); the server banner via esbuild define below.
+const PKG_VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version;
+const VERSION = `v${PKG_VERSION}-b${BUILD_ID}`;
 
 // Step 1: Build the Vite project
 console.log('Building Vite project...');

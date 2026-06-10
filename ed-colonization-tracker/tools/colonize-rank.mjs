@@ -19,6 +19,8 @@
  */
 
 import fs from 'node:fs';
+import { ICY_SUBTYPES } from '../server/journal/scorer.js';
+import { streamLines } from './lib/stream.mjs';
 
 const args = process.argv.slice(2);
 const getArg = (n, fb = null) => { const i = args.indexOf(`--${n}`); return i >= 0 && i + 1 < args.length ? args[i + 1] : fb; };
@@ -59,27 +61,17 @@ function voidCrossFlag(c) {
   return '';
 }
 
-// Stream a jsonl file by raw chunks (bounded memory), invoking onLine per line.
-async function streamLines(path, onLine) {
-  let tail = '';
-  const stream = fs.createReadStream(path, { encoding: 'utf8' });
-  for await (const chunk of stream) {
-    const text = tail + chunk;
-    let start = 0, nl;
-    while ((nl = text.indexOf('\n', start)) !== -1) { onLine(text.slice(start, nl)); start = nl + 1; }
-    tail = text.slice(start);
-  }
-  if (tail) onLine(tail);
-}
-
 (async () => {
   // Pass 1: resolve anchor coordinates by name
   const anchors = new Map(anchorNames.map((n) => [n.toLowerCase(), null]));
+  const lowerAnchorNames = anchorNames.map((n) => n.toLowerCase());
   let remaining = anchors.size;
   await streamLines(region, (line) => {
     if (remaining === 0 || !line) return;
-    // cheap name pre-check before JSON.parse
-    if (!anchorNames.some((n) => line.includes(`"name":"${n}"`))) return;
+    // cheap name pre-check before JSON.parse — case-insensitive: Spansh names
+    // are mixed-case ("SF-Y c1-3") while the game renders them uppercased
+    const ln = line.toLowerCase();
+    if (!lowerAnchorNames.some((n) => ln.includes(`"name":"${n}"`))) return;
     let sys; try { sys = JSON.parse(line); } catch { return; }
     const key = (sys.name || '').toLowerCase();
     if (anchors.has(key) && anchors.get(key) === null && sys.coords) {
@@ -125,7 +117,7 @@ async function streamLines(path, onLine) {
     let atmoLand = 0, goodAtmo = 0, premium = 0;
     for (const b of (sys.bodies || [])) {
       if (!b.landable || !b.atmo || /no atmosphere/i.test(b.atmo)) continue;
-      if (/icy|rocky ice/i.test(b.subType || '')) continue;
+      if (ICY_SUBTYPES.has(b.subType || '')) continue;
       if (maxBodyLs > 0 && (b.distLs || 0) > maxBodyLs) continue;
       atmoLand++;
       if (!/carbon dioxide/i.test(b.atmo)) goodAtmo++;
@@ -139,7 +131,7 @@ async function streamLines(path, onLine) {
     const econs = sc.uniqueEconomies || [];
     if (economy && !econs.some((e) => e.toLowerCase() === economy.toLowerCase())) return;
     candidates.push({
-      name: sys.name, total: sc.total || 0, supply, near, star: cls,
+      name: sys.name, total: sc.total || 0, supply, near, star: cls, cross: voidCrossFlag(c),
       // app score-object counts (the same numbers the in-game model uses)
       atmoCount: sc.atmosphereCount || 0, oxyCount: sc.oxygenCount || 0,
       ringCount: sc.ringCount || 0, prox, econs, bodyCount: sc.bodyCount || 0,
@@ -161,11 +153,11 @@ async function streamLines(path, onLine) {
   console.log(`# Top ${Math.min(topN, candidates.length)} colonization targets (established scoreSystem rating)`);
   console.log(`# rank by score.total; within ${radius}ly supply of [${anchorCoords.map((a) => a.name).join(', ')}]${economy ? `; economy=${economy}` : ''}`);
   console.log(`# sorted by: ${sortBy} (app score.total). atmo/oxy/rings/prox = the app score-object counts.`);
-  console.log('score\tstar\tatmo\toxy\trings\tprox\tsupply\tnear\tbodies\tsystem');
+  console.log('score\tstar\tatmo\toxy\trings\tprox\tsupply\tnear\tvoid\tbodies\tsystem');
   for (const x of candidates.slice(0, topN)) {
     console.log([
       x.total, x.star, x.atmoCount, x.oxyCount, x.ringCount, x.prox, x.supply.toFixed(0) + 'ly',
-      x.near.replace(/ sector.*/i, ''), x.bodyCount, x.name,
+      x.near.replace(/ sector.*/i, ''), x.cross || '-', x.bodyCount, x.name,
     ].join('\t'));
   }
 })().catch((e) => { console.error('ERROR:', e.message); process.exit(1); });

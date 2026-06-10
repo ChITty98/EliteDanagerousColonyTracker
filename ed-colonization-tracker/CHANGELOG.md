@@ -2,6 +2,24 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.6.1] — 2026-06-09
+
+### Fixed
+- **TypeScript checking was silently broken project-wide.** `startSession`/`stopSession` referenced `useAppStore.getState()` inside the store's own initializer (TS7022), which collapsed every store selector to `any` — `tsc -b` had been failing with 655 errors while `build:exe` (which skips tsc) kept shipping. Root cause fixed (the creator now uses its own `get()` parameter), plus ~47 latent errors the `any` blanket hid. Two were real runtime bugs: the `Market.json` reader checked `item.Stock` (always undefined — zero-stock items were treated as purchasable) and the Chain Planner read `kb.name` (not a `KnownSystem` field) instead of `kb.systemName`.
+- `hasOxygenAtmosphere` flag is now consistent with the oxygen bonus: icy oxygen bodies no longer set it.
+- Dead code removed: `scanForTimeline` (referenced identifiers that don't exist — would have crashed if ever called), the unmounted Settings `NetworkAccessSection`, and assorted unused locals. The parked browser journal-polling pipeline (`initWatcher`/`pollJournal`) is kept intentionally as the documented server-watcher rollback path.
+
+### Changed
+- **Scorer single-sourced.** `server/journal/scorer.js` is now the canonical implementation; `src/lib/scoutingScorer.ts` is a typed re-export shim (`scorer.d.ts` carries the types) and the region tools import the shared atmosphere table / decay tiers / icy set instead of carrying private copies. Scoring changes are now made once, not three times.
+- `tools/rescore-regions.mjs` matches the canonical body filter exactly (bodies with missing mass data are excluded, as the app does — previously they were counted), subtracts prior exotic points for true idempotency, and refuses to replace a region file that shrinks >30% on rewrite.
+- `tools/colonize-rank.mjs`: anchor resolution is case-insensitive (Spansh names are mixed-case — `c1-3` vs the in-game `C1-3`), the Void Cross flag is wired into the output (was computed but never displayed), and the icy filter uses the canonical set.
+- **Version single-sourced from package.json.** The sidebar footer (`__APP_VERSION__` via Vite define) and the server banner (esbuild define in `build-exe.mjs`) both derive from it — `build-exe.mjs` was injecting a hardcoded `v1.2.0`.
+
+### Added
+- **Test suite (vitest, `npm test`)**: scorer fixtures (caps, icy exclusions, decay tiers, exotic-atmosphere ladder, body filters, exact body-string output, shim identity), a `MERGE_STRATEGIES`↔`partialize` symmetry check (guards the recurring cross-tab clobber bug class), and a server↔client commodity-dictionary parity check.
+
+---
+
 ## [1.6.0] — 2026-06-08
 
 ### Changed

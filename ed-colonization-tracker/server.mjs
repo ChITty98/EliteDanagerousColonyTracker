@@ -62,7 +62,12 @@ const APP_DIR = IS_SEA ? path.dirname(process.execPath) : SOURCE_DIR;
 const __dirname = SOURCE_DIR; // preserved for any downstream references
 const PORT = parseInt(process.env.PORT || '5173', 10);
 const DIST = path.join(SOURCE_DIR, 'dist');
-const APP_VERSION = /** @type {any} */ (globalThis).__APP_VERSION__ || 'v1.2.0-dev';
+// Bundled exe: __APP_VERSION__ injected by build-exe.mjs (from package.json).
+// Dev (node server.mjs): read package.json next to this file.
+const APP_VERSION = /** @type {any} */ (globalThis).__APP_VERSION__ || (() => {
+  try { return 'v' + JSON.parse(fs.readFileSync(path.join(SOURCE_DIR, 'package.json'), 'utf8')).version + '-dev'; }
+  catch { return 'v?-dev'; }
+})();
 
 // --- Token security ---
 const TOKEN_FILE = path.join(APP_DIR, 'colony-token.txt');

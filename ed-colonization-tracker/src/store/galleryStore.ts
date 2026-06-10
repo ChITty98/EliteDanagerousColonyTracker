@@ -296,7 +296,7 @@ function openOldDB(): Promise<IDBDatabase> {
 function readOldGalleryFromIDB(): Promise<string | null> {
   return openOldDB().then(
     (db) =>
-      new Promise((resolve, reject) => {
+      new Promise<string | null>((resolve, reject) => {
         const tx = db.transaction('gallery', 'readonly');
         const store = tx.objectStore('gallery');
         const req = store.get('ed-colonization-gallery');

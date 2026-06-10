@@ -91,6 +91,9 @@ export interface SpanshDumpBody {
   parents?: Array<Record<string, number>>;
   reserveLevel?: string;
   surfaceTemperature?: number;
+  surfacePressure?: number; // Pa
+  radius?: number; // km
+  semiMajorAxis?: number; // AU
   solidComposition?: Record<string, number>;
   signals?: { genuses: unknown[]; signals: Record<string, number> };
   materials?: Record<string, number>;

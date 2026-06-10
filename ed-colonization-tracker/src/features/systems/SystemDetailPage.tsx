@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/store';
-import { formatNumber, cleanProjectName, stripConstructionPrefix, inferStationTypeFromSignal } from '@/lib/utils';
+import { cleanProjectName, stripConstructionPrefix, inferStationTypeFromSignal } from '@/lib/utils';
 import { StationTypeIcon } from '@/components/StationTypeIcon';
 import { shouldShowInOverview, resolveStationType } from '@/data/stationTypes';
 import { INSTALLATION_TYPE_OPTIONS } from '@/data/installationTypes';
@@ -316,7 +316,6 @@ export function SystemDetailPage() {
     let cancelled = false;
 
     async function fetchBodyData() {
-      let journalCount = 0;
 
       // 2a: Try journal exploration data first
       try {
@@ -334,7 +333,6 @@ export function SystemDetailPage() {
                 .sort((a, b) => a.distanceToArrival - b.distanceToArrival)
                 .map((b) => b.name);
               setJournalScannedBodyNames(names);
-              journalCount = converted.length;
 
               // Also build station→body mapping from journal data
               const mapping: Record<string, string> = {};
@@ -1170,7 +1168,6 @@ function InstallationsTab({
               <tbody>
                 {sortedStations.map((station, idx) => {
                   const isExpanded = expandedStation === station.marketId && station.marketId !== 0;
-                  const isSynthetic = station._isManualInstallation || station._isFromFSS;
                   const canExpand = station.marketId !== 0 && !station._isFromFSS;
                   const fcOwnership = isFleetCarrier(station.stationType, station.marketId)
                     ? (settings.myFleetCarrier && station.stationName === settings.myFleetCarrier ? 'mine'
@@ -1228,7 +1225,6 @@ function InstallationsTab({
                             const isFC = isFleetCarrier(station.stationType, station.marketId);
                             // Fleet carriers move around — don't show body assignment
                             if (isFC) return <span className="text-muted-foreground/40 text-xs">—</span>;
-                            const overrideKey = `${systemName.toLowerCase()}|${station.stationName.toLowerCase()}`;
                             const resolvedBody = resolveBody(station);
                             if (editingBody === station.stationName && bodyNames.length > 0) {
                               return (

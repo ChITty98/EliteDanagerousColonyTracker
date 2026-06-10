@@ -96,11 +96,16 @@ function findLocalNearbySystems(
       results.push({
         id64: sys.systemAddress,
         name: sys.systemName,
+        distance: dist,
         x: sys.coordinates.x,
         y: sys.coordinates.y,
         z: sys.coordinates.z,
+        bodies: [],
         body_count: sys.bodyCount ?? 0,
+        stations: [],
         population: 0,
+        primary_economy: '',
+        secondary_economy: '',
       });
     }
   }
@@ -114,11 +119,16 @@ function findLocalNearbySystems(
       results.push({
         id64: sys.systemAddress,
         name: sys.systemName,
+        distance: dist,
         x: sys.coordinates.x,
         y: sys.coordinates.y,
         z: sys.coordinates.z,
+        bodies: [],
         body_count: sys.bodyCount ?? 0,
+        stations: [],
         population: 0,
+        primary_economy: '',
+        secondary_economy: '',
       });
     }
   }
@@ -133,11 +143,16 @@ function findLocalNearbySystems(
       results.push({
         id64,
         name: sys.name,
+        distance: dist,
         x: sys.coordinates.x,
         y: sys.coordinates.y,
         z: sys.coordinates.z,
+        bodies: [],
         body_count: 0,
+        stations: [],
         population: 0,
+        primary_economy: '',
+        secondary_economy: '',
       });
     }
   }

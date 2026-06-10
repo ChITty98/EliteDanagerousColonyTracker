@@ -20,7 +20,6 @@ import {
   type DomainData,
   type Showpiece,
   computeDomainRecords,
-  type DomainRecord,
 } from './domainHelpers';
 
 // ─── Sub-components ──────────────────────────────────────────────────
@@ -149,10 +148,6 @@ function groupBySystem<T extends { systemName: string }>(items: T[]): [string, T
     map.get(item.systemName)!.push(item);
   }
   return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-}
-
-function sortByOrder(entries: [string, unknown][], order: Record<string, number>): [string, unknown][] {
-  return entries.sort((a, b) => (order[a[0]] ?? 99) - (order[b[0]] ?? 99));
 }
 
 // ===== Main Page =====

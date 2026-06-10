@@ -165,6 +165,9 @@ const MERGE_STRATEGIES: Record<string, MergeStrategy> = {
   // User-authored override maps — sparse merge so cross-tab races can't wipe them
   populationOverrides: { kind: 'map' },
   stationDistOverrides: { kind: 'map' },
+  // Scalar timestamp — explicit entry so the partialize↔strategies symmetry
+  // check (tests/store-symmetry.test.mjs) stays exhaustive.
+  lastSessionSummaryShown: { kind: 'replace' },
 };
 
 // Baseline = last-known server state. Populated on hydrate + after each PATCH.
@@ -1323,7 +1326,7 @@ export const useAppStore = create<AppState>()(
           activeSessionId: state.activeSessionId === id ? null : state.activeSessionId,
         })),
       startSession: (projectId) => {
-        const state = useAppStore.getState();
+        const state = get();
         if (state.activeSessionId) return state.activeSessionId; // already active
         const project = state.projects.find((p) => p.id === projectId);
         if (!project) return '';
@@ -1347,7 +1350,7 @@ export const useAppStore = create<AppState>()(
         return id;
       },
       stopSession: () => {
-        const state = useAppStore.getState();
+        const state = get();
         if (!state.activeSessionId) return;
         const session = state.sessions.find((s) => s.id === state.activeSessionId);
         if (!session) { set({ activeSessionId: null }); return; }
@@ -1622,13 +1625,13 @@ export const useAppStore = create<AppState>()(
           }));
 
           // Expand settings with new fields
-          const settings = (state.settings as AppSettings) || {};
+          const settings = (state.settings ?? {}) as Record<string, unknown>;
           state.settings = {
             ...DEFAULT_SETTINGS,
             ...settings,
-            myFleetCarrier: (settings as Record<string, unknown>).myFleetCarrier as string ?? '',
-            myFleetCarrierMarketId: (settings as Record<string, unknown>).myFleetCarrierMarketId as number ?? null,
-            squadronCarrierCallsigns: (settings as Record<string, unknown>).squadronCarrierCallsigns as string[] ?? [],
+            myFleetCarrier: settings.myFleetCarrier as string ?? '',
+            myFleetCarrierMarketId: settings.myFleetCarrierMarketId as number ?? null,
+            squadronCarrierCallsigns: settings.squadronCarrierCallsigns as string[] ?? [],
           };
         }
 
@@ -1764,7 +1767,7 @@ export const useAppStore = create<AppState>()(
           }
         }
 
-        return state as AppState;
+        return state as unknown as AppState;
       },
     }
   )

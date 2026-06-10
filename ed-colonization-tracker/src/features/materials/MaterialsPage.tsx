@@ -159,7 +159,7 @@ function TradeTab() {
 
   const candidates = useMemo(() => {
     if (!target) return [];
-    const stockOf = (m: MaterialDefinition) => (inv as Record<string, Record<string, number>>)[m.category][m.id] || 0;
+    const stockOf = (m: MaterialDefinition) => inv[m.category][m.id] || 0;
     const out: {
       mat: MaterialDefinition;
       count: number;
@@ -226,7 +226,7 @@ function TradeTab() {
         </select>
         {target && (
           <div className="mt-2 text-xs text-muted-foreground">
-            Currently {(inv as Record<string, Record<string, number>>)[target.category][target.id] || 0} / {target.cap} in stock.
+            Currently {inv[target.category][target.id] || 0} / {target.cap} in stock.
           </div>
         )}
       </div>
@@ -335,7 +335,7 @@ function EngineeringTab() {
   const stockOf = (id: string): number => {
     const m = MATERIALS.find((x) => x.id === id);
     if (!m) return 0;
-    return (inv as Record<string, Record<string, number>>)[m.category][id] || 0;
+    return inv[m.category][id] || 0;
   };
 
   return (

@@ -20,7 +20,6 @@ import {
   readMarketJson,
   readMarketSnapshot,
   readNavRouteJson,
-  isFleetCarrier,
   isFleetCarrierMarketId,
   isEphemeralStation,
   isColonisationShip,
@@ -33,6 +32,12 @@ import { handleFSDJump, handleDocked, handleScanEvent, handleFSSAllBodiesFound, 
 
 const POLL_INTERVAL_MS = 2000;
 const DEBOUNCE_MS = 500;
+
+// Rollback reference for the Phase B server-side watcher cutover (see
+// startJournalWatcher): keeps the parked browser polling pipeline compiled
+// without running it. Remove together with initWatcher/pollJournal when the
+// rollback window is over.
+void [initWatcher, pollJournal, POLL_INTERVAL_MS];
 
 interface WatchState {
   /** Currently watched file name */

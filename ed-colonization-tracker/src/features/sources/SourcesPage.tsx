@@ -51,7 +51,6 @@ export function SourcesPage() {
   const projects = useAppStore((s) => s.projects);
   const customSources = useAppStore((s) => s.customSources);
   const addCustomSource = useAppStore((s) => s.addCustomSource);
-  const deleteCustomSource = useAppStore((s) => s.deleteCustomSource);
   const visitedMarkets = useAppStore((s) => s.visitedMarkets);
   const knownStations = useAppStore((s) => s.knownStations);
   const settings = useAppStore((s) => s.settings);
@@ -311,7 +310,7 @@ export function SourcesPage() {
   // Get persisted market snapshots that sell a commodity (sell-side only; buy-side stored but not used here)
   const getMarketSnapshotsFor = useCallback((commodityId: string) => {
     return Object.values(marketSnapshots).filter((ms) =>
-      ms.commodities.some((c) => c.commodityId === commodityId && c.stock > 0 && c.buyPrice > 0)
+      ms.commodities.some((c) => c.commodityId === commodityId && (c.stock ?? 0) > 0 && c.buyPrice > 0)
     );
   }, [marketSnapshots]);
 
@@ -409,7 +408,7 @@ export function SourcesPage() {
     return visitedMarkets.filter((m) => {
       const snapshot = marketSnapshots[m.marketId];
       if (snapshot) {
-        return snapshot.commodities.some((c) => c.commodityId === commodityId && c.stock > 0 && c.buyPrice > 0);
+        return snapshot.commodities.some((c) => c.commodityId === commodityId && (c.stock ?? 0) > 0 && c.buyPrice > 0);
       }
       return m.commodities.includes(commodityId);
     });

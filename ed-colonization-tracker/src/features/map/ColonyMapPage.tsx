@@ -30,7 +30,6 @@ export function ColonyMapPage() {
   const commanderPosition = useAppStore((s) => s.commanderPosition);
   const settings = useAppStore((s) => s.settings);
   const scoutedSystems = useAppStore((s) => s.scoutedSystems);
-  const systemAddressMap = useAppStore((s) => s.systemAddressMap);
   const manualColonized = useAppStore((s) => s.manualColonizedSystems);
 
   // Toggles

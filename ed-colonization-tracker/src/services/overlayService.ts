@@ -159,7 +159,7 @@ export async function handleFSDJump(event: {
   lastSystemName = event.StarSystem;
 
   const store = useAppStore.getState();
-  const { scoutedSystems, projects, activeSessionId, sessions, marketSnapshots, knownStations } = store;
+  const { scoutedSystems, projects, marketSnapshots, knownStations } = store;
 
   // 1. Scouting score overlay — always show something on jump
   const scouted = scoutedSystems[event.SystemAddress];
@@ -1004,7 +1004,7 @@ interface MarketMatch {
  * Only includes items where needToBuy > 0 AND the market has stock.
  */
 function findMarketMatches(
-  commodities: { commodityId: string; name: string; stock: number; buyPrice: number }[],
+  commodities: { commodityId: string; name: string; stock: number | null; buyPrice: number }[],
   project: { commodities: { commodityId: string; name: string; requiredQuantity: number; providedQuantity: number }[] }
 ): MarketMatch[] {
   const store = useAppStore.getState();
@@ -1036,10 +1036,10 @@ function findMarketMatches(
 
     // Check if this market actually stocks it
     const marketItem = commodities.find(
-      (c) => c.commodityId.toLowerCase() === pc.commodityId.toLowerCase() && c.stock > 0 && c.buyPrice > 0
+      (c) => c.commodityId.toLowerCase() === pc.commodityId.toLowerCase() && (c.stock ?? 0) > 0 && c.buyPrice > 0
     );
     if (marketItem) {
-      matches.push({ name: pc.name, available: marketItem.stock, needToBuy });
+      matches.push({ name: pc.name, available: marketItem.stock ?? 0, needToBuy });
     }
   }
   // Sort by smallest need first (closest to fulfilling)
@@ -1544,11 +1544,11 @@ export function computeBuyHereContent(): CompanionContent {
     const needToBuy = Math.max(0, remaining - onFC);
     const item = snapshot.commodities.find((m) => m.commodityId === c.commodityId);
     const stock = item?.stock ?? 0;
-    const included = needToBuy > 0 && item && item.stock > 0 && item.buyPrice > 0;
+    const included = needToBuy > 0 && item && (item.stock ?? 0) > 0 && item.buyPrice > 0;
     logLines.push(`${c.name} (${c.commodityId}) remaining=${remaining} onFC=${onFC} needToBuy=${needToBuy} stock=${stock} ${included ? 'INCLUDED' : 'skipped'}`);
     if (needToBuy <= 0) continue;
-    if (item && item.stock > 0 && item.buyPrice > 0) {
-      matches.push({ name: c.name, available: item.stock, needToBuy, onFC, buyPrice: item.buyPrice });
+    if (item && (item.stock ?? 0) > 0 && item.buyPrice > 0) {
+      matches.push({ name: c.name, available: item.stock ?? 0, needToBuy, onFC, buyPrice: item.buyPrice });
     }
   }
   // Diagnostic — print to server terminal so we can see which entries included

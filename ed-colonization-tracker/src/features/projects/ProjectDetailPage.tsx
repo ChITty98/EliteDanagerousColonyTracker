@@ -71,7 +71,7 @@ export function ProjectDetailPage() {
         if (settings.myFleetCarrierMarketId && snap.marketId === settings.myFleetCarrierMarketId) continue;
         if (settings.myFleetCarrier && snap.stationName.toUpperCase() === settings.myFleetCarrier.toUpperCase()) continue;
         const item = snap.commodities.find((m) => m.commodityId === c.commodityId);
-        if (!item || item.stock < 1 || item.buyPrice <= 0) continue;
+        if (!item || item.stock == null || item.stock < 1 || item.buyPrice <= 0) continue;
         // Score: prefer high stock, nearby, same system, large pads
         let score = Math.min(item.stock, 10000);
         if (snap.systemName?.toLowerCase() === projectSystem) score += 50000;

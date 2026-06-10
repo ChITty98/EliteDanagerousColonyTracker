@@ -517,7 +517,7 @@ export interface DomainRecord {
 export function computeDomainRecords(
   explorationData: Record<number, JournalExplorationSystem>,
   colonySystems: Set<string>,
-  knownSystems: Record<string, KnownSystem>,
+  _knownSystems: Record<string, KnownSystem>,
 ): DomainRecord[] {
   const records: DomainRecord[] = [];
 

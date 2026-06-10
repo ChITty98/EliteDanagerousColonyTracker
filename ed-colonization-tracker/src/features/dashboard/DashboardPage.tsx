@@ -325,14 +325,14 @@ export function DashboardPage() {
     setScoringProgress({ done: 0, total: toScore.length });
 
     // Pre-load journal exploration data once for all systems
-    let journalExploration: Map<number, { bodyCount: number; fssAllBodiesFound: boolean; scannedBodies: { BodyName: string }[] }> | null = null;
+    let journalExploration: Map<number, import('@/services/journalReader').JournalExplorationSystem> | null = null;
     try {
       const handle = getJournalFolderHandle();
       if (handle) {
-        journalExploration = await extractExplorationData(handle) as Map<number, { bodyCount: number; fssAllBodiesFound: boolean; scannedBodies: { BodyName: string }[] }>;
+        journalExploration = await extractExplorationData(handle);
         // Populate journalExplorationCache for Architect's Domain records
         const cache: Record<number, import('@/services/journalReader').JournalExplorationSystem> = {};
-        for (const [addr, sys] of (journalExploration as Map<number, import('@/services/journalReader').JournalExplorationSystem>)) {
+        for (const [addr, sys] of journalExploration) {
           cache[addr] = sys;
         }
         useAppStore.getState().setJournalExplorationCache(cache);
@@ -362,7 +362,7 @@ export function DashboardPage() {
           const addr = systemAddr;
           const journalSystem = addr ? journalExploration.get(addr) : undefined;
           if (journalSystem && journalSystem.scannedBodies.length > 0) {
-            journalBodies = journalBodiesToSpanshFormat(journalSystem.scannedBodies as Parameters<typeof journalBodiesToSpanshFormat>[0], sys.systemName);
+            journalBodies = journalBodiesToSpanshFormat(journalSystem.scannedBodies, sys.systemName);
             journalMeta = {
               bodyCount: journalSystem.bodyCount,
               scannedCount: journalSystem.scannedBodies.length,

@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/store';
-import { classifyStar, classifyAtmo, classifyPlanet, atmoStyle, formatAtmoRaw } from '@/features/domain/domainHelpers';
+import { classifyStar, classifyAtmo, classifyPlanet, atmoStyle } from '@/features/domain/domainHelpers';
 import { startJournalWatcher, isWatcherRunning } from '@/services/journalWatcher';
 import { selectJournalFolder, getJournalFolderHandle, extractExplorationData, fetchLatestPositionFromJournal } from '@/services/journalReader';
 import type { JournalScannedBody } from '@/services/journalReader';
+import type { KnownStation } from '@/store/types';
 import { fetchSystemDump, resolveSystemName } from '@/services/spanshApi';
 import { buildSourceTag } from '@/services/overlayService';
 
@@ -54,9 +55,19 @@ interface SystemViewBody {
   orbitRadius: number; // normalized 0-1 position from star
 }
 
+// What the canvas consumes — structurally satisfied by the richer object the
+// page's systemData useMemo builds (which adds bodyCount, population, etc.).
+interface SystemViewData {
+  name: string;
+  stars: SystemViewBody[];
+  planets: SystemViewBody[];
+  stations?: KnownStation[];
+  myFcCallsign?: string | null;
+}
+
 // ─── System View Canvas (pan/zoom, horizontal layout) ─────────────
 
-function SystemViewCanvas({ systemData, flash, relativeSizes, focusBodyName, currentBodyName }: { systemData: NonNullable<ReturnType<typeof useSystemViewData>>; flash: boolean; relativeSizes: boolean; focusBodyName?: string | null; currentBodyName?: string | null }) {
+function SystemViewCanvas({ systemData, relativeSizes, focusBodyName, currentBodyName }: { systemData: SystemViewData; flash: boolean; relativeSizes: boolean; focusBodyName?: string | null; currentBodyName?: string | null }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [vb, setVb] = useState({ x: 0, y: 0, w: 1200, h: 600 });
   const [isPanning, setIsPanning] = useState(false);
@@ -797,46 +808,12 @@ function getBodyColor(p: SystemViewBody): string {
   return '#737373';                                        // unknown/other
 }
 
-function renderBodyTexture(x: number, y: number, size: number, fill: string, bodyType: string): React.ReactNode[] {
-  const layers: React.ReactNode[] = [];
-  // Base circle
-  layers.push(<circle key="base" cx={x} cy={y} r={size} fill={fill} />);
-
-  if (bodyType.includes('Gas Giant')) {
-    // Horizontal bands
-    layers.push(<ellipse key="band1" cx={x} cy={y - size * 0.3} rx={size} ry={size * 0.15} fill="rgba(0,0,0,0.2)" />);
-    layers.push(<ellipse key="band2" cx={x} cy={y + size * 0.2} rx={size} ry={size * 0.12} fill="rgba(255,255,255,0.1)" />);
-    layers.push(<ellipse key="band3" cx={x} cy={y + size * 0.5} rx={size * 0.9} ry={size * 0.1} fill="rgba(0,0,0,0.15)" />);
-  } else if (bodyType.includes('Icy')) {
-    // Bright specular + blue shadow
-    layers.push(<circle key="shadow" cx={x + size * 0.15} cy={y + size * 0.15} r={size * 0.85} fill="rgba(14,116,144,0.3)" />);
-    layers.push(<circle key="spec" cx={x - size * 0.25} cy={y - size * 0.25} r={size * 0.4} fill="rgba(255,255,255,0.5)" />);
-  } else if (bodyType.includes('High Metal')) {
-    // Metallic sheen — bright edge highlight
-    layers.push(<circle key="dark" cx={x + size * 0.1} cy={y + size * 0.1} r={size * 0.9} fill="rgba(0,0,0,0.2)" />);
-    layers.push(<circle key="sheen" cx={x - size * 0.3} cy={y - size * 0.3} r={size * 0.35} fill="rgba(251,191,36,0.4)" />);
-  } else if (bodyType.includes('Rocky')) {
-    // Rough surface — mottled overlay
-    layers.push(<circle key="dark1" cx={x + size * 0.2} cy={y - size * 0.1} r={size * 0.4} fill="rgba(0,0,0,0.15)" />);
-    layers.push(<circle key="dark2" cx={x - size * 0.15} cy={y + size * 0.25} r={size * 0.3} fill="rgba(0,0,0,0.1)" />);
-    layers.push(<circle key="light" cx={x - size * 0.2} cy={y - size * 0.2} r={size * 0.3} fill="rgba(255,255,255,0.12)" />);
-  } else {
-    // Default: simple specular
-    layers.push(<circle key="spec" cx={x - size * 0.25} cy={y - size * 0.25} r={size * 0.3} fill="rgba(255,255,255,0.15)" />);
-  }
-
-  return layers;
-}
-
 function getRingGradient(p: SystemViewBody): string {
   const ringClass = p.body.rings?.[0]?.ringClass?.toLowerCase() || '';
   if (ringClass.includes('icy')) return 'url(#ring-icy)';
   if (ringClass.includes('metal') || ringClass.includes('metallic')) return 'url(#ring-metallic)';
   return 'url(#ring-rocky)';
 }
-
-// Helper to use system-view data (avoids duplication)
-function useSystemViewData() { return null as unknown; }
 
 // ─── Page ──────────────────────────────────────────────────────────
 
@@ -851,7 +828,6 @@ export function SystemViewPage() {
   const currentBody = useAppStore((s) => s.currentBody);
   const scoutedSystems = useAppStore((s) => s.scoutedSystems);
   const settings = useAppStore((s) => s.settings);
-  const fleetCarriers = useAppStore((s) => s.fleetCarriers);
 
   const [systemName, setSystemName] = useState<string | null>(urlSystem || commanderPosition?.systemName || null);
   const [flash, setFlash] = useState(false);
@@ -891,7 +867,7 @@ export function SystemViewPage() {
       if (!resolved) { setSpanshBodies([]); return; }
       const dump = await fetchSystemDump(resolved.id64);
       if (dump?.bodies) {
-        const bodies: JournalScannedBody[] = dump.bodies.map((b: Record<string, unknown>) => ({
+        const bodies: JournalScannedBody[] = dump.bodies.map((b) => ({
           bodyId: b.bodyId as number || 0,
           bodyName: b.name as string || '',
           type: (b.type === 'Star' ? 'Star' : 'Planet') as 'Star' | 'Planet',

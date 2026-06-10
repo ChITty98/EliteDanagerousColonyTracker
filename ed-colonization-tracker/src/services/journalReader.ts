@@ -1637,7 +1637,7 @@ export async function scanForVisitedMarkets(
     if (market && market.items) {
       const station = stationMap.get(market.marketId);
       for (const item of market.items) {
-        if (item.Stock <= 0 || item.buyPrice <= 0) continue; // Only include items actually for sale
+        if (item.stock <= 0 || item.buyPrice <= 0) continue; // Only include items actually for sale
         // Match to colonisation commodity by display name or journal-style name
         const def = findCommodityByDisplayName(item.nameLocalised || item.name)
           ?? findCommodityByDisplayName(item.name)
@@ -1666,7 +1666,8 @@ export async function scanForVisitedMarkets(
           MarketID: market.marketId,
           Docked: true,
           LandingPads: station?.LandingPads,
-        } as DockedEvent);
+          // Market.json carries no SystemAddress — synthetic entry omits it.
+        } as unknown as DockedEvent);
       }
     }
   } catch {
@@ -1708,92 +1709,6 @@ function inferHasLargePads(stationType: string): boolean {
   if (LARGE_PAD_TYPES.has(stationType)) return true;
   // Outposts and settlements are medium-only
   return false;
-}
-
-/**
- * Scan all journal files and build a colonisation timeline with contribution events.
- * Returns timeline events sorted by timestamp for use in timeline visualisation.
- */
-export async function scanForTimeline(
-  dirHandle?: FileSystemDirectoryHandle
-): Promise<ColonisationTimelineEvent[]> {
-  const handle = dirHandle || savedDirHandle;
-  if (!handle) return [];
-
-  const journalFiles = await getJournalFiles(handle);
-  const allLines: string[] = [];
-
-  for (const entry of journalFiles) {
-    const file = await entry.handle.getFile();
-    const text = await file.text();
-    allLines.push(...text.split('\n'));
-  }
-
-  const parsed = parseJournalLines(allLines);
-  const timeline: ColonisationTimelineEvent[] = [];
-
-  // Build location context for enriching events with system names
-  const marketToSystem = new Map<number, string>();
-  for (const d of parsed.dockedEvents) {
-    marketToSystem.set(d.MarketID, d.StarSystem);
-  }
-  for (const l of parsed.locationEvents) {
-    if (l.MarketID) marketToSystem.set(l.MarketID, l.StarSystem);
-  }
-
-  // System claims
-  for (const e of parsed.systemClaimEvents) {
-    timeline.push({
-      type: 'claim',
-      timestamp: e.timestamp,
-      marketId: e.MarketID || 0,
-      systemName: e.StarSystem,
-    });
-  }
-
-  // Beacon placements
-  for (const e of parsed.beaconPlacedEvents) {
-    timeline.push({
-      type: 'beacon',
-      timestamp: e.timestamp,
-      marketId: e.MarketID || 0,
-      systemName: e.StarSystem,
-      data: e.FacilityType ? { facilityType: e.FacilityType } : undefined,
-    });
-  }
-
-  // Contributions (the backbone of the timeline)
-  for (const e of parsed.contributionEvents) {
-    timeline.push({
-      type: 'contribution',
-      timestamp: e.timestamp,
-      marketId: e.MarketID,
-      systemName: e.StarSystem || marketToSystem.get(e.MarketID),
-      data: {
-        commodities: (e.Commodities || []).map(c => ({ name: c.Name, count: c.Count })),
-        totalContribution: e.Contribution,
-      },
-    });
-  }
-
-  // Depot updates (progress snapshots)
-  for (const e of parsed.depotEvents) {
-    timeline.push({
-      type: e.ConstructionComplete ? 'completed' : e.ConstructionFailed ? 'failed' : 'depot_update',
-      timestamp: e.timestamp,
-      marketId: e.MarketID,
-      systemName: marketToSystem.get(e.MarketID),
-      data: {
-        progress: e.ConstructionProgress,
-        isComplete: e.ConstructionComplete,
-        isFailed: e.ConstructionFailed,
-      },
-    });
-  }
-
-  // Sort by timestamp
-  timeline.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-  return timeline;
 }
 
 /**
@@ -1972,9 +1887,6 @@ export async function estimateCarrierCargo(
   const journalFiles = await getJournalFileHandles(handle);
 
   // We need both Docked and CargoTransfer events in chronological order
-  const timeline: { timestamp: string; type: 'docked'; station: string; stationType: string; marketId: number }[]
-    | { timestamp: string; type: 'transfer'; transfers: CargoTransferItem[] }[] = [];
-
   interface TimelineEvent {
     timestamp: string;
     type: 'docked' | 'transfer';
@@ -2146,7 +2058,7 @@ export interface JournalScannedBody {
  * Convert journal Scan events into SpanshDumpBody-compatible objects
  * so the existing scoring pipeline can process them.
  */
-export function journalBodiesToSpanshFormat(bodies: JournalScannedBody[], systemName: string): import('@/services/spanshApi').SpanshDumpBody[] {
+export function journalBodiesToSpanshFormat(bodies: JournalScannedBody[], _systemName: string): import('@/services/spanshApi').SpanshDumpBody[] {
   return bodies.map((b) => ({
     bodyId: b.bodyId,
     id64: 0, // not available from journal
@@ -2169,6 +2081,11 @@ export function journalBodiesToSpanshFormat(bodies: JournalScannedBody[], system
     rings: b.rings?.map((r) => ({
       name: r.name,
       type: r.ringClass,
+      // Journal ring extraction doesn't keep radii/mass — zeros keep the
+      // SpanshRing shape; the scorer only checks rings.length.
+      innerRadius: 0,
+      outerRadius: 0,
+      mass: 0,
     })),
     parents: b.parents,
   }));
@@ -2347,7 +2264,7 @@ export async function extractStationTravelTimes(
           const dt = (new Date(ev.timestamp).getTime() - new Date(holder.undockedAt).getTime()) / 1000;
           if (dt > 0 && dt < 3 * 3600) {
             const key = `${holder.marketId}:${currentDock.marketId}:${holder.shipId}`;
-            const existing = trips.get(key) ?? { durations: [], lastTripAt: ev.timestamp, pair: key };
+            const existing: TripList = trips.get(key) ?? { durations: [], lastTripAt: ev.timestamp, pair: key };
             existing.durations.push(dt);
             if (ev.timestamp > existing.lastTripAt) existing.lastTripAt = ev.timestamp;
             trips.set(key, existing);

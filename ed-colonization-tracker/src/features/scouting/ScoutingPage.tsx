@@ -16,7 +16,6 @@ import {
   buildBodySegments,
   type ScoreBreakdown,
   type BodySegment,
-  type StarInfo,
 } from '@/lib/scoutingScorer';
 import {
   extractExplorationData,

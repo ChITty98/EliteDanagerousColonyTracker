@@ -37,7 +37,7 @@ export function ChainPlannerPage() {
     name: string; id64: number; x: number; y: number; z: number;
   } | null>(null);
   const [resolveError, setResolveError] = useState('');
-  const [isResolving, setIsResolving] = useState(false);
+  const [isResolving] = useState(false);
   const resolveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Progress state
@@ -62,7 +62,7 @@ export function ChainPlannerPage() {
   const resolveLocalFirst = useCallback(async (name: string) => {
     const kb = knownSystems[name.toLowerCase()];
     if (kb?.coordinates && kb.systemAddress) {
-      return { name: kb.name || name, id64: kb.systemAddress, x: kb.coordinates.x, y: kb.coordinates.y, z: kb.coordinates.z };
+      return { name: kb.systemName || name, id64: kb.systemAddress, x: kb.coordinates.x, y: kb.coordinates.y, z: kb.coordinates.z };
     }
     // Fall back to Spansh
     return resolveSystem(name);
@@ -310,7 +310,7 @@ export function ChainPlannerPage() {
       }
 
       setProgress({
-        phase: 'searching',
+        phase: 'routing',
         currentHop: 0,
         totalHops: maxHops,
         systemsSearched: 0,
@@ -895,7 +895,7 @@ export function ChainPlannerPage() {
 
 // --- Node Detail Component ---
 
-function NodeDetail({ node, prevNode, hopIndex, isLast }: { node: ChainNode; prevNode?: ChainNode; hopIndex: number; isLast: boolean }) {
+function NodeDetail({ node, prevNode, hopIndex }: { node: ChainNode; prevNode?: ChainNode; hopIndex: number; isLast: boolean }) {
   const hopDist = prevNode ? distance3d(prevNode, node) : 0;
 
   if (node.isStart) {

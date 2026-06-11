@@ -44,14 +44,14 @@ export function Layout() {
   return (
     <div className="flex min-h-screen bg-background text-foreground">
       {/* Sidebar — hidden on system view page */}
-      <nav className={`w-56 shrink-0 border-r border-border bg-card flex flex-col ${hideNav ? 'hidden' : ''}`}>
+      <nav className={`w-56 shrink-0 border-r border-border bg-card flex flex-col h-screen sticky top-0 ${hideNav ? 'hidden' : ''}`}>
         <div className="p-4 border-b border-border">
           <h1 className="text-lg font-bold text-primary tracking-wide">
             ED Colony Tracker
           </h1>
           <p className="text-xs text-muted-foreground mt-1">Colonization Progress</p>
         </div>
-        <div className="flex-1 py-2">
+        <div className="flex-1 min-h-0 overflow-y-auto py-2">
           {navItems.map((item) => (
             <NavLink
               key={item.to}
@@ -73,8 +73,9 @@ export function Layout() {
             </NavLink>
           ))}
         </div>
-        <div className="p-4 border-t border-border text-xs text-muted-foreground">
-          v{__APP_VERSION__}
+        <div className="px-4 py-3 border-t border-border flex items-baseline justify-between">
+          <span className="text-xs text-muted-foreground">Version</span>
+          <span className="text-sm font-mono font-semibold text-foreground">v{__APP_VERSION__}</span>
         </div>
       </nav>
 

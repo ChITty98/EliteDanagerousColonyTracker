@@ -2,6 +2,13 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.11.3] — 2026-06-11
+
+### Changed
+- **App version is now always visible in the sidebar.** It was already rendered at the bottom of the left nav, but styled tiny + grey and — with 17 nav items and no scroll region — pushed below the fold on shorter windows. The sidebar is now pinned to the viewport (`h-screen sticky top-0`) with the nav-item list scrolling independently (`overflow-y-auto`), so the footer stays locked to the bottom-left, and the version reads clearly as **`Version v1.11.3`** (brighter mono). Makes it obvious at a glance which build you're running.
+
+---
+
 ## [1.11.2] — 2026-06-11
 
 ### Fixed

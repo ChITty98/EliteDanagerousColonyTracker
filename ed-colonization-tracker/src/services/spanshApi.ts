@@ -208,15 +208,20 @@ export interface BoxelEnumeration {
 /**
  * Enumerate a procedural boxel from live Spansh by name, to find SEQUENCE GAPS —
  * indices that exist by the contiguous numbering but Spansh has no system for
- * (i.e. unscanned). Spansh's name filter is loose (returns the whole boxel-id
- * group across mass codes), so we client-filter to the exact boxel prefix.
+ * (i.e. unscanned). Spansh's name filter is loose (it returns thousands of fuzzy
+ * token-matches, capped), so we client-filter to the exact boxel prefix.
+ *
+ * Good-citizen: the boxel's own systems are relevance-sorted to the FRONT, so we
+ * stop as soon as two pages in a row add no new boxel matches (the rest is junk).
+ * That bounds a scan to ~3–10 requests (vs. the loose filter's ~80 to exhaust) —
+ * and a boxel tops out around index ~180, so ≤12 pages is plenty.
  * `prefix` should be the boxel + '-' (e.g. from parseBoxel in starNaming).
  */
 export async function enumerateBoxel(prefix: string): Promise<BoxelEnumeration> {
   const re = new RegExp('^' + prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\d+)$');
   const seen = new Map<number, BoxelSystem>();
-  let pages = 0;
-  for (let page = 0; page < 40; page++) { // cap pages so a huge boxel-id group can't run away
+  let pages = 0, emptyStreak = 0;
+  for (let page = 0; page < 12; page++) {
     const res = await rateLimitedFetch('/spansh-api/api/systems/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -226,14 +231,16 @@ export async function enumerateBoxel(prefix: string): Promise<BoxelEnumeration> 
     if (!res.ok) break;
     const data: SpanshSearchResponse = await res.json();
     const results = data.results || [];
+    let added = 0;
     for (const s of results) {
       const mm = (s.name || '').match(re);
       if (mm) {
         const idx = parseInt(mm[1], 10);
-        if (!seen.has(idx)) seen.set(idx, { index: idx, name: s.name, id64: s.id64, bodyCount: s.body_count ?? 0 });
+        if (!seen.has(idx)) { seen.set(idx, { index: idx, name: s.name, id64: s.id64, bodyCount: s.body_count ?? 0 }); added++; }
       }
     }
-    if (results.length < 100) break; // last page
+    emptyStreak = added === 0 ? emptyStreak + 1 : 0;
+    if (results.length < 100 || emptyStreak >= 2) break; // last page, or the boxel's matches have dried up
   }
   const known = [...seen.values()].sort((a, b) => a.index - b.index);
   const maxIndex = known.length ? known[known.length - 1].index : -1;

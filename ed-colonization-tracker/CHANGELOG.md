@@ -2,6 +2,13 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.11.1] — 2026-06-11
+
+### Fixed
+- **Boxel scout is now gentle on Spansh.** v1.11.0 paginated a fixed 40 pages per scan because Spansh's name filter is loose (it returns thousands of fuzzy token-matches, capped at ~8,000). Since the boxel's own systems are relevance-sorted to the front, `enumerateBoxel` now stops as soon as two pages in a row add no new boxel matches — **~4 requests instead of ~80** (verified live on `AX-J d9`: 4 pages, still the full 105 systems and the exact 13 gaps). Capped at 12 pages (a boxel tops out around system-index ~180 in these regions, so that's ample).
+
+---
+
 ## [1.11.0] — 2026-06-11
 
 ### Added

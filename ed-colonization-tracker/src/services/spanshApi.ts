@@ -196,6 +196,52 @@ export async function searchNearbySystems(
   return maxResults > 0 ? allResults.slice(0, maxResults) : allResults;
 }
 
+export interface BoxelSystem { index: number; name: string; id64: number; bodyCount: number; }
+export interface BoxelEnumeration {
+  prefix: string;            // e.g. "Col 173 Sector AX-J d9-"
+  known: BoxelSystem[];      // systems Spansh knows, sorted by index
+  gaps: number[];            // indices ≤ maxIndex that Spansh doesn't have (likely unscanned)
+  maxIndex: number;
+  pages: number;             // Spansh pages fetched (for transparency)
+}
+
+/**
+ * Enumerate a procedural boxel from live Spansh by name, to find SEQUENCE GAPS —
+ * indices that exist by the contiguous numbering but Spansh has no system for
+ * (i.e. unscanned). Spansh's name filter is loose (returns the whole boxel-id
+ * group across mass codes), so we client-filter to the exact boxel prefix.
+ * `prefix` should be the boxel + '-' (e.g. from parseBoxel in starNaming).
+ */
+export async function enumerateBoxel(prefix: string): Promise<BoxelEnumeration> {
+  const re = new RegExp('^' + prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\d+)$');
+  const seen = new Map<number, BoxelSystem>();
+  let pages = 0;
+  for (let page = 0; page < 40; page++) { // cap pages so a huge boxel-id group can't run away
+    const res = await rateLimitedFetch('/spansh-api/api/systems/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filters: { name: { value: prefix } }, size: 100, page }),
+    });
+    pages++;
+    if (!res.ok) break;
+    const data: SpanshSearchResponse = await res.json();
+    const results = data.results || [];
+    for (const s of results) {
+      const mm = (s.name || '').match(re);
+      if (mm) {
+        const idx = parseInt(mm[1], 10);
+        if (!seen.has(idx)) seen.set(idx, { index: idx, name: s.name, id64: s.id64, bodyCount: s.body_count ?? 0 });
+      }
+    }
+    if (results.length < 100) break; // last page
+  }
+  const known = [...seen.values()].sort((a, b) => a.index - b.index);
+  const maxIndex = known.length ? known[known.length - 1].index : -1;
+  const gaps: number[] = [];
+  for (let k = 0; k <= maxIndex; k++) if (!seen.has(k)) gaps.push(k);
+  return { prefix, known, gaps, maxIndex, pages };
+}
+
 /**
  * Fetch full system data (bodies with all fields) from the dump endpoint.
  * Required for scoring — has isLandable, earthMasses, atmosphere, rings, parents, etc.

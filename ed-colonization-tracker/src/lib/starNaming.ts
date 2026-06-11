@@ -53,6 +53,17 @@ export function parseMassCode(systemName?: string | null): string | null {
   return m ? m[1] : null;
 }
 
+/**
+ * Split a procedural name into its boxel (e.g. "Col 173 Sector AX-J d9") and the
+ * index within it. The boxel is the named cube; the index is the trailing number.
+ * Returns null for catalog names (HIP/Sol) that have no boxel.
+ */
+export function parseBoxel(systemName?: string | null): { boxel: string; prefix: string; index: number; massCode: string } | null {
+  const m = (systemName || '').trim().match(/^(.*\s[A-Za-z]{2}-[A-Za-z]\s([a-h])\d+)-(\d+)$/);
+  if (!m) return null;
+  return { boxel: m[1], prefix: m[1] + '-', massCode: m[2], index: parseInt(m[3], 10) };
+}
+
 export type ColonizationRating = 'worthwhile' | 'decent' | 'marginal' | 'skip' | 'unknown';
 
 export interface ColonizationOutlook {

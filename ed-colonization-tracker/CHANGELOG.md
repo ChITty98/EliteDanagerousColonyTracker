@@ -2,6 +2,14 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.11.0] — 2026-06-11
+
+### Added
+- **Boxel sequence-gap scout (Expansion tab).** A reference system → **Scan boxel for gaps** enumerates that system's *boxel* live from Spansh (by name, **independent of the LY range control** — the boxel is a named cube, not a radius) and lists the **sequence gaps**: indices that exist by the contiguous numbering but Spansh has no system for — i.e. likely unscanned, probable first-footfall. The boxel is labelled with its **mass-code fruitfulness** (the baked colonization prior: expected bodies, interesting-atmosphere odds, avg score) and your **realized track record** (how many of its known systems you've scored, and the best score). For `Col 173 Sector AX-J d9` it reproduces the 13 gaps (`d9-0, 19, 39, 54, …`) exactly, matching the offline analysis.
+  - New `parseBoxel` (`starNaming`) splits a name into boxel + index; `enumerateBoxel` (`spanshApi`) pages the Spansh name search and client-filters to the exact boxel (Spansh's name filter is loose). Covered by `tests/boxel.test.mjs`.
+
+---
+
 ## [1.10.1] — 2026-06-11
 
 ### Fixed

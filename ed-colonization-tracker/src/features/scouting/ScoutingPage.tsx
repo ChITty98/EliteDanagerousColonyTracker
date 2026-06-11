@@ -5,9 +5,13 @@ import {
   searchNearbySystems,
   fetchSystemDump,
   resolveSystemName,
+  enumerateBoxel,
   type SpanshSearchSystem,
   type SpanshDumpBody,
+  type BoxelEnumeration,
 } from '@/services/spanshApi';
+import { parseBoxel } from '@/lib/starNaming';
+import { COLONIZATION_BY_CODE } from '@/data/massCodeColonization';
 import {
   scoreSystem,
   classifyStars,
@@ -193,6 +197,23 @@ export function ScoutingPage() {
   const [refCoords, setRefCoords] = useState<{ x: number; y: number; z: number } | null>(null);
   const abortRef = useRef(false);
   const [journalScanProgress, setJournalScanProgress] = useState<string | null>(null);
+  // Boxel sequence-gap scout (name-based; independent of the LY range)
+  const [boxelInfo, setBoxelInfo] = useState<{ enum: BoxelEnumeration; boxel: string; massCode: string } | null>(null);
+  const [boxelLoading, setBoxelLoading] = useState(false);
+  const [boxelErr, setBoxelErr] = useState<string | null>(null);
+  const scanBoxel = useCallback(async () => {
+    const parsed = parseBoxel(refSystem.trim());
+    if (!parsed) { setBoxelErr('Not a procedural system name — no boxel to enumerate.'); setBoxelInfo(null); return; }
+    setBoxelLoading(true); setBoxelErr(null);
+    try {
+      const result = await enumerateBoxel(parsed.prefix);
+      setBoxelInfo({ enum: result, boxel: parsed.boxel, massCode: parsed.massCode });
+    } catch (e) {
+      setBoxelErr(e instanceof Error ? e.message : 'Boxel scan failed');
+    } finally {
+      setBoxelLoading(false);
+    }
+  }, [refSystem]);
 
   // --- Comparison state ---
   const [compareIds, setCompareIds] = useState<number[]>([]);
@@ -1279,6 +1300,60 @@ export function ScoutingPage() {
           </button>
         </div>
       </div>
+
+      {/* Boxel sequence-gap scout — name-based, independent of the LY range above */}
+      {parseBoxel(refSystem.trim()) && (
+        <div className="bg-card border border-border rounded-lg p-4 mb-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="text-sm min-w-0">
+              <span className="text-muted-foreground">Boxel scout:</span>{' '}
+              <span className="font-mono text-foreground">{parseBoxel(refSystem.trim())!.boxel}</span>
+              <div className="text-xs text-muted-foreground mt-0.5">
+                Finds sequence gaps (systems that exist by the numbering but aren&rsquo;t in Spansh &mdash; likely unscanned). By boxel, not by range.
+              </div>
+            </div>
+            <button
+              onClick={scanBoxel}
+              disabled={boxelLoading}
+              className="px-3 py-1.5 bg-primary/20 text-primary rounded-lg text-sm font-medium hover:bg-primary/30 transition-colors disabled:opacity-50 shrink-0"
+            >
+              {boxelLoading ? 'Scanning Spansh…' : '\u{1F52D} Scan boxel for gaps'}
+            </button>
+          </div>
+          {boxelErr && <div className="mt-2 text-xs text-red-400">{boxelErr}</div>}
+          {boxelInfo && (() => {
+            const fruit = COLONIZATION_BY_CODE[boxelInfo.massCode];
+            const scoredKnown = boxelInfo.enum.known.filter((k) => typeof scoutedSystems[k.id64]?.score?.total === 'number');
+            const best = scoredKnown.reduce((m, k) => Math.max(m, scoutedSystems[k.id64]!.score.total), 0);
+            return (
+              <div className="mt-3 space-y-2">
+                <div className="text-xs text-muted-foreground">
+                  <span className="text-foreground font-medium">Mass {boxelInfo.massCode}</span>
+                  {fruit ? ` · ~${fruit.bodies.toFixed(0)} bodies · ${fruit.pInteresting.toFixed(0)}% interesting-atmo odds · avg score ${fruit.score.toFixed(0)}` : ''}
+                  {` · ${boxelInfo.enum.known.length} known, max index ${boxelInfo.enum.maxIndex}`}
+                  {scoredKnown.length > 0 ? ` · ${scoredKnown.length} scored here, best ${best}` : ''}
+                </div>
+                {boxelInfo.enum.gaps.length > 0 ? (
+                  <div>
+                    <div className="text-xs text-amber-300 font-medium mb-1">
+                      {'⚠'} {boxelInfo.enum.gaps.length} sequence gaps &mdash; likely unscanned, go FSS:
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {boxelInfo.enum.gaps.map((g) => (
+                        <span key={g} className="text-[11px] font-mono bg-amber-500/10 text-amber-200 border border-amber-500/30 rounded px-1.5 py-0.5 select-all">
+                          {boxelInfo.enum.prefix}{g}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-xs text-green-400">No gaps below the max index &mdash; this boxel is fully mapped in Spansh.</div>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
       {/* Error */}
       {searchPhase === 'error' && (

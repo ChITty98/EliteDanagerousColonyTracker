@@ -1011,7 +1011,12 @@ const faqItems: FaqItem[] = [
           (&ldquo;body-rich&rdquo; &rarr; &ldquo;skip&rdquo;) so you can judge an
           unexplored target from its name alone &mdash; a brown-dwarf primary at
           code&nbsp;a is a likely lone iceball; a code&nbsp;c&ndash;d system with an
-          F/G/K/A primary is the sweet spot.
+          F/G/K/A primary is the sweet spot. The banner also shows
+          name-derived <strong>odds</strong> for that signature, measured across
+          ~1.4M systems: the chance of a non-icy atmosphere body, of a ringed
+          brown dwarf, and of an oxygen world (as a multiple of the galaxy
+          baseline). These tilt the odds &mdash; the rare jackpots (oxygen
+          worlds) stay a confirm-on-arrival roll even in the best buckets.
         </p>
         <p className="mt-2">
           Route plotted via NavRoute? The banner summarises the whole route

@@ -481,6 +481,15 @@ export function CompanionPage() {
                         {targetOutlook.basis === 'code' ? ' (by code)' : ''}
                       </span>
                     ) : null}
+                    {typeof targetOutlook.pInteresting === 'number' ? (
+                      <span className="text-[11px] text-slate-500">
+                        odds: interesting body {targetOutlook.pInteresting.toFixed(0)}%
+                        {targetOutlook.pRingedBD ? ` · ringed BD ${targetOutlook.pRingedBD.toFixed(1)}%` : ''}
+                        {targetOutlook.pOxygen && targetOutlook.oxygenLift
+                          ? ` · O₂ ${targetOutlook.oxygenLift >= 1.5 ? targetOutlook.oxygenLift.toFixed(1) + '× base' : targetOutlook.pOxygen.toFixed(2) + '%'}`
+                          : ''}
+                      </span>
+                    ) : null}
                     {typeof lastTarget.starCount === 'number' && (lastTarget.starCount as number) >= 2 ? (
                       <span className="text-[11px] text-indigo-300">{'★'} {String(lastTarget.starCount)} stars</span>
                     ) : null}

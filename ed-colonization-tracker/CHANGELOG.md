@@ -2,6 +2,14 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.9.0] — 2026-06-11
+
+### Added
+- **Target alert now shows name-derived odds.** Below the colonization verdict, the banner reports — for the targeted system's (mass code × primary class) signature, measured across ~1.4M systems — the chance of a non-icy **interesting atmosphere** body, of a **ringed brown dwarf**, and of an **oxygen** world (as a multiple of the galaxy baseline). This is the honest "extrapolate value from the name" model: the signature *tilts* the odds (a code-d F/G/A system runs ~13–17% interesting-body, ~5% ringed-BD, ~2× baseline oxygen), but the rare jackpots stay a confirm-on-arrival roll — the name can't call them.
+  - The baked lookup (`tools/analyze-masscode-colonization.mjs` → `src/data/massCodeColonization.ts`) now carries `pInteresting` / `pRingedBD` / `pOxygen` per bucket plus a `COLONIZATION_BASELINE`; `colonizationOutlook()` surfaces them with an oxygen lift-vs-baseline.
+
+---
+
 ## [1.8.1] — 2026-06-11
 
 ### Fixed

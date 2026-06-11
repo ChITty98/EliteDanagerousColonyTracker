@@ -10,6 +10,8 @@
 import {
   COLONIZATION_BY_CODE,
   COLONIZATION_BY_CODE_PRIMARY,
+  COLONIZATION_BASELINE,
+  type MassCodeStat,
 } from '@/data/massCodeColonization';
 
 // FSDTarget StarClass code → bucket primary class (matches the analysis tool's
@@ -61,6 +63,11 @@ export interface ColonizationOutlook {
   bodies?: number;            // mean body count for this bucket
   goodAtmo?: number;          // mean non-icy landable-atmosphere bodies
   score?: number;             // mean app score for this bucket
+  // Name-derived odds (% of systems in this bucket with >=1 of each):
+  pInteresting?: number;      // a non-icy atmosphere body
+  pRingedBD?: number;         // a ringed brown dwarf
+  pOxygen?: number;           // a non-icy oxygen body (the jackpot)
+  oxygenLift?: number;        // pOxygen relative to the galaxy baseline (×)
   basis: 'primary' | 'code' | 'none'; // which table row backed the verdict
 }
 
@@ -77,11 +84,18 @@ export function colonizationOutlook(systemName?: string | null, starClass?: stri
   }
   // "other" primary buckets are data-poor (null/unscanned primaries), not real
   // "other" stars — fall back to the code row for those.
-  let stat: { bodies: number; goodAtmo: number; score: number } | undefined =
+  let stat: MassCodeStat | undefined =
     pc !== 'other' ? COLONIZATION_BY_CODE_PRIMARY[`${code}|${pc}`] : undefined;
   let basis: ColonizationOutlook['basis'] = 'primary';
   if (!stat) { stat = COLONIZATION_BY_CODE[code]; basis = stat ? 'code' : 'none'; }
   if (!stat) return { code, primaryClass: pc, rating: 'unknown', label: `Mass code ${code}`, basis: 'none' };
+
+  const odds = {
+    pInteresting: stat.pInteresting,
+    pRingedBD: stat.pRingedBD,
+    pOxygen: stat.pOxygen,
+    oxygenLift: COLONIZATION_BASELINE.pOxygen > 0 ? stat.pOxygen / COLONIZATION_BASELINE.pOxygen : 0,
+  };
 
   const score = stat.score;
   let rating: ColonizationRating;
@@ -96,5 +110,5 @@ export function colonizationOutlook(systemName?: string | null, starClass?: stri
   else if (score >= 6) { rating = 'marginal'; label = 'Thin — marginal'; }
   else { rating = 'skip'; label = 'Sparse — skip'; }
 
-  return { code, primaryClass: pc, rating, label, bodies: stat.bodies, goodAtmo: stat.goodAtmo, score, basis };
+  return { code, primaryClass: pc, rating, label, bodies: stat.bodies, goodAtmo: stat.goodAtmo, score, ...odds, basis };
 }

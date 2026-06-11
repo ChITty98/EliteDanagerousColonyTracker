@@ -13,6 +13,7 @@ import {
   filterQualifyingBodies,
   classifyStars,
   buildBodyString,
+  detectEpicView,
 } from '../server/journal/scorer.js';
 import {
   scoreSystem as shimScoreSystem,
@@ -240,6 +241,73 @@ describe('scoreSystem components', () => {
 });
 
 // --- body string (guards the glyph-builder consolidation) -----------------------
+
+// --- epic-view detection (geometry flag) ------------------------------------
+
+describe('detectEpicView', () => {
+  // Minimal raw-body builders (Spansh units: radius km, semiMajorAxis AU).
+  let id = 100;
+  const estar = (subType, { sma, parents } = {}) => ({ bodyId: id++, type: 'Star', subType, semiMajorAxis: sma, parents });
+  const emoon = ({ sma, parents, landable = true } = {}) => ({ bodyId: id++, type: 'Planet', subType: 'Rocky body', isLandable: landable, semiMajorAxis: sma, parents });
+  const eplanet = (over) => ({ bodyId: id++, type: 'Planet', subType: 'Gas giant', isLandable: false, ...over });
+
+  it('flags a co-orbiting tight binary (two non-BD stars, sum of smas ≤ 0.1 AU)', () => {
+    const a = estar('F (White) Star', { sma: 0.013, parents: [{ Null: 1 }] });
+    const b = estar('F (White) Star', { sma: 0.013, parents: [{ Null: 1 }] });
+    const r = detectEpicView([a, b]);
+    expect(r.isEpic).toBe(true);
+    expect(r.reasons.some((x) => /tight binary/.test(x))).toBe(true);
+  });
+
+  it('flags a close companion orbiting another star directly (≤ 0.1 AU)', () => {
+    const a = estar('G (White-Yellow) Star', { parents: [{ Null: 0 }] });
+    const b = estar('K (Yellow-Orange) Star', { sma: 0.05, parents: [{ Star: a.bodyId }] });
+    expect(detectEpicView([a, b]).isEpic).toBe(true);
+  });
+
+  it('does NOT flag a wide binary (> 0.1 AU)', () => {
+    const a = estar('F (White) Star', { sma: 1.5, parents: [{ Null: 1 }] });
+    const b = estar('F (White) Star', { sma: 1.5, parents: [{ Null: 1 }] });
+    expect(detectEpicView([a, b]).isEpic).toBe(false);
+  });
+
+  it('does NOT count two close brown dwarfs as an epic binary', () => {
+    const a = estar('Y (Brown dwarf) Star', { sma: 0.01, parents: [{ Null: 1 }] });
+    const b = estar('Y (Brown dwarf) Star', { sma: 0.01, parents: [{ Null: 1 }] });
+    expect(detectEpicView([a, b]).isEpic).toBe(false);
+  });
+
+  it('flags a big-sky parent (landable moon, parent subtends ≥ 20°)', () => {
+    const giant = eplanet({}); // radius 71,000 km
+    giant.radius = 71000;
+    const moon = emoon({ sma: 0.0013, parents: [{ Planet: giant.bodyId }] }); // ~0.0013 AU ≈ 194,000 km → ~40°
+    const r = detectEpicView([giant, moon]);
+    expect(r.isEpic).toBe(true);
+    expect(r.reasons.some((x) => /parent fills/.test(x))).toBe(true);
+  });
+
+  it('artifact guard: rejects a moon orbiting INSIDE its parent radius', () => {
+    const giant = eplanet({ radius: 200000 });
+    const moon = emoon({ sma: 0.001, parents: [{ Planet: giant.bodyId }] }); // ≈149,600 km < 200,000 km radius
+    expect(detectEpicView([giant, moon]).isEpic).toBe(false);
+  });
+
+  it('flags a ring-edge moon (landable moon of a ringed parent)', () => {
+    const giant = eplanet({ rings: [{ name: 'A Ring', type: 'Rocky' }] });
+    const moon = emoon({ sma: 2.0, parents: [{ Planet: giant.bodyId }] }); // far out — no big-sky, but ring-edge
+    const r = detectEpicView([giant, moon]);
+    expect(r.isEpic).toBe(true);
+    expect(r.reasons).toContain('ring-edge moon');
+  });
+
+  it('plain system is not epic; empty input is safe', () => {
+    const s = estar('M (Red dwarf) Star', { parents: [{ Null: 0 }] });
+    const p = emoon({ sma: 5, parents: [{ Star: s.bodyId }] });
+    expect(detectEpicView([s, p]).isEpic).toBe(false);
+    expect(detectEpicView([]).isEpic).toBe(false);
+    expect(detectEpicView([]).reasons).toEqual([]);
+  });
+});
 
 describe('buildBodyString', () => {
   it('renders the exact glyph string for a ringed oxygen HMC world', () => {

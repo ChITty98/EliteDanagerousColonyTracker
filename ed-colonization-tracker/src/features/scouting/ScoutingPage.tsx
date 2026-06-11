@@ -1412,13 +1412,21 @@ export function ScoutingPage() {
                       ? 'border-yellow-500/40'
                       : isSelf
                         ? 'border-primary/40'
-                        : sys.score?.hasOxygenAtmosphere
-                          ? 'border-green-500/30'
-                          : sys.score?.hasRingedLandable
-                            ? 'border-yellow-500/20'
-                            : 'border-border'
+                        : sys.score?.epicView?.isEpic
+                          ? 'border-violet-500/40'
+                          : sys.score?.hasOxygenAtmosphere
+                            ? 'border-green-500/30'
+                            : sys.score?.hasRingedLandable
+                              ? 'border-yellow-500/20'
+                              : 'border-border'
                   }`}
                 >
+                  {/* Epic-view callout — spectacular surface geometry (flag, not points) */}
+                  {sys.score?.epicView?.isEpic && (
+                    <div className="px-4 py-1 bg-violet-500/10 text-violet-300 text-xs font-medium">
+                      {'✨'} Epic view {'—'} {sys.score?.epicView?.reasons?.join('  ·  ')}
+                    </div>
+                  )}
                   {/* Oxygen atmosphere callout */}
                   {sys.score?.hasOxygenAtmosphere && (
                     <div className="px-4 py-1 bg-green-500/10 text-green-300 text-xs font-medium">

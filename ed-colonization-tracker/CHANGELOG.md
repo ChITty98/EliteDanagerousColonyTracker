@@ -2,6 +2,20 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.8.0] — 2026-06-10
+
+### Added
+- **Epic-view flag on scouted systems.** A ✨ violet callout in the Expansion list marks systems with spectacular *surface geometry* — independent of the colonization score, and unrelated to first footfall. `detectEpicView()` (in the canonical scorer) flags three things, computed from the body data at scoring time:
+  - **Tight binary** — two non-brown-dwarf stars ≤ 0.1 AU apart (a real double sun).
+  - **Big-sky parent** — a landable moon whose parent subtends ≥ 20° overhead (artifact-guarded against the impossible "moon inside parent" geometry).
+  - **Ring-edge moon** — a landable moon of a ringed parent, so the rings sprawl across the sky.
+  - The callout lists *why* (e.g. "tight binary 0.026 AU · parent fills 25° of sky · ring-edge moon"). Stored as `score.epicView {isEpic, reasons[]}` alongside the existing flags. **Existing scouted systems light up after a Rescore All.** This supersedes the parked close-binary +10 scoring idea (it's a flag, not points — the colonization score stays about colonization).
+
+### Changed
+- `journalBodiesToSpanshFormat` now carries `radius` + `semiMajorAxis` (converting journal metres to the scorer's Spansh units) so epic-view detection works for journal-scored systems, not just Spansh ones.
+
+---
+
 ## [1.7.0] — 2026-06-10
 
 ### Added

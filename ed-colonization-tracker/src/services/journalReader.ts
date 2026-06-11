@@ -2078,6 +2078,10 @@ export function journalBodiesToSpanshFormat(bodies: JournalScannedBody[], _syste
     volcanismType: b.volcanism,
     terraformingState: b.terraformState,
     surfaceTemperature: b.surfaceTemperature,
+    // Orbital geometry for epic-view detection — journal gives metres, the
+    // scorer expects Spansh units (radius km, semiMajorAxis AU).
+    radius: b.radius != null ? b.radius / 1000 : undefined,
+    semiMajorAxis: b.semiMajorAxis != null ? b.semiMajorAxis / 149597870700 : undefined,
     rings: b.rings?.map((r) => ({
       name: r.name,
       type: r.ringClass,

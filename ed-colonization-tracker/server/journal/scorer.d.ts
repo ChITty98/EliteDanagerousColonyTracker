@@ -33,6 +33,11 @@ export interface BodySegment {
   tooltip: string;
 }
 
+export interface EpicView {
+  isEpic: boolean;
+  reasons: string[]; // e.g. ["tight binary 0.03 AU", "parent fills 25° of sky", "ring-edge moon"]
+}
+
 export interface ScoreBreakdown {
   starPoints: number;
   starDetails: string[];
@@ -51,6 +56,7 @@ export interface ScoreBreakdown {
   bodyCountPoints: number;
   bodyCount: number;
   starCount: number;
+  epicView: EpicView;
   total: number;
   hasRingedLandable: boolean;
   hasOxygenAtmosphere: boolean;
@@ -67,3 +73,4 @@ export declare function buildBodyString(qualBodies: QualifyingBody[], stars: Sta
 export declare function buildBodySegments(qualBodies: QualifyingBody[], stars: StarInfo[]): BodySegment[];
 export declare function scoreSystem(bodies: SpanshDumpBody[]): ScoreBreakdown;
 export declare function emptyScore(): ScoreBreakdown;
+export declare function detectEpicView(bodies: SpanshDumpBody[]): EpicView;

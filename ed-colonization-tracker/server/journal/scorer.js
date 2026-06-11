@@ -375,9 +375,90 @@ function countProximityClusters(qualBodies) {
 
 // --- Scoring Model ---
 
+// --- Epic-view detection (geometry only — a display flag, NOT score points) ---
+// Flags a system with a spectacular surface view: a tight binary, a moon with a
+// huge parent overhead, or a ring-edge moon. Needs orbital fields in Spansh raw
+// units: radius in km, semiMajorAxis in AU. The journal path
+// (journalBodiesToSpanshFormat) converts its metres to match.
+const AU_KM = 149597870.7;
+function isBrownDwarfStar(b) {
+  return b.type === 'Star' && /brown dwarf/i.test(b.subType || '');
+}
+function apparentDeg(radiusKm, sepKm) {
+  if (!(radiusKm > 0) || !(sepKm > 0)) return 0;
+  return (2 * Math.atan(radiusKm / sepKm) * 180) / Math.PI;
+}
+function immediateParent(body, byId) {
+  const p0 = body.parents && body.parents[0];
+  if (!p0) return null;
+  if ('Planet' in p0) return byId.get(p0.Planet) || null;
+  if ('Star' in p0) return byId.get(p0.Star) || null;
+  return null;
+}
+
+export function detectEpicView(bodies) {
+  const reasons = [];
+  if (!Array.isArray(bodies) || bodies.length === 0) return { isEpic: false, reasons };
+  const byId = new Map(bodies.map((b) => [b.bodyId, b]));
+  const realStars = bodies.filter((b) => b.type === 'Star' && !isBrownDwarfStar(b));
+
+  // 1. Tight binary — two non-brown-dwarf stars within 0.1 AU.
+  let tightestAu = Infinity;
+  for (const s of realStars) {
+    const sma = s.semiMajorAxis; // AU
+    if (typeof sma !== 'number' || sma <= 0) continue;
+    const p0 = s.parents && s.parents[0];
+    if (p0 && 'Star' in p0) {
+      // orbits another star directly: separation = its own semi-major axis
+      const parent = byId.get(p0.Star);
+      if (parent && parent.type === 'Star' && !isBrownDwarfStar(parent)) tightestAu = Math.min(tightestAu, sma);
+    }
+  }
+  // co-orbiting pairs sharing an immediate barycentre: separation = sum of smas
+  const bary = new Map();
+  for (const s of realStars) {
+    const sma = s.semiMajorAxis;
+    const p0 = s.parents && s.parents[0];
+    if (p0 && 'Null' in p0 && typeof sma === 'number' && sma > 0) {
+      const k = p0.Null;
+      (bary.get(k) || bary.set(k, []).get(k)).push(sma);
+    }
+  }
+  for (const smas of bary.values()) {
+    if (smas.length >= 2) {
+      smas.sort((a, b) => a - b);
+      tightestAu = Math.min(tightestAu, smas[0] + smas[1]);
+    }
+  }
+  if (tightestAu <= 0.1) reasons.push(`tight binary ${tightestAu.toFixed(3)} AU`);
+
+  // 2. Big-sky parent — landable moon whose parent subtends >= 20 deg overhead.
+  let biggestDeg = 0;
+  for (const b of bodies) {
+    if (!b.isLandable || typeof b.semiMajorAxis !== 'number' || b.semiMajorAxis <= 0) continue;
+    const parent = immediateParent(b, byId);
+    if (!parent || typeof parent.radius !== 'number' || parent.radius <= 0) continue;
+    const sepKm = b.semiMajorAxis * AU_KM;
+    if (sepKm <= parent.radius) continue; // artifact guard: impossible "moon inside parent"
+    biggestDeg = Math.max(biggestDeg, apparentDeg(parent.radius, sepKm));
+  }
+  if (biggestDeg >= 20) reasons.push(`parent fills ${Math.round(biggestDeg)}° of sky`);
+
+  // 3. Ring-edge moon — landable moon of a ringed parent (rings sprawl across the sky).
+  for (const b of bodies) {
+    if (!b.isLandable) continue;
+    const p0 = b.parents && b.parents[0];
+    const parent = p0 && 'Planet' in p0 ? byId.get(p0.Planet) : null;
+    if (parent && Array.isArray(parent.rings) && parent.rings.length > 0) { reasons.push('ring-edge moon'); break; }
+  }
+
+  return { isEpic: reasons.length > 0, reasons };
+}
+
 export function scoreSystem(bodies) {
   const stars = classifyStars(bodies);
   const qualBodies = filterQualifyingBodies(bodies);
+  const epicView = detectEpicView(bodies);
 
   // --- Star Type (cap 60) ---
   let starPoints = 0;
@@ -504,6 +585,7 @@ export function scoreSystem(bodies) {
     bodyCountPoints,
     bodyCount,
     starCount: stars.length, // all stars (incl. brown dwarfs / remnants), for the "multiple stars" note
+    epicView, // { isEpic, reasons[] } — geometry flag, not score points
     total,
     hasRingedLandable: ringCount > 0,
     // Consistent with oxygenPoints: icy oxygen bodies earn nothing, so they
@@ -537,6 +619,7 @@ export function emptyScore() {
     bodyCountPoints: 0,
     bodyCount: 0,
     starCount: 0,
+    epicView: { isEpic: false, reasons: [] },
     total: 0,
     hasRingedLandable: false,
     hasOxygenAtmosphere: false,

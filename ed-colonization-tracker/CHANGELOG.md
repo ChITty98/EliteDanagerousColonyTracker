@@ -2,6 +2,14 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.8.1] — 2026-06-11
+
+### Fixed
+- **Epic-view ring-edge detection now recognizes ringed brown dwarfs / stars as valid parents, not just planets.** A landable moon skimming the ring edge of a ringed brown dwarf — e.g. Col 173 AX-J d9-52's oxygen world `2a`, which orbits ~8,500 km outside the outer ring of its ringed Y brown-dwarf parent — now flags as epic. (Confirmed via the commander's own journal: ED tags body 2 `StarType=Y`, a brown-dwarf *star*, so the prior planet-only check missed it.)
+- **Big-sky apparent-size now handles star/brown-dwarf parents**, deriving the parent radius from `solarRadius` when the km `radius` field is absent (Spansh stores star radius in solar radii, which is why brown-dwarf radius was dropping out).
+
+---
+
 ## [1.8.0] — 2026-06-10
 
 ### Added

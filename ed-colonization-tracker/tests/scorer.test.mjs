@@ -300,6 +300,22 @@ describe('detectEpicView', () => {
     expect(r.reasons).toContain('ring-edge moon');
   });
 
+  it('flags a ring-edge moon of a ringed BROWN DWARF / star parent (not just planets) — the Col 173 2a case', () => {
+    const bd = { bodyId: id++, type: 'Star', subType: 'Y (Brown dwarf) Star', rings: [{ name: 'Ring', type: 'Rocky' }] };
+    const moon = { bodyId: id++, type: 'Planet', subType: 'High metal content world', isLandable: true, semiMajorAxis: 0.004, parents: [{ Star: bd.bodyId }] };
+    const r = detectEpicView([bd, moon]);
+    expect(r.isEpic).toBe(true);
+    expect(r.reasons).toContain('ring-edge moon');
+  });
+
+  it('big-sky uses solarRadius when a star/brown-dwarf parent has no km radius', () => {
+    const bd = { bodyId: id++, type: 'Star', subType: 'Y (Brown dwarf) Star', solarRadius: 0.1 }; // ≈69,634 km
+    const moon = { bodyId: id++, type: 'Planet', subType: 'Rocky body', isLandable: true, semiMajorAxis: 0.0013, parents: [{ Star: bd.bodyId }] }; // ≈194,477 km → ~39°
+    const r = detectEpicView([bd, moon]);
+    expect(r.isEpic).toBe(true);
+    expect(r.reasons.some((x) => /parent fills/.test(x))).toBe(true);
+  });
+
   it('plain system is not epic; empty input is safe', () => {
     const s = estar('M (Red dwarf) Star', { parents: [{ Null: 0 }] });
     const p = emoon({ sma: 5, parents: [{ Star: s.bodyId }] });

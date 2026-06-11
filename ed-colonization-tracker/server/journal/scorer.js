@@ -381,8 +381,16 @@ function countProximityClusters(qualBodies) {
 // units: radius in km, semiMajorAxis in AU. The journal path
 // (journalBodiesToSpanshFormat) converts its metres to match.
 const AU_KM = 149597870.7;
+const SUN_R_KM = 696340;
 function isBrownDwarfStar(b) {
   return b.type === 'Star' && /brown dwarf/i.test(b.subType || '');
+}
+// Body radius in km. Planets and journal-sourced bodies carry `radius` (km);
+// Spansh STARS (incl. brown dwarfs) carry `solarRadius` (solar radii) instead.
+function radiusKmOf(b) {
+  if (typeof b.radius === 'number' && b.radius > 0) return b.radius;
+  if (typeof b.solarRadius === 'number' && b.solarRadius > 0) return b.solarRadius * SUN_R_KM;
+  return 0;
 }
 function apparentDeg(radiusKm, sepKm) {
   if (!(radiusKm > 0) || !(sepKm > 0)) return 0;
@@ -433,22 +441,25 @@ export function detectEpicView(bodies) {
   if (tightestAu <= 0.1) reasons.push(`tight binary ${tightestAu.toFixed(3)} AU`);
 
   // 2. Big-sky parent — landable moon whose parent subtends >= 20 deg overhead.
+  // Parent may be a planet OR a star/brown dwarf (radius from solarRadius then).
   let biggestDeg = 0;
   for (const b of bodies) {
     if (!b.isLandable || typeof b.semiMajorAxis !== 'number' || b.semiMajorAxis <= 0) continue;
     const parent = immediateParent(b, byId);
-    if (!parent || typeof parent.radius !== 'number' || parent.radius <= 0) continue;
+    if (!parent) continue;
+    const parentRadiusKm = radiusKmOf(parent);
+    if (!(parentRadiusKm > 0)) continue;
     const sepKm = b.semiMajorAxis * AU_KM;
-    if (sepKm <= parent.radius) continue; // artifact guard: impossible "moon inside parent"
-    biggestDeg = Math.max(biggestDeg, apparentDeg(parent.radius, sepKm));
+    if (sepKm <= parentRadiusKm) continue; // artifact guard: impossible "moon inside parent"
+    biggestDeg = Math.max(biggestDeg, apparentDeg(parentRadiusKm, sepKm));
   }
   if (biggestDeg >= 20) reasons.push(`parent fills ${Math.round(biggestDeg)}° of sky`);
 
-  // 3. Ring-edge moon — landable moon of a ringed parent (rings sprawl across the sky).
+  // 3. Ring-edge moon — landable moon of a ringed parent, planet OR brown dwarf/star
+  // (e.g. Col 173 AX-J d9-52 "2a" skims the ring edge of a ringed Y brown dwarf).
   for (const b of bodies) {
     if (!b.isLandable) continue;
-    const p0 = b.parents && b.parents[0];
-    const parent = p0 && 'Planet' in p0 ? byId.get(p0.Planet) : null;
+    const parent = immediateParent(b, byId);
     if (parent && Array.isArray(parent.rings) && parent.rings.length > 0) { reasons.push('ring-edge moon'); break; }
   }
 

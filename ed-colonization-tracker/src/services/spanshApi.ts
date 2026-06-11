@@ -78,6 +78,7 @@ export interface SpanshDumpBody {
   mainStar?: boolean;
   spectralClass?: string;
   solarMasses?: number;
+  solarRadius?: number; // solar radii (stars use this; planets/journal bodies use `radius` in km)
   luminosity?: string;
   // Planet fields
   isLandable?: boolean;

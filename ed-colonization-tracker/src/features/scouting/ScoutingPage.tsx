@@ -1302,12 +1302,24 @@ export function ScoutingPage() {
       </div>
 
       {/* Boxel sequence-gap scout — name-based, independent of the LY range above */}
-      {parseBoxel(refSystem.trim()) && (
+      {(() => {
+        const refTrim = refSystem.trim();
+        const refBoxel = parseBoxel(refTrim);
+        if (!refBoxel) {
+          // Named/catalog reference (HIP, Sol, …) has no boxel — explain instead of hiding silently.
+          if (!refTrim) return null;
+          return (
+            <div className="bg-card border border-border rounded-lg p-4 mb-4 text-xs text-muted-foreground">
+              {'\u{1F52D} '}Boxel scout unavailable &mdash; <span className="font-mono text-foreground">{refTrim}</span> is a named system, not a procedural one. Enter a name like <span className="font-mono text-foreground">Col 173 Sector AX-J d9-52</span> to scan a boxel for sequence gaps.
+            </div>
+          );
+        }
+        return (
         <div className="bg-card border border-border rounded-lg p-4 mb-4">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm min-w-0">
               <span className="text-muted-foreground">Boxel scout:</span>{' '}
-              <span className="font-mono text-foreground">{parseBoxel(refSystem.trim())!.boxel}</span>
+              <span className="font-mono text-foreground">{refBoxel.boxel}</span>
               <div className="text-xs text-muted-foreground mt-0.5">
                 Finds sequence gaps (systems that exist by the numbering but aren&rsquo;t in Spansh &mdash; likely unscanned). By boxel, not by range.
               </div>
@@ -1353,7 +1365,8 @@ export function ScoutingPage() {
             );
           })()}
         </div>
-      )}
+        );
+      })()}
 
       {/* Error */}
       {searchPhase === 'error' && (

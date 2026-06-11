@@ -218,7 +218,7 @@ export interface BoxelEnumeration {
  * `prefix` should be the boxel + '-' (e.g. from parseBoxel in starNaming).
  */
 export async function enumerateBoxel(prefix: string): Promise<BoxelEnumeration> {
-  const re = new RegExp('^' + prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\d+)$');
+  const re = new RegExp('^' + prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\d+)$', 'i');
   const seen = new Map<number, BoxelSystem>();
   let pages = 0, emptyStreak = 0;
   for (let page = 0; page < 12; page++) {
@@ -243,10 +243,12 @@ export async function enumerateBoxel(prefix: string): Promise<BoxelEnumeration> 
     if (results.length < 100 || emptyStreak >= 2) break; // last page, or the boxel's matches have dried up
   }
   const known = [...seen.values()].sort((a, b) => a.index - b.index);
+  // Display gaps in Spansh's canonical casing (the user may have typed a different case).
+  const displayPrefix = known.length ? known[0].name.replace(/\d+$/, '') : prefix;
   const maxIndex = known.length ? known[known.length - 1].index : -1;
   const gaps: number[] = [];
   for (let k = 0; k <= maxIndex; k++) if (!seen.has(k)) gaps.push(k);
-  return { prefix, known, gaps, maxIndex, pages };
+  return { prefix: displayPrefix, known, gaps, maxIndex, pages };
 }
 
 /**

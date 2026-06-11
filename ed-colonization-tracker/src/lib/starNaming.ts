@@ -49,8 +49,9 @@ export function friendlyStarName(code?: string | null): string {
 
 /** Extract the lowercase mass code (a–h) from a procedural name; null for catalog names. */
 export function parseMassCode(systemName?: string | null): string | null {
-  const m = (systemName || '').trim().match(/[A-Za-z]{2}-[A-Za-z]\s+([a-h])\d/);
-  return m ? m[1] : null;
+  // Mass code is lowercase in-game; tolerate any case the user types, normalize to lowercase.
+  const m = (systemName || '').trim().match(/[A-Za-z]{2}-[A-Za-z]\s+([a-h])\d/i);
+  return m ? m[1].toLowerCase() : null;
 }
 
 /**
@@ -59,9 +60,14 @@ export function parseMassCode(systemName?: string | null): string | null {
  * Returns null for catalog names (HIP/Sol) that have no boxel.
  */
 export function parseBoxel(systemName?: string | null): { boxel: string; prefix: string; index: number; massCode: string } | null {
-  const m = (systemName || '').trim().match(/^(.*\s[A-Za-z]{2}-[A-Za-z]\s([a-h])\d+)-(\d+)$/);
+  // Case-insensitive: mass code is lowercase in-game but tolerate "C27"/"c27".
+  // Capture the head before the mass code separately so we lowercase ONLY the mass
+  // code — lowercasing the whole boxel would mangle the region/LL-L casing.
+  const m = (systemName || '').trim().match(/^(.*\s[A-Za-z]{2}-[A-Za-z]\s)([a-h])(\d+)-(\d+)$/i);
   if (!m) return null;
-  return { boxel: m[1], prefix: m[1] + '-', massCode: m[2], index: parseInt(m[3], 10) };
+  const massCode = m[2].toLowerCase();
+  const boxel = m[1] + massCode + m[3];
+  return { boxel, prefix: boxel + '-', massCode, index: parseInt(m[4], 10) };
 }
 
 export type ColonizationRating = 'worthwhile' | 'decent' | 'marginal' | 'skip' | 'unknown';

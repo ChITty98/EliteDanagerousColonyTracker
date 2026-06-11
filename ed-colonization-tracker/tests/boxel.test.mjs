@@ -16,6 +16,12 @@ describe('parseBoxel', () => {
       boxel: 'Praea Euq SF-Y c1', prefix: 'Praea Euq SF-Y c1-', massCode: 'c', index: 3,
     });
   });
+  it('is case-insensitive on the mass code, normalizing to lowercase', () => {
+    expect(parseBoxel('Wregoe OD-Z C27-37')).toEqual({
+      boxel: 'Wregoe OD-Z c27', prefix: 'Wregoe OD-Z c27-', massCode: 'c', index: 37,
+    });
+    expect(parseMassCode('Wregoe OD-Z C27-37')).toBe('c');
+  });
   it('returns null for catalog / named systems', () => {
     expect(parseBoxel('HIP 47126')).toBeNull();
     expect(parseBoxel('Sol')).toBeNull();

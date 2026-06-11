@@ -2,6 +2,14 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.11.2] — 2026-06-11
+
+### Fixed
+- **Boxel scout no longer silently hides on a capitalized mass code.** The mass code is lowercase in-game (`Wregoe OD-Z c27-37`), and `parseBoxel`/`parseMassCode` only matched `[a-h]` — so a reference typed as `Wregoe OD-Z C27-37` (capital **C**) parsed as null and the **Scan boxel for gaps** panel vanished with no explanation, looking identical to a true named system. Both parsers are now **case-insensitive** and normalize the mass code to lowercase (only the mass code — the region/LL-L casing is preserved). `enumerateBoxel`'s Spansh-match regex is likewise case-insensitive and the gap chips render in Spansh's canonical casing, so the displayed names are always correct regardless of how the reference was typed.
+- **Named-system reference now explains itself.** When the Reference System is a catalog name (HIP, Sol, …) with no boxel, the Expansion tab shows a one-line note — *"Boxel scout unavailable — `<name>` is a named system, not a procedural one. Enter a name like `Col 173 Sector AX-J d9-52`…"* — instead of rendering nothing (which previously read as a bug).
+
+---
+
 ## [1.11.1] — 2026-06-11
 
 ### Fixed

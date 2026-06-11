@@ -373,6 +373,7 @@ export function ScoutingPage() {
       let systemName = searchEntry?.search.name || '';
       let fromJournal = false;
       let spanshBodyCount = 0;
+      let totalBodyCount: number | undefined; // true FSS total from the Spansh dump (when Spansh data is used)
       let journalScannedCount = 0;
       let spanshUpdatedAt: string | undefined;
 
@@ -393,6 +394,7 @@ export function ScoutingPage() {
             if (dump.bodies.length >= journalCached.scannedBodies.length) {
               bodies = dump.bodies;
               fromJournal = false;
+              totalBodyCount = dump.bodyCount; // true total — may exceed records (partial scan)
             } else {
               bodies = jBodies;
               fromJournal = true;
@@ -411,6 +413,7 @@ export function ScoutingPage() {
         const dump = await fetchSystemDump(id64);
         bodies = dump.bodies ?? [];
         spanshBodyCount = bodies.length;
+        totalBodyCount = dump.bodyCount; // true total — may exceed records (partial scan)
         spanshUpdatedAt = dump.updateTime || undefined;
         systemName = dump.name || systemName;
         fromJournal = false;
@@ -470,10 +473,17 @@ export function ScoutingPage() {
         notes: existingScouted?.notes,
         fromJournal,
         spanshBodyCount,
+        totalBodyCount,
         spanshUpdatedAt,
         journalBodyCount: journalCached?.bodyCount,
         journalScannedCount,
-        fssAllBodiesFound: journalCached?.fssAllBodiesFound,
+        // Journal source → trust its FSSAllBodiesFound; Spansh source → complete only
+        // if the records we have reach the dump's true body count.
+        fssAllBodiesFound: fromJournal
+          ? journalCached?.fssAllBodiesFound
+          : (typeof totalBodyCount === 'number' && totalBodyCount > 0
+              ? spanshBodyCount >= totalBodyCount
+              : journalCached?.fssAllBodiesFound),
         scoutedAt: new Date().toISOString(),
       });
 

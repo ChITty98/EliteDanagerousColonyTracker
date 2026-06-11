@@ -374,12 +374,14 @@ export function DashboardPage() {
         // Step 2: Fetch Spansh as supplement (only if we have an id64)
         let spanshBodies: SpanshDumpBody[] | null = null;
         let spanshName = sys.systemName;
+        let spanshTotal: number | undefined; // true FSS total from the dump
         if (id64) {
           try {
             const dump = await fetchSystemDump(id64);
             if (dump.bodies && dump.bodies.length > 0) {
               spanshBodies = dump.bodies;
               spanshName = dump.name;
+              spanshTotal = dump.bodyCount;
             }
           } catch { /* Spansh unavailable */ }
         }
@@ -417,8 +419,11 @@ export function DashboardPage() {
           fromJournal: isFromJournal || undefined,
           journalBodyCount: journalMeta?.bodyCount,
           journalScannedCount: journalMeta?.scannedCount,
-          fssAllBodiesFound: journalMeta?.fssAllBodiesFound,
+          fssAllBodiesFound: isFromJournal
+            ? journalMeta?.fssAllBodiesFound
+            : (typeof spanshTotal === 'number' && spanshTotal > 0 ? spanshCount >= spanshTotal : journalMeta?.fssAllBodiesFound),
           spanshBodyCount: spanshCount || undefined,
+          totalBodyCount: isFromJournal ? undefined : spanshTotal,
           scoutedAt: new Date().toISOString(),
         });
       } catch {

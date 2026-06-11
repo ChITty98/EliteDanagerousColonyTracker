@@ -2,6 +2,13 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.10.1] — 2026-06-11
+
+### Fixed
+- **Completeness now populates from the Expansion tab and Dashboard rescores, too.** v1.10.0 fixed the live-jump and target paths but missed the two *manual* scoring paths: `ScoutingPage` (scan / Rescore All) and `DashboardPage` (colony rescore) were still storing only the record count. Both now capture the Spansh dump's true `bodyCount` (`totalBodyCount`) and set `fssAllBodiesFound` from records-vs-total — so re-scoring a partial Spansh system in the Expansion tab correctly flags it `⚠ Partial scan: N of M`. (Existing scouted entries need one Rescore All to backfill the field.)
+
+---
+
 ## [1.10.0] — 2026-06-11
 
 ### Fixed

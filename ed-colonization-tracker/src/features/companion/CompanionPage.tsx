@@ -301,6 +301,11 @@ export function CompanionPage() {
   const targetOutlook = lastTarget
     ? colonizationOutlook(String(lastTarget.system || ''), lastTarget.starClass ? String(lastTarget.starClass) : null)
     : null;
+  // Scan completeness — "in Spansh" can be only a partial scan, so a low score
+  // may be hiding gems in the unrecorded bodies. Don't let partial read as "known".
+  const tScanned = lastTarget && typeof lastTarget.scannedBodyCount === 'number' ? (lastTarget.scannedBodyCount as number) : null;
+  const tTotal = lastTarget && typeof lastTarget.bodyCount === 'number' ? (lastTarget.bodyCount as number) : null;
+  const targetPartial = tScanned != null && tTotal != null && tTotal > tScanned;
 
   return (
     <div className="flex flex-col h-full">
@@ -502,7 +507,7 @@ export function CompanionPage() {
                   <span
                     className={
                       lastTarget.spansh === 'yes'
-                        ? 'text-green-400'
+                        ? (targetPartial ? 'text-amber-400 font-medium' : 'text-green-400')
                         : lastTarget.spansh === 'empty'
                         ? 'text-yellow-400'
                         : lastTarget.spansh === 'no'
@@ -511,7 +516,9 @@ export function CompanionPage() {
                     }
                   >
                     {lastTarget.spansh === 'yes'
-                      ? `\u2713 In Spansh${lastTarget.bodyCount ? ` (${lastTarget.bodyCount} bodies)` : ''}`
+                      ? (targetPartial
+                          ? `\u26a0 Spansh partial: ${tScanned} of ${tTotal} bodies \u2014 score provisional`
+                          : `\u2713 In Spansh${tTotal ? ` (${tTotal} bodies)` : ''}`)
                       : lastTarget.spansh === 'empty'
                       ? 'Spansh has the system (no body data)'
                       : lastTarget.spansh === 'no'

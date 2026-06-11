@@ -113,6 +113,7 @@ export interface SpanshDumpSystem {
   y: number;
   z: number;
   updateTime?: string; // e.g. "2026-03-11 17:23:28+00"
+  bodyCount?: number; // TRUE total body count from the FSS discovery scan (may exceed bodies.length = partial scan)
   bodies: SpanshDumpBody[];
   stations: Array<{
     name: string;

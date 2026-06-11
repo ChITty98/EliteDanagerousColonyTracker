@@ -564,6 +564,8 @@ export async function scoreUnknownSystem(systemAddress, systemName, deps) {
       bodyString,
       scoutedAt: new Date().toISOString(),
       spanshBodyCount: dump.bodies.length,
+      totalBodyCount: dump.bodyCount,
+      fssAllBodiesFound: typeof dump.bodyCount === 'number' && dump.bodyCount > 0 ? dump.bodies.length >= dump.bodyCount : undefined,
     };
     // scoutedSystems is a map keyed by id64 (systemAddress)
     deps.applyStatePatch({
@@ -625,7 +627,8 @@ export async function handleFSSAllBodiesFoundOverlay(ev, existing, deps) {
         bodyString,
         scoutedAt: new Date().toISOString(),
         spanshBodyCount: dump.bodies.length,
-        fssAllBodiesFound: true,
+        totalBodyCount: dump.bodyCount, // true FSS total — may exceed records (partial scan)
+        fssAllBodiesFound: typeof dump.bodyCount === 'number' && dump.bodyCount > 0 ? dump.bodies.length >= dump.bodyCount : true,
         journalBodyCount: ev.Count,
       };
       deps.applyStatePatch({
@@ -687,6 +690,7 @@ export async function handleFSSAllBodiesFoundOverlay(ev, existing, deps) {
         spanshBodyCount: 0,
         fssAllBodiesFound: true,
         journalBodyCount: ev.Count,
+        totalBodyCount: ev.Count, // honk total — for scan-completeness
         journalScannedCount: scanBodies.length,
       };
       deps.applyStatePatch({
@@ -758,25 +762,34 @@ export async function handleTargetSelectedOverlay(ev, existing, deps) {
   const scouted = scoutedSystems[ev.SystemAddress];
 
   let spansh = 'unknown';
-  let bodyCount;
+  let bodyCount;          // true FSS total
+  let scannedBodyCount;   // bodies we actually have data for
 
   if (scouted) {
-    if (typeof scouted.spanshBodyCount === 'number') {
-      if (scouted.spanshBodyCount > 0) {
-        spansh = 'yes';
-        bodyCount = scouted.spanshBodyCount;
-      } else {
-        spansh = 'empty';
-      }
+    const recs = scouted.fromJournal ? (scouted.journalScannedCount || 0) : (scouted.spanshBodyCount || 0);
+    const total = scouted.totalBodyCount || scouted.journalBodyCount || 0;
+    if (scouted.fromJournal) {
+      spansh = 'yes'; scannedBodyCount = recs; bodyCount = total || recs;
+    } else if (typeof scouted.spanshBodyCount === 'number') {
+      if (scouted.spanshBodyCount > 0) { spansh = 'yes'; scannedBodyCount = scouted.spanshBodyCount; bodyCount = total || scouted.spanshBodyCount; }
+      else { spansh = 'empty'; }
     }
   }
 
   if (spansh === 'unknown') {
+    // Fetch the dump so we can report scan COMPLETENESS (X of Y bodies), not just
+    // yes/no — a "3 of 13" partial means the score (if any) is provisional.
     try {
-      const result = await resolveSystemName(ev.Name);
-      spansh = result ? 'yes' : 'no';
+      const dump = await fetchSystemDump(ev.SystemAddress);
+      if (dump && Array.isArray(dump.bodies)) {
+        scannedBodyCount = dump.bodies.length;
+        bodyCount = typeof dump.bodyCount === 'number' ? dump.bodyCount : dump.bodies.length;
+        spansh = dump.bodies.length > 0 ? 'yes' : 'empty';
+      } else {
+        spansh = 'no';
+      }
     } catch (e) {
-      console.warn('[Overlay] Spansh target lookup failed for', ev.Name, '—', e && e.message);
+      console.warn('[Overlay] target dump lookup failed for', ev.Name, '—', e && e.message);
       spansh = 'unknown';
     }
   }
@@ -790,6 +803,7 @@ export async function handleTargetSelectedOverlay(ev, existing, deps) {
     visited,
     spansh,
     bodyCount,
+    scannedBodyCount,
     wasColonised: (scouted && scouted.isColonised) || false,
     score: (scouted && scouted.score && scouted.score.total) || null,
     starCount: (scouted && scouted.score && scouted.score.starCount) || null,

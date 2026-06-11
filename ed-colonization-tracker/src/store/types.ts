@@ -176,6 +176,7 @@ export interface ScoutedSystemData {
   fssAllBodiesFound?: boolean; // true if FSSAllBodiesFound confirmed all bodies detected — journal data is complete
   spanshUpdatedAt?: string; // when Spansh data was last submitted (from dump updateTime)
   spanshBodyCount?: number; // how many bodies Spansh returned (0 = empty response, undefined = never queried)
+  totalBodyCount?: number; // true FSS total (Spansh dump bodyCount, or journal honk) — for scan-completeness checks
   cachedBodies?: import('@/services/spanshApi').SpanshDumpBody[]; // full body data cached locally (for colony detail pages)
   scoutedAt: string; // ISO timestamp
 }

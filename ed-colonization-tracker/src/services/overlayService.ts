@@ -801,7 +801,8 @@ export async function handleFSSAllBodiesFound(event: {
         bodyString,
         scoutedAt: new Date().toISOString(),
         spanshBodyCount: dump.bodies.length,
-        fssAllBodiesFound: true,
+        totalBodyCount: dump.bodyCount, // true FSS total — may exceed records (partial scan)
+        fssAllBodiesFound: typeof dump.bodyCount === 'number' && dump.bodyCount > 0 ? dump.bodies.length >= dump.bodyCount : true,
         journalBodyCount: event.Count,
       });
       const color = score.total >= 100 ? '#fcd34d' : score.total >= 60 ? '#4ade80' : '#38bdf8';
@@ -885,6 +886,7 @@ export async function handleFSSAllBodiesFound(event: {
         spanshBodyCount: 0,
         fssAllBodiesFound: true,
         journalBodyCount: event.Count,
+        totalBodyCount: event.Count, // honk total — for scan-completeness
         journalScannedCount: pendingScanBodies.length,
       });
       const color = score.total >= 100 ? '#fcd34d' : score.total >= 60 ? '#4ade80' : '#38bdf8';
@@ -1091,6 +1093,8 @@ async function scoreUnknownSystem(systemAddress: number, systemName: string): Pr
       bodyString,
       scoutedAt: new Date().toISOString(),
       spanshBodyCount: dump.bodies.length,
+      totalBodyCount: dump.bodyCount,
+      fssAllBodiesFound: typeof dump.bodyCount === 'number' && dump.bodyCount > 0 ? dump.bodies.length >= dump.bodyCount : undefined,
     });
 
     const color = score.total >= 100 ? '#fcd34d' : score.total >= 60 ? '#4ade80' : '#38bdf8';

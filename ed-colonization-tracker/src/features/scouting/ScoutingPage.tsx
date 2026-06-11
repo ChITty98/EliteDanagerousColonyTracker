@@ -18,6 +18,7 @@ import {
   type ScoreBreakdown,
   type BodySegment,
 } from '@/lib/scoutingScorer';
+import { scanCompleteness } from '@/lib/scanCompleteness';
 import {
   extractExplorationData,
   journalBodiesToSpanshFormat,
@@ -1403,6 +1404,8 @@ export function ScoutingPage() {
                 );
               const isSelf = sys.search.name.toLowerCase() === refSystem.toLowerCase();
               const isFav = scoutedSystems[sys.search.id64]?.isFavorite;
+              const scoutedRec = scoutedSystems[sys.search.id64];
+              const scan = scoutedRec ? scanCompleteness(scoutedRec) : null;
 
               return (
                 <div
@@ -1421,6 +1424,12 @@ export function ScoutingPage() {
                               : 'border-border'
                   }`}
                 >
+                  {/* Partial-scan warning — the score is provisional; gems may be in unrecorded bodies */}
+                  {scan?.isPartial && (
+                    <div className="px-4 py-1 bg-amber-500/10 text-amber-300 text-xs font-medium">
+                      {'⚠'} Partial scan: {scan.records} of {scan.total} bodies &mdash; score provisional, {scan.total - scan.records} unscanned
+                    </div>
+                  )}
                   {/* Epic-view callout — spectacular surface geometry (flag, not points) */}
                   {sys.score?.epicView?.isEpic && (
                     <div className="px-4 py-1 bg-violet-500/10 text-violet-300 text-xs font-medium">

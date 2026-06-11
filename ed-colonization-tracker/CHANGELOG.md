@@ -2,6 +2,17 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.10.0] — 2026-06-11
+
+### Fixed
+- **"In Spansh" no longer means "fully scanned."** The app was marking *every* Spansh-scored system `fssAllBodiesFound: true` and ignoring the dump's true body count — so a system with only 3 of 13 bodies recorded (e.g. Col 173 AX-J d9-53) scored on those 3 and read as "known," when the gems could be in the 10 unrecorded bodies. The Spansh dump's real `bodyCount` is now captured (`totalBodyCount`), `fssAllBodiesFound` reflects records-vs-total, and scoring on a partial scan is treated as provisional.
+
+### Added
+- **Scan-completeness flags.** The **target alert** shows `⚠ Spansh partial: 3 of 13 bodies — score provisional` (amber) instead of a green "In Spansh," fetching the dump so it works for any targeted system. The **Expansion list** shows a matching `⚠ Partial scan: N of M bodies` banner so a provisional low score isn't silently dismissed. New `src/lib/scanCompleteness.ts` (+ tests) derives records-vs-true-total from a scouted record.
+- `SpanshDumpSystem.bodyCount` added to the type; scoring paths (client `overlayService` + server `overlay.js`) and the `target_selected` event carry the true total + scanned count.
+
+---
+
 ## [1.9.0] — 2026-06-11
 
 ### Added

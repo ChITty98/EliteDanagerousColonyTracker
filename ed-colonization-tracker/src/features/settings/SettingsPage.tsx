@@ -575,6 +575,17 @@ function OverlaySection({
           <span className="text-sm text-foreground">Enable overlay notifications</span>
         </label>
 
+        {/* Target pop-up toggle — global corner card on any tab */}
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={settings.targetPopupEnabled !== false}
+            onChange={(e) => updateSettings({ targetPopupEnabled: e.target.checked })}
+            className="w-4 h-4 accent-primary"
+          />
+          <span className="text-sm text-foreground">Event pop-ups (target, first-footfall, jump score, threats, dock milestones)</span>
+        </label>
+
         {/* Connection status */}
         {settings.overlayEnabled !== false && (
           <div className="bg-muted/50 border border-border rounded-lg p-3">

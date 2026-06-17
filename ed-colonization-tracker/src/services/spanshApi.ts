@@ -197,10 +197,14 @@ export async function searchNearbySystems(
 }
 
 export interface BoxelSystem { index: number; name: string; id64: number; bodyCount: number; }
+/** A sequence gap: an index Spansh has no system for under this name. `id64` is the
+ *  predicted address (linear within the boxel: base + index*step), or null when the
+ *  model can't be computed (fewer than 2 distinct known indices). */
+export interface BoxelGap { index: number; id64: string | null; }
 export interface BoxelEnumeration {
   prefix: string;            // e.g. "Col 173 Sector AX-J d9-"
   known: BoxelSystem[];      // systems Spansh knows, sorted by index
-  gaps: number[];            // indices ≤ maxIndex that Spansh doesn't have (likely unscanned)
+  gaps: BoxelGap[];          // indices ≤ maxIndex that Spansh doesn't have under this name (each with its predicted id64)
   maxIndex: number;
   pages: number;             // Spansh pages fetched (for transparency)
 }
@@ -246,8 +250,24 @@ export async function enumerateBoxel(prefix: string): Promise<BoxelEnumeration> 
   // Display gaps in Spansh's canonical casing (the user may have typed a different case).
   const displayPrefix = known.length ? known[0].name.replace(/\d+$/, '') : prefix;
   const maxIndex = known.length ? known[known.length - 1].index : -1;
-  const gaps: number[] = [];
-  for (let k = 0; k <= maxIndex; k++) if (!seen.has(k)) gaps.push(k);
+  // Within ONE boxel, id64(N) = base + N*step is exactly linear. Derive it from the
+  // lowest/highest known indices using BigInt (id64s exceed 32-bit). Needs ≥2 distinct
+  // indices; otherwise gaps carry id64: null (no model). Proven on d9: predicted d9-0
+  // id64 == HD 80881's real id64, exactly.
+  let base: bigint | null = null, step: bigint | null = null;
+  if (known.length >= 2) {
+    const lo = known[0], hi = known[known.length - 1];
+    if (hi.index !== lo.index) {
+      step = (BigInt(hi.id64) - BigInt(lo.id64)) / BigInt(hi.index - lo.index);
+      base = BigInt(lo.id64) - BigInt(lo.index) * step;
+    }
+  }
+  const gaps: BoxelGap[] = [];
+  for (let k = 0; k <= maxIndex; k++) {
+    if (seen.has(k)) continue;
+    const id64 = base !== null && step !== null ? (base + BigInt(k) * step).toString() : null;
+    gaps.push({ index: k, id64 });
+  }
   return { prefix: displayPrefix, known, gaps, maxIndex, pages };
 }
 
@@ -266,6 +286,42 @@ export async function fetchSystemDump(id64: number): Promise<SpanshDumpSystem> {
   const data: SpanshDumpSystem = raw.system ?? raw;
   dumpCache.set(id64, { data, ts: Date.now() });
   return data;
+}
+
+// Cache for id64 → dual-name lookups (boxel scout). Caches null results too, so a
+// re-scan doesn't re-fetch gaps Spansh confirmed it has no data for.
+const id64NameCache = new Map<string, { data: { name: string; bodyCount: number } | null; ts: number }>();
+
+/**
+ * Resolve a predicted gap id64 to its canonical system, if Spansh has one.
+ * Used by the boxel scout to detect "dual-name" systems: a gap in the name sequence
+ * that actually exists under a different canonical name (same id64). Returns the
+ * canonical name + body count, or null when Spansh has no system for that id64
+ * (a real unscanned/unmapped target). Never throws on 404 — returns null.
+ */
+export async function lookupSystemById64(
+  id64: string,
+): Promise<{ name: string; bodyCount: number } | null> {
+  const hit = id64NameCache.get(id64);
+  if (hit && Date.now() - hit.ts < CACHE_TTL) return hit.data;
+
+  let result: { name: string; bodyCount: number } | null = null;
+  const res = await rateLimitedFetch(`/spansh-api/api/dump/${id64}`);
+  if (res.ok) {
+    const raw = await res.json();
+    // Dump endpoint wraps data in { system: { ... } }
+    const sys: SpanshDumpSystem | undefined = raw.system ?? raw;
+    const bodies = sys?.bodies ?? [];
+    // A successful dump with a name means Spansh HAS this system under its canonical
+    // name — it's discovered (already mapped), even with 0 recorded bodies. Only a
+    // 404 (res not ok) means truly no data. Requiring bodies>0 wrongly bucketed
+    // 0-body dual-names (e.g. Synuefe NE-E d13-111) as "unclassified".
+    if (sys?.name) {
+      result = { name: sys.name, bodyCount: bodies.length };
+    }
+  }
+  id64NameCache.set(id64, { data: result, ts: Date.now() });
+  return result;
 }
 
 /**
@@ -287,4 +343,5 @@ export async function resolveSystemName(
 export function clearSpanshCache() {
   searchCache.clear();
   dumpCache.clear();
+  id64NameCache.clear();
 }

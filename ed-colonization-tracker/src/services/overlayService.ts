@@ -9,6 +9,7 @@ import { fetchSystemDump } from '@/services/spanshApi';
 import { scoreSystem, buildBodyString, classifyStars, filterQualifyingBodies } from '@/lib/scoutingScorer';
 import { isFleetCarrier, journalBodiesToSpanshFormat, mapStarType, extractExplorationData, getJournalFolderHandle } from '@/services/journalReader';
 import type { JournalScannedBody } from '@/services/journalReader';
+import { friendlyStarName, colonizationOutlook } from '@/lib/starNaming';
 
 // --- Types ---
 
@@ -128,6 +129,36 @@ async function sendOverlay(msg: OverlayMessage): Promise<void> {
   } catch (err) {
     console.warn('[Overlay] Send failed:', err);
   }
+}
+
+// Push the rich target-info line to the game overlay — same model the in-app popup
+// uses (friendly star + colonization outlook + odds + visited + Spansh + score).
+// Mirrors a target_selected event; the caller gates on overlayEnabled.
+export function sendTargetOverlay(ev: {
+  system?: string; starClass?: string; visited?: boolean; spansh?: string;
+  bodyCount?: number; scannedBodyCount?: number; score?: number;
+}): void {
+  const system = String(ev.system || 'Unknown');
+  const star = ev.starClass ? friendlyStarName(String(ev.starClass)) : '';
+  const outlook = colonizationOutlook(system, ev.starClass ? String(ev.starClass) : null);
+  const odds: string[] = [];
+  if (typeof outlook.pInteresting === 'number') odds.push(`int ${outlook.pInteresting.toFixed(0)}%`);
+  if (outlook.oxygenLift && outlook.oxygenLift >= 1.5) odds.push(`O₂ ${outlook.oxygenLift.toFixed(1)}×`);
+  const outlookStr = outlook.code ? `${outlook.label}${odds.length ? ` (${odds.join(', ')})` : ''}` : '';
+  const visitedStr = ev.visited ? '✓ Visited' : 'Unvisited';
+  let spanshStr = '';
+  if (ev.spansh === 'yes') {
+    spanshStr = (typeof ev.scannedBodyCount === 'number' && typeof ev.bodyCount === 'number' && ev.bodyCount > ev.scannedBodyCount)
+      ? `⚠ partial ${ev.scannedBodyCount}/${ev.bodyCount}`
+      : `✓ Spansh${ev.bodyCount ? ` (${ev.bodyCount})` : ''}`;
+  } else if (ev.spansh === 'no') {
+    spanshStr = '✗ unclassified';
+  } else if (ev.spansh === 'empty') {
+    spanshStr = 'Spansh: empty';
+  }
+  const scoreStr = typeof ev.score === 'number' ? `Score ${ev.score}` : '';
+  const text = `\u{1F3AF} ${[system, star, outlookStr, visitedStr, spanshStr, scoreStr].filter(Boolean).join('  ·  ')}`;
+  sendOverlay({ id: 'edcolony_target', text, color: '#fcd34d', x: X_LEFT, y: Y_SCORE, ttl: 15 });
 }
 
 // --- Public API ---

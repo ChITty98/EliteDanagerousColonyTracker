@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { useAppStore } from '@/store';
 import { startJournalWatcher, isWatcherRunning } from '@/services/journalWatcher';
 import { getJournalFolderHandle } from '@/services/journalReader';
+import { TargetPopup } from '@/components/TargetPopup';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '\u25C6' },
@@ -85,6 +86,9 @@ export function Layout() {
           <Outlet />
         </div>
       </main>
+
+      {/* Global target info pop-up — bottom-right corner card on every page */}
+      <TargetPopup />
     </div>
   );
 }

@@ -15,6 +15,7 @@ import {
   type CompanionContent,
 } from '@/services/overlayService';
 import { friendlyStarName, colonizationOutlook, type ColonizationRating } from '@/lib/starNaming';
+import { type CompanionEvent, eventIcon, eventColor, eventSummary } from '@/lib/companionEvents';
 
 // Colonization-outlook chip colors by rating.
 const RATING_STYLE: Record<ColonizationRating, string> = {
@@ -24,133 +25,6 @@ const RATING_STYLE: Record<ColonizationRating, string> = {
   skip: 'bg-slate-600/30 text-slate-300 border-slate-600/50',
   unknown: 'bg-slate-600/20 text-slate-400 border-slate-600/40',
 };
-
-interface CompanionEvent {
-  type: string;
-  timestamp: string;
-  system?: string;
-  station?: string;
-  body?: string;
-  commodity?: string;
-  amount?: number;
-  bodyCount?: number;
-  atmosphere?: string;
-  hasRings?: boolean;
-  stationType?: string;
-  population?: number;
-  systemAddress?: number;
-  [key: string]: unknown;
-}
-
-// --- Event icons/colors by type ---
-function eventIcon(type: string): string {
-  switch (type) {
-    case 'fsd_jump': return '\u{1F680}'; // rocket
-    case 'docked': return '\u2693'; // anchor
-    case 'scan_highlight': return '\u{1F52D}'; // telescope
-    case 'fss_complete': return '\u2705'; // check
-    case 'contribution': return '\u{1F4E6}'; // package
-    case 'companion_action': return '\u{1F4F1}'; // phone
-    case 'connected': return '\u{1F7E2}'; // green circle
-    case 'first_footfall': return '\u{1F9B6}'; // foot
-    case 'score_update': return '\u{1F3AF}'; // target
-    case 'distance_info': return '\u{1F4CD}'; // pin
-    case 'target_selected': return '\u{1F3AF}'; // target (bullseye)
-    case 'nav_route_plotted': return '\u{1F5FA}'; // world map
-    case 'nav_route_cleared': return '\u274C'; // red x
-    case 'station_dock_summary': return '\u{1F3DB}'; // classical building
-    case 'npc_threat': return '\u{1F6A8}'; // rotating red siren
-    case 'supercruise_exit': return '\u{1F6F0}\uFE0F'; // satellite
-    default: return '\u25C9';
-  }
-}
-
-function eventColor(type: string): string {
-  switch (type) {
-    case 'fsd_jump': return 'text-sky-400';
-    case 'docked': return 'text-green-400';
-    case 'scan_highlight': return 'text-yellow-400';
-    case 'fss_complete': return 'text-purple-400';
-    case 'contribution': return 'text-orange-400';
-    case 'companion_action': return 'text-cyan-400';
-    case 'connected': return 'text-green-400';
-    case 'first_footfall': return 'text-purple-400';
-    case 'score_update': return 'text-sky-400';
-    case 'distance_info': return 'text-slate-400';
-    case 'target_selected': return 'text-amber-400';
-    case 'nav_route_plotted': return 'text-indigo-400';
-    case 'nav_route_cleared': return 'text-slate-400';
-    case 'station_dock_summary': return 'text-blue-300';
-    case 'npc_threat': return 'text-red-400';
-    case 'supercruise_exit': return 'text-cyan-400';
-    default: return 'text-muted-foreground';
-  }
-}
-
-function eventSummary(ev: CompanionEvent): string {
-  switch (ev.type) {
-    case 'fsd_jump':
-      return `Jumped to ${ev.system}${ev.population ? ` (pop: ${ev.population.toLocaleString()})` : ''}`;
-    case 'docked':
-      return `Docked at ${ev.station} in ${ev.system}`;
-    case 'scan_highlight':
-      return `${ev.body}${ev.hasRings ? ' \u{1F48D} Ringed' : ''}${ev.atmosphere ? ` \u{1F30D} ${ev.atmosphere}` : ''}`;
-    case 'fss_complete':
-      return `FSS complete: ${ev.system} (${ev.bodyCount} bodies)`;
-    case 'contribution':
-      return `Contributed ${ev.amount?.toLocaleString()}t ${ev.commodity}`;
-    case 'first_footfall':
-      return `\u{1F9B6} First footfall: ${ev.body} (${ev.distance})`;
-    case 'score_update':
-      return `${ev.system} \u2014 Score: ${ev.score}${ev.source ? ` [${ev.source}]` : ''}`;
-    case 'distance_info':
-      return (ev.distances as string[])?.join(' | ') || '';
-    case 'companion_action':
-      return `Action: ${ev.action}`;
-    case 'connected':
-      return 'Connected to event stream';
-    case 'target_selected': {
-      const visited = ev.visited ? '\u2713 Visited' : 'New';
-      const spanshStr = ev.spansh === 'yes'
-        ? `\u2713 Spansh${ev.bodyCount ? ` (${ev.bodyCount} bodies)` : ''}`
-        : ev.spansh === 'empty'
-        ? 'Spansh: empty'
-        : ev.spansh === 'no'
-        ? '\u2717 Not in Spansh'
-        : 'Spansh: unknown';
-      const col = ev.wasColonised ? ' \u2014 colonised' : '';
-      const scoreStr = typeof ev.score === 'number' ? ` | Score: ${ev.score}` : '';
-      return `Targeting ${ev.system} \u2014 ${visited} | ${spanshStr}${col}${scoreStr}`;
-    }
-    case 'nav_route_plotted':
-      return `Route plotted: ${ev.hops} hops \u2192 ${ev.destination} (visited ${ev.visitedCount}/${ev.hops}, Spansh ${ev.spanshCached}/${ev.hops})`;
-    case 'npc_threat':
-      return `\u{1F6A8} ${ev.from}: "${ev.message}"`;
-    case 'supercruise_exit':
-      return `Dropped at ${ev.body}`;
-    case 'station_dock_summary': {
-      const ord = (n: number) => {
-        if (n >= 11 && n <= 13) return `${n}th`;
-        const s = n % 10;
-        return s === 1 ? `${n}st` : s === 2 ? `${n}nd` : s === 3 ? `${n}rd` : `${n}th`;
-      };
-      const count = ev.dockedCount as number;
-      const label = ev.isFirstVisit ? 'first visit' : `${ord(count)} visit`;
-      const extras: string[] = [];
-      if (ev.milestone && ev.milestone !== 1) extras.push(`\u{1F3C6} ${ev.milestone}-visit milestone`);
-      if (ev.factionChanged) extras.push(`\u26A0 New faction: ${ev.currentFaction}`);
-      if (ev.stateChanged) extras.push(`\u2192 ${ev.currentState} (was ${ev.previousState})`);
-      const body = `${ev.station} \u2014 ${label}${extras.length ? ' \u2014 ' + extras.join(' | ') : ''}`;
-      return body;
-    }
-    case 'nav_route_cleared':
-      return 'Route cleared';
-    case 'heartbeat':
-      return '';
-    default:
-      return ev.type;
-  }
-}
 
 export function CompanionPage() {
   const overlayEnabled = useAppStore((s) => s.settings.overlayEnabled);

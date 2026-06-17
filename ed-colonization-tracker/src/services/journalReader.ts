@@ -2088,7 +2088,7 @@ export function journalBodiesToSpanshFormat(bodies: JournalScannedBody[], _syste
       // Journal ring extraction doesn't keep radii/mass — zeros keep the
       // SpanshRing shape; the scorer only checks rings.length.
       innerRadius: 0,
-      outerRadius: 0,
+      outerRadius: typeof r.outerRad === 'number' ? r.outerRad : 0, // metres — for ring-edge epic detection
       mass: 0,
     })),
     parents: b.parents,

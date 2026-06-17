@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAppStore } from '@/store';
 import {
@@ -6,6 +6,7 @@ import {
   fetchSystemDump,
   resolveSystemName,
   enumerateBoxel,
+  lookupSystemById64,
   type SpanshSearchSystem,
   type SpanshDumpBody,
   type BoxelEnumeration,
@@ -156,6 +157,7 @@ export function ScoutingPage() {
   const clearJournalExplorationCache = useAppStore((s) => s.clearJournalExplorationCache);
   const knownSystems = useAppStore((s) => s.knownSystems);
   const knownStations = useAppStore((s) => s.knownStations);
+  const commanderPosition = useAppStore((s) => s.commanderPosition);
 
   // My colonized systems = systems I've personally colonized (projects + manual additions)
   // Used for the "My systems" quick-select dropdown
@@ -215,6 +217,50 @@ export function ScoutingPage() {
     }
   }, [refSystem]);
 
+  // Dual-name resolution for boxel gaps. A gap (an index Spansh lacks under THIS name)
+  // may be an existing system under a different canonical name. We classify each gap's
+  // predicted id64:
+  //   visited     — its id64 is a key in scoutedSystems/journalExplorationCache (local, sync)
+  //   mapped      — Spansh has a system for that id64 under another name (async lookup → object)
+  //   unclassified— Spansh has no data for it (async lookup → null) = the real target
+  // Results are keyed by id64 string. An absent key = not yet resolved.
+  const [boxelNameLookups, setBoxelNameLookups] = useState<Record<string, { name: string; bodyCount: number } | null>>({});
+  const [boxelResolving, setBoxelResolving] = useState(false);
+  const boxelResolveEpoch = useRef(0);
+  useEffect(() => {
+    boxelResolveEpoch.current += 1;
+    const epoch = boxelResolveEpoch.current;
+    setBoxelNameLookups({});
+    setBoxelResolving(false);
+    if (!boxelInfo) return;
+    // Locally-known addresses (id64 / systemAddress). Object keys are strings already;
+    // compare as strings so large id64s never lose precision.
+    const visited = new Set<string>([
+      ...Object.keys(scoutedSystems),
+      ...Object.keys(journalExplorationCache),
+    ]);
+    // Only look up non-visited gaps that have a computed id64. The rest are either
+    // already visited (shown locally) or have no model (plain unclassified fallback).
+    const toResolve = boxelInfo.enum.gaps.filter(
+      (g): g is { index: number; id64: string } => g.id64 !== null && !visited.has(g.id64),
+    );
+    if (toResolve.length === 0) return;
+    setBoxelResolving(true);
+    (async () => {
+      for (const g of toResolve) {
+        if (boxelResolveEpoch.current !== epoch) return; // a newer scan superseded us
+        const data = await lookupSystemById64(g.id64); // rateLimitedFetch serializes these
+        if (boxelResolveEpoch.current !== epoch) return;
+        setBoxelNameLookups((prev) => ({ ...prev, [g.id64]: data }));
+      }
+      if (boxelResolveEpoch.current === epoch) setBoxelResolving(false);
+    })();
+    // Re-run only when a new boxel scan lands. scoutedSystems/journalExplorationCache are
+    // read for the visited filter but shouldn't retrigger the whole Spansh sweep on every
+    // store tick — the visited set is captured at scan time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boxelInfo]);
+
   // --- Comparison state ---
   const [compareIds, setCompareIds] = useState<number[]>([]);
   const [showComparison, setShowComparison] = useState(false);
@@ -229,6 +275,7 @@ export function ScoutingPage() {
 
   // --- Filter state ---
   const [hideColonized, setHideColonized] = useState(true);
+  const [partialOnly, setPartialOnly] = useState(false);
   const [bodyCountFilter, setBodyCountFilter] = useState<'all' | 'gt20' | '10to20' | '5to10' | 'lt5'>('all');
   // Source filter: which data sources to show (combinable)
   type SourceFilter = 'journal' | 'journal_complete' | 'spansh' | 'both' | 'none';
@@ -670,9 +717,12 @@ export function ScoutingPage() {
         if (!matches) return false;
       }
 
+      // Partial-only filter — just the systems with a known body total but unrecorded bodies.
+      if (partialOnly && !(saved && scanCompleteness(saved).isPartial)) return false;
+
       return true;
     });
-  }, [sortedSystems, hideColonized, bodyCountFilter, sourceFilters, colonizedSystems, scoutedSystems, journalExplorationCache]);
+  }, [sortedSystems, hideColonized, partialOnly, bodyCountFilter, sourceFilters, colonizedSystems, scoutedSystems, journalExplorationCache]);
 
   // Keep filteredRef in sync so scoutAll always uses the latest filtered list
   filteredRef.current = filteredSystems;
@@ -686,16 +736,20 @@ export function ScoutingPage() {
     () => filteredSystems.filter((s) => {
       const saved = scoutedSystems[s.search.id64];
       const cached = journalExplorationCache[s.search.id64];
-      return (s.search.body_count || saved?.journalBodyCount || cached?.bodyCount || 0) > 0;
+      // Spansh's `body_count` is often null even when the system HAS bodies — use the
+      // actual bodies[] array length (reliably populated) as the primary signal.
+      return (s.search.bodies?.length || s.search.body_count || saved?.journalBodyCount || cached?.bodyCount || 0) > 0;
     }),
     [filteredSystems, scoutedSystems, journalExplorationCache],
   );
   const systemsNoBodies = useMemo(
     () => filteredSystems.filter((s) => {
       const saved = scoutedSystems[s.search.id64];
-      return !(s.search.body_count || saved?.journalBodyCount || 0);
+      const cached = journalExplorationCache[s.search.id64];
+      // Exact complement of systemsWithBodies — bodies[] length is the reliable signal.
+      return !(s.search.bodies?.length || s.search.body_count || saved?.journalBodyCount || cached?.bodyCount);
     }),
-    [filteredSystems, scoutedSystems],
+    [filteredSystems, scoutedSystems, journalExplorationCache],
   );
   const [showNoBodies, setShowNoBodies] = useState(false);
 
@@ -1234,7 +1288,7 @@ export function ScoutingPage() {
               className="w-full bg-muted border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
             />
           </div>
-          {myColonizedSystems.length > 0 && (
+          {(myColonizedSystems.length > 0 || commanderPosition?.systemName) && (
             <div>
               <label className="block text-xs text-muted-foreground mb-1">Quick select</label>
               <select
@@ -1245,6 +1299,9 @@ export function ScoutingPage() {
                 className="bg-muted border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
               >
                 <option value="">My systems...</option>
+                {commanderPosition?.systemName && (
+                  <option value={commanderPosition.systemName}>{'\u{1F4CD} Current: '}{commanderPosition.systemName}</option>
+                )}
                 {settings.homeSystem && (
                   <option value={settings.homeSystem}>{settings.homeSystem} (home)</option>
                 )}
@@ -1345,20 +1402,81 @@ export function ScoutingPage() {
                   {` · ${boxelInfo.enum.known.length} known, max index ${boxelInfo.enum.maxIndex}`}
                   {scoredKnown.length > 0 ? ` · ${scoredKnown.length} scored here, best ${best}` : ''}
                 </div>
-                {boxelInfo.enum.gaps.length > 0 ? (
-                  <div>
-                    <div className="text-xs text-amber-300 font-medium mb-1">
-                      {'⚠'} {boxelInfo.enum.gaps.length} sequence gaps &mdash; likely unscanned, go FSS:
+                {boxelInfo.enum.gaps.length > 0 ? (() => {
+                  // Classify each gap by its predicted id64:
+                  //   visited      — locally known (scoutedSystems / journalExplorationCache)
+                  //   mapped       — Spansh has a system under another canonical name (NOT a target)
+                  //   unclassified — no Spansh data (or no id64 model, or still resolving) = the real find
+                  const visitedKeys = new Set<string>([
+                    ...Object.keys(scoutedSystems),
+                    ...Object.keys(journalExplorationCache),
+                  ]);
+                  const unclassified: typeof boxelInfo.enum.gaps = [];
+                  const visited: typeof boxelInfo.enum.gaps = [];
+                  const mapped: Array<{ index: number; id64: string; name: string; bodyCount: number }> = [];
+                  for (const g of boxelInfo.enum.gaps) {
+                    if (g.id64 !== null && visitedKeys.has(g.id64)) { visited.push(g); continue; }
+                    const resolved = g.id64 !== null ? boxelNameLookups[g.id64] : undefined;
+                    if (g.id64 !== null && resolved) {
+                      mapped.push({ index: g.index, id64: g.id64, name: resolved.name, bodyCount: resolved.bodyCount });
+                    } else {
+                      // null id64 (no model), resolved-to-null (no data), or not-yet-resolved → real target.
+                      unclassified.push(g);
+                    }
+                  }
+                  return (
+                    <div className="space-y-3">
+                      {boxelResolving && (
+                        <div className="text-[11px] text-muted-foreground italic">Resolving names… checking gaps against Spansh by id64.</div>
+                      )}
+                      {/* 🟢 The real targets — no Spansh data */}
+                      {unclassified.length > 0 && (
+                        <div>
+                          <div className="text-xs text-green-300 font-medium mb-1">
+                            {'\u{1F7E2}'} {unclassified.length} unclassified &mdash; no data yet, go FSS:
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {unclassified.map((g) => (
+                              <span key={g.index} className="text-[11px] font-mono bg-amber-500/10 text-amber-200 border border-amber-500/30 rounded px-1.5 py-0.5 select-all">
+                                {boxelInfo.enum.prefix}{g.index}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {/* 🔵 Visited by the commander */}
+                      {visited.length > 0 && (
+                        <div>
+                          <div className="text-xs text-sky-300/80 font-medium mb-1">
+                            {'\u{1F535}'} {visited.length} visited by you:
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {visited.map((g) => (
+                              <span key={g.index} className="text-[11px] font-mono bg-sky-500/10 text-sky-200/70 border border-sky-500/20 rounded px-1.5 py-0.5 select-all">
+                                {boxelInfo.enum.prefix}{g.index}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {/* ⚪ Already mapped under another name — NOT targets */}
+                      {mapped.length > 0 && (
+                        <div>
+                          <div className="text-xs text-muted-foreground font-medium mb-1">
+                            {'⚪'} {mapped.length} already mapped (other name):
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {mapped.map((m) => (
+                              <span key={m.index} className="text-[11px] font-mono bg-muted/40 text-muted-foreground border border-border rounded px-1.5 py-0.5">
+                                {boxelInfo.enum.prefix}{m.index} &rarr; <span className="text-foreground/70">{m.name}</span> ({m.bodyCount} bodies)
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {boxelInfo.enum.gaps.map((g) => (
-                        <span key={g} className="text-[11px] font-mono bg-amber-500/10 text-amber-200 border border-amber-500/30 rounded px-1.5 py-0.5 select-all">
-                          {boxelInfo.enum.prefix}{g}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
+                  );
+                })() : (
                   <div className="text-xs text-green-400">No gaps below the max index &mdash; this boxel is fully mapped in Spansh.</div>
                 )}
               </div>
@@ -1408,6 +1526,16 @@ export function ScoutingPage() {
                   className="accent-primary"
                 />
                 Hide colonized
+              </label>
+              {/* Filter: partial scans only */}
+              <label className="flex items-center gap-1.5 text-xs text-amber-300 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={partialOnly}
+                  onChange={(e) => setPartialOnly(e.target.checked)}
+                  className="accent-amber-500"
+                />
+                {'⚠'} Partial only
               </label>
               {/* Filter: body count */}
               <select

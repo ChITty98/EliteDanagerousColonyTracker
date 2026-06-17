@@ -247,8 +247,8 @@ describe('scoreSystem components', () => {
 describe('detectEpicView', () => {
   // Minimal raw-body builders (Spansh units: radius km, semiMajorAxis AU).
   let id = 100;
-  const estar = (subType, { sma, parents } = {}) => ({ bodyId: id++, type: 'Star', subType, semiMajorAxis: sma, parents });
-  const emoon = ({ sma, parents, landable = true } = {}) => ({ bodyId: id++, type: 'Planet', subType: 'Rocky body', isLandable: landable, semiMajorAxis: sma, parents });
+  const estar = (subType, { sma, parents, name } = {}) => ({ bodyId: id++, name, type: 'Star', subType, semiMajorAxis: sma, parents });
+  const emoon = ({ sma, parents, landable = true, name } = {}) => ({ bodyId: id++, name, type: 'Planet', subType: 'Rocky body', isLandable: landable, semiMajorAxis: sma, parents });
   const eplanet = (over) => ({ bodyId: id++, type: 'Planet', subType: 'Gas giant', isLandable: false, ...over });
 
   it('flags a co-orbiting tight binary (two non-BD stars, sum of smas ≤ 0.1 AU)', () => {
@@ -292,20 +292,33 @@ describe('detectEpicView', () => {
     expect(detectEpicView([giant, moon]).isEpic).toBe(false);
   });
 
-  it('flags a ring-edge moon (landable moon of a ringed parent)', () => {
-    const giant = eplanet({ rings: [{ name: 'A Ring', type: 'Rocky' }] });
-    const moon = emoon({ sma: 2.0, parents: [{ Planet: giant.bodyId }] }); // far out — no big-sky, but ring-edge
+  it('flags a ring-edge moon (close to a ringed parent, rings fill its sky), naming moon + parent', () => {
+    const giant = eplanet({ name: 'Col 173 Sector AX-J d9-52 2', rings: [{ name: 'A Ring', type: 'Rocky', outerRadius: 300000000 }] }); // 300,000 km
+    const moon = emoon({ name: 'Col 173 Sector AX-J d9-52 2 a', sma: 0.003, parents: [{ Planet: giant.bodyId }] }); // ≈449,000 km → rings span ~68°
     const r = detectEpicView([giant, moon]);
     expect(r.isEpic).toBe(true);
-    expect(r.reasons).toContain('ring-edge moon');
+    // short designator strips the common prefix → moon "2 a" skims rings of parent "2"
+    expect(r.reasons.find((x) => /skims rings of/.test(x))).toBe('2 a — skims rings of 2');
   });
 
-  it('flags a ring-edge moon of a ringed BROWN DWARF / star parent (not just planets) — the Col 173 2a case', () => {
-    const bd = { bodyId: id++, type: 'Star', subType: 'Y (Brown dwarf) Star', rings: [{ name: 'Ring', type: 'Rocky' }] };
-    const moon = { bodyId: id++, type: 'Planet', subType: 'High metal content world', isLandable: true, semiMajorAxis: 0.004, parents: [{ Star: bd.bodyId }] };
+  it('flags a ring-edge moon of a ringed BROWN DWARF / star parent — the Col 173 2a case', () => {
+    const bd = { bodyId: id++, name: 'Col 173 Sector AX-J d9-52 2', type: 'Star', subType: 'Y (Brown dwarf) Star', rings: [{ name: 'Ring', type: 'Rocky', outerRadius: 300000000 }] };
+    const moon = { bodyId: id++, name: 'Col 173 Sector AX-J d9-52 2 a', type: 'Planet', subType: 'High metal content world', isLandable: true, semiMajorAxis: 0.004, parents: [{ Star: bd.bodyId }] };
     const r = detectEpicView([bd, moon]);
     expect(r.isEpic).toBe(true);
-    expect(r.reasons).toContain('ring-edge moon');
+    expect(r.reasons.find((x) => /skims rings of/.test(x))).toContain('2 a');
+  });
+
+  it('does NOT flag a far moon of a ringed parent (rings are a distant thread — the d9-107 3c case)', () => {
+    const giant = eplanet({ name: 'X 3', rings: [{ name: 'r', type: 'Rocky', outerRadius: 300000000 }] });
+    const moon = emoon({ name: 'X 3 c', sma: 2.0, parents: [{ Planet: giant.bodyId }] }); // far out → rings span < 1°
+    expect(detectEpicView([giant, moon]).reasons.some((x) => /skims rings of/.test(x))).toBe(false);
+  });
+
+  it('does NOT flag ring-edge when the ring outer radius is unknown (no data → no false positive)', () => {
+    const giant = eplanet({ name: 'X 3', rings: [{ name: 'r', type: 'Rocky' }] }); // no outerRadius
+    const moon = emoon({ name: 'X 3 a', sma: 0.003, parents: [{ Planet: giant.bodyId }] });
+    expect(detectEpicView([giant, moon]).reasons.some((x) => /skims rings of/.test(x))).toBe(false);
   });
 
   it('big-sky uses solarRadius when a star/brown-dwarf parent has no km radius', () => {

@@ -2,6 +2,65 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.13.4] — 2026-06-16
+
+### Changed
+- **Richer in-game target overlay.** Selecting an FSD target now draws the *same* colonization model the in-app pop-up uses — friendly star name, mass-code outlook + odds (`interesting %`, `O₂ ×`), `✓ Visited`/`Unvisited`, Spansh classification (`✓ Spansh (N)` / `⚠ partial N/M` / `✗ unclassified`), and score — instead of the thinner server-built line. The overlay is now pushed client-side (`sendTargetOverlay`), so the in-game line and the pop-up can't drift, and **"New" now reads "Unvisited"** to match. Removed the obsolete server-side quick overlay so there's exactly one target overlay.
+
+---
+
+## [1.13.3] — 2026-06-16
+
+### Added
+- **"⚠ Partial only" filter (Expansion tab).** A checkbox in the results filter bar collapses the list to just the systems with a known body total but unrecorded bodies (records < total) — the ones with possible gems hiding in the unscanned bodies.
+
+---
+
+## [1.13.2] — 2026-06-16
+
+### Fixed
+- **"No body data" group no longer hides systems Spansh actually has data for.** The Expansion-tab split keyed on Spansh's `body_count`, which comes back null for ~1/3 of systems even when they have bodies (e.g. `Wregoe VZ-B b54-4` with 8 bodies) — those were wrongly dumped into "no body data." Both groups now split on the reliably-populated `bodies[]` array length, so a system with recorded bodies always lands in the scored list (where partial scans get the ⚠ banner).
+
+---
+
+## [1.13.1] — 2026-06-16
+
+### Added
+- **Quick-select "📍 Current" option (Expansion tab).** The Reference-System Quick-select now has a `📍 Current: <system>` entry at the top that sets your commander's current system as the reference in one click. The dropdown also shows even before you have any colonies, so the option is always available.
+
+---
+
+## [1.13.0] — 2026-06-11
+
+### Added
+- **Headline event pop-ups on any tab.** The bottom-right pop-up (previously target-only) now also surfaces the key live events without a trip to the Companion tab: **first footfalls, jump scores, NPC threats, and notable dock summaries** (first visits / milestones / faction or state changes — routine re-docks are skipped). Each pops a compact icon + summary card; a selected target keeps its rich outlook/Spansh card. The pop-up and the Companion feed now share one set of formatters (`src/lib/companionEvents.ts`) so they can't drift. Toggle in Settings → "Event pop-ups".
+- **Target info as an in-game overlay.** Selecting an FSD target now also draws a line on the ED overlay: `🎯 system · star type · New/✓Visited · ✓ Spansh (N) / ⚠ partial / ✗ unclassified · Score N` — so you can vet a target without leaving the galaxy map. Gated on the existing overlay-enabled setting; the in-app pop-up still works independently.
+
+---
+
+## [1.12.1] — 2026-06-11
+
+### Fixed
+- **Epic-view detection now works correctly for live-scanned systems — names the body, fires big-sky/tight-binary, and stops false ring-edge flags.** Several linked gaps in the server-side scoring path:
+  - The live scan accumulator dropped each body's **`radius`/`semiMajorAxis`**, and the server's copy of `journalBodiesToSpanshFormat` (drifted from the client's) dropped them *again* on the way to the scorer — so a live-scored system could only ever fire the *ring-edge* reason, never *big-sky parent* or *tight binary*. That's why Col 173 AX-J d9-86 saved a bare `ring-edge moon` with no body. Both now keep the geometry, so all three triggers fire and reasons name the body (e.g. `7 a — parent fills 22° of sky`).
+  - **Ring-edge no longer false-positives on far moons.** It flagged *any* landable moon of a ringed parent, so a distant one like d9-107 `3c` (orbiting ~4.6 Ls out, rings a thin thread) got tagged as if it skimmed them. It now requires the rings to actually fill the moon's sky (apparent span ≥ 40°), using the ring **outer radius** — which the journal scan previously discarded and is now captured and plumbed through both converters. A genuine shepherd moon (d9-52 `2a/2b`) still qualifies.
+  - The live scorer never wrote scanned bodies into **`journalExplorationCache`**, so a later **Rescore** of a journal-only system had no body data and silently no-op'd. It now persists them.
+  - Systems scored *before* this fix (e.g. d9-86) need a quick re-honk to pick it all up; everything scanned from here on is complete and correct.
+- **Boxel scout: 0-body dual-names are no longer mis-flagged as "unclassified."** A gap whose canonical system exists in Spansh but has 0 recorded bodies (e.g. `d9-111` → Synuefe NE-E d13-111) landed in the green "unclassified — go FSS" bucket instead of grey "already mapped," because the id64 lookup required ≥1 body. Any named Spansh system now counts as already-mapped regardless of body count.
+
+---
+
+## [1.12.0] — 2026-06-11
+
+### Added
+- **Boxel scout de-aliases gaps by id64.** A "gap" in the name sequence can actually be an existing system under a different canonical name — a catalog star (e.g. `Col 173 Sector AX-J d9-0` IS `HD 80881`, a 25-body system mapped since 2020) or an overlapping-region procedural name (`d9-39` → `Synuefe NE-E d13-29`). The scout now derives the boxel's exact linear id64 model (`id64(N) = base + N·step`) from the known systems, computes each gap's predicted id64, and resolves it — splitting gaps into **🟢 unclassified** (no Spansh data — the real targets), **🔵 visited by you** (gap id64 matched against your `scoutedSystems`/journal cache), and **⚪ already mapped** (exists under another name — shows the canonical name + body count). Verified on Col 173 AX-J d9: the predicted `d9-0` id64 equals HD 80881's real id64, exactly. Resolution is cached and rate-limited (only the non-visited gaps are looked up).
+- **Global target pop-up.** Selecting an FSD target in the galaxy map pops a non-blocking bottom-right card with the target's info on **any tab** — friendly star type, mass-code colonization outlook + name-derived odds, visited status, and the **Spansh classification (✓ in Spansh with body count / ⚠ partial scan / ✗ not in Spansh — unclassified)** — so you no longer have to sit on the Companion tab to read a target. Toggle in Settings → "Target pop-up".
+
+### Changed
+- **Epic-view marker names the body.** Instead of a vague `ring-edge moon` or `parent fills 25° of sky`, the badge now says *which* body to go stand on — e.g. `2 a — skims rings of 2`, `2 a — parent fills 25° of sky`, `tight binary 0.07 AU (A, B)`. Existing scouted systems need one **Rescore All** to backfill the names; new scans get them automatically.
+
+---
+
 ## [1.11.3] — 2026-06-11
 
 ### Changed

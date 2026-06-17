@@ -153,6 +153,8 @@ export interface AppSettings {
   squadronCarrierCallsigns: string[];
   fcModulesCapacity: number; // Tons of capacity consumed by installed services/modules (user-entered from Carrier Management)
   overlayEnabled: boolean;
+  targetPopupEnabled?: boolean; // Show the global target-info pop-up (corner card) on any tab — default on
+
   // Domain Highlights — configurable lists of which types show as showpieces on the Architect's Domain page
   domainHighlightStars: string[];
   domainHighlightAtmos: string[];

@@ -742,6 +742,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   squadronCarrierCallsigns: [],
   fcModulesCapacity: 0,
   overlayEnabled: true,
+  targetPopupEnabled: true,
   domainHighlightStars: ['Black Hole', 'Neutron Star', 'Wolf-Rayet', 'White Dwarf', 'O-class', 'Carbon Star'],
   domainHighlightAtmos: ['Oxygen'],
   domainHighlightStations: ['Dodec Spaceport', 'Coriolis Station', 'Orbis Station', 'Ocellus Station', 'Asteroid Base', 'Planetary Port'],

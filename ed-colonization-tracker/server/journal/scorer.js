@@ -382,6 +382,7 @@ function countProximityClusters(qualBodies) {
 // (journalBodiesToSpanshFormat) converts its metres to match.
 const AU_KM = 149597870.7;
 const SUN_R_KM = 696340;
+const RING_EDGE_MIN_DEG = 40; // a moon "skims" rings only if they span >= this much of its sky
 function isBrownDwarfStar(b) {
   return b.type === 'Star' && /brown dwarf/i.test(b.subType || '');
 }
@@ -410,8 +411,29 @@ export function detectEpicView(bodies) {
   const byId = new Map(bodies.map((b) => [b.bodyId, b]));
   const realStars = bodies.filter((b) => b.type === 'Star' && !isBrownDwarfStar(b));
 
+  // Short designator: strip the longest common name prefix (trimmed to a word
+  // boundary) so "Col 173 Sector AX-J d9-52 2 a" → "2 a". Falls back to the full
+  // name when there's no clean shared prefix (e.g. a single body).
+  const names = bodies.map((b) => b.name).filter((n) => typeof n === 'string');
+  let prefix = '';
+  if (names.length >= 2) {
+    prefix = names[0];
+    for (const n of names) {
+      let i = 0;
+      while (i < prefix.length && i < n.length && prefix[i] === n[i]) i++;
+      prefix = prefix.slice(0, i);
+    }
+    prefix = prefix.slice(0, prefix.lastIndexOf(' ') + 1);
+  }
+  const short = (b) => {
+    const n = b && typeof b.name === 'string' ? b.name : '';
+    if (!n) return String(b && b.name != null ? b.name : '');
+    return prefix && n.startsWith(prefix) ? n.slice(prefix.length) : n;
+  };
+
   // 1. Tight binary — two non-brown-dwarf stars within 0.1 AU.
   let tightestAu = Infinity;
+  let tightestPair = null;
   for (const s of realStars) {
     const sma = s.semiMajorAxis; // AU
     if (typeof sma !== 'number' || sma <= 0) continue;
@@ -419,7 +441,10 @@ export function detectEpicView(bodies) {
     if (p0 && 'Star' in p0) {
       // orbits another star directly: separation = its own semi-major axis
       const parent = byId.get(p0.Star);
-      if (parent && parent.type === 'Star' && !isBrownDwarfStar(parent)) tightestAu = Math.min(tightestAu, sma);
+      if (parent && parent.type === 'Star' && !isBrownDwarfStar(parent) && sma < tightestAu) {
+        tightestAu = sma;
+        tightestPair = [s, parent];
+      }
     }
   }
   // co-orbiting pairs sharing an immediate barycentre: separation = sum of smas
@@ -429,20 +454,28 @@ export function detectEpicView(bodies) {
     const p0 = s.parents && s.parents[0];
     if (p0 && 'Null' in p0 && typeof sma === 'number' && sma > 0) {
       const k = p0.Null;
-      (bary.get(k) || bary.set(k, []).get(k)).push(sma);
+      (bary.get(k) || bary.set(k, []).get(k)).push({ star: s, sma });
     }
   }
-  for (const smas of bary.values()) {
-    if (smas.length >= 2) {
-      smas.sort((a, b) => a - b);
-      tightestAu = Math.min(tightestAu, smas[0] + smas[1]);
+  for (const entries of bary.values()) {
+    if (entries.length >= 2) {
+      entries.sort((a, b) => a.sma - b.sma);
+      const au = entries[0].sma + entries[1].sma;
+      if (au < tightestAu) {
+        tightestAu = au;
+        tightestPair = [entries[0].star, entries[1].star];
+      }
     }
   }
-  if (tightestAu <= 0.1) reasons.push(`tight binary ${tightestAu.toFixed(3)} AU`);
+  if (tightestAu <= 0.1) {
+    const pair = tightestPair ? ` (${short(tightestPair[0])}, ${short(tightestPair[1])})` : '';
+    reasons.push(`tight binary ${tightestAu.toFixed(3)} AU${pair}`);
+  }
 
   // 2. Big-sky parent — landable moon whose parent subtends >= 20 deg overhead.
   // Parent may be a planet OR a star/brown dwarf (radius from solarRadius then).
   let biggestDeg = 0;
+  let biggestBody = null;
   for (const b of bodies) {
     if (!b.isLandable || typeof b.semiMajorAxis !== 'number' || b.semiMajorAxis <= 0) continue;
     const parent = immediateParent(b, byId);
@@ -451,16 +484,26 @@ export function detectEpicView(bodies) {
     if (!(parentRadiusKm > 0)) continue;
     const sepKm = b.semiMajorAxis * AU_KM;
     if (sepKm <= parentRadiusKm) continue; // artifact guard: impossible "moon inside parent"
-    biggestDeg = Math.max(biggestDeg, apparentDeg(parentRadiusKm, sepKm));
+    const deg = apparentDeg(parentRadiusKm, sepKm);
+    if (deg > biggestDeg) { biggestDeg = deg; biggestBody = b; }
   }
-  if (biggestDeg >= 20) reasons.push(`parent fills ${Math.round(biggestDeg)}° of sky`);
+  if (biggestDeg >= 20) reasons.push(`${short(biggestBody)} — parent fills ${Math.round(biggestDeg)}° of sky`);
 
-  // 3. Ring-edge moon — landable moon of a ringed parent, planet OR brown dwarf/star
-  // (e.g. Col 173 AX-J d9-52 "2a" skims the ring edge of a ringed Y brown dwarf).
+  // 3. Ring-edge moon — a landable moon orbiting close enough to a RINGED parent
+  // that the rings fill a big chunk of its sky (apparent span >= RING_EDGE_MIN_DEG).
+  // A far moon of a ringed planet just sees the rings as a distant thread — not epic
+  // (e.g. Col 173 AX-J d9-107 "3c" orbits ~4.6 Ls out, rings span ~16°). Needs the
+  // ring outer radius (metres) and the moon's orbital distance.
   for (const b of bodies) {
-    if (!b.isLandable) continue;
+    if (!b.isLandable || typeof b.semiMajorAxis !== 'number' || b.semiMajorAxis <= 0) continue;
     const parent = immediateParent(b, byId);
-    if (parent && Array.isArray(parent.rings) && parent.rings.length > 0) { reasons.push('ring-edge moon'); break; }
+    if (!parent || !Array.isArray(parent.rings) || parent.rings.length === 0) continue;
+    const ringOuterKm = parent.rings.reduce((m, r) => Math.max(m, typeof r.outerRadius === 'number' ? r.outerRadius / 1000 : 0), 0);
+    if (!(ringOuterKm > 0)) continue; // no radius data — can't confirm proximity; don't false-positive
+    if (apparentDeg(ringOuterKm, b.semiMajorAxis * AU_KM) >= RING_EDGE_MIN_DEG) {
+      reasons.push(`${short(b)} — skims rings of ${short(parent)}`);
+      break;
+    }
   }
 
   return { isEpic: reasons.length > 0, reasons };

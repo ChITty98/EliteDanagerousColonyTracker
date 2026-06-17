@@ -385,7 +385,9 @@ export function handleScanEventOverlay(ev, existing, deps) {
     volcanism: ev.Volcanism,
     surfaceTemperature: ev.SurfaceTemperature,
     terraformState: ev.TerraformState,
-    rings: ev.Rings ? ev.Rings.map((r) => ({ name: r.Name, ringClass: r.RingClass })) : undefined,
+    radius: ev.Radius, // metres — needed for epic-view big-sky / ring geometry
+    semiMajorAxis: ev.SemiMajorAxis, // metres — orbital distance to parent
+    rings: ev.Rings ? ev.Rings.map((r) => ({ name: r.Name, ringClass: r.RingClass, outerRad: r.OuterRad })) : undefined,
     parents: ev.Parents,
     wasDiscovered: ev.WasDiscovered,
     wasMapped: ev.WasMapped,
@@ -503,7 +505,9 @@ function journalBodiesToSpanshFormat(bodies, systemName) {
     volcanismType: b.volcanism,
     terraformingState: b.terraformState,
     surfaceTemperature: b.surfaceTemperature,
-    rings: b.rings ? b.rings.map((r) => ({ name: r.name, type: r.ringClass })) : undefined,
+    radius: b.radius != null ? b.radius / 1000 : undefined, // metres → km (epic-view geometry)
+    semiMajorAxis: b.semiMajorAxis != null ? b.semiMajorAxis / 149597870700 : undefined, // metres → AU
+    rings: b.rings ? b.rings.map((r) => ({ name: r.name, type: r.ringClass, outerRadius: typeof r.outerRad === 'number' ? r.outerRad : 0 })) : undefined,
     parents: b.parents,
   }));
 }
@@ -695,6 +699,18 @@ export async function handleFSSAllBodiesFoundOverlay(ev, existing, deps) {
       };
       deps.applyStatePatch({
         scoutedSystems: { __upsert: { [String(ev.SystemAddress)]: record } },
+        // Persist the scanned bodies too, so a later Rescore can regenerate the
+        // score (e.g. after a scorer change). Without this, journal-scored systems
+        // lose their bodies and Rescore becomes a no-op. Map-merge upsert.
+        journalExplorationCache: { __upsert: { [String(ev.SystemAddress)]: {
+          systemAddress: ev.SystemAddress,
+          systemName,
+          coordinates: null,
+          bodyCount: ev.Count,
+          fssAllBodiesFound: true,
+          scannedBodies: scanBodies,
+          lastSeen: new Date().toISOString(),
+        } } },
       });
       const color = score.total >= 100 ? '#fcd34d' : score.total >= 60 ? '#4ade80' : '#38bdf8';
       deps.sendOverlay({
@@ -811,6 +827,8 @@ export async function handleTargetSelectedOverlay(ev, existing, deps) {
     scoreSource: scouted ? (scouted.fromJournal ? 'Journal' : 'Spansh') : null,
     timestamp: new Date().toISOString(),
   });
+  // The in-game target overlay is drawn client-side (sendTargetOverlay in
+  // overlayService) using the full colonization model the popup uses.
 }
 
 // ===== NavRoute companion summary =====

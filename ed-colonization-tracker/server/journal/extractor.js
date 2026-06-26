@@ -231,7 +231,12 @@ export function readMarketSnapshot(journalDir) {
 
 /** Convert a ColonisationConstructionDepot ResourcesRequired entry → ProjectCommodity. */
 export function resourceToCommodity(r) {
-  const known = findCommodityByJournalName(r.Name);
+  // The construction depot names some goods by a different internal symbol than
+  // the commodity market (e.g. Land Enrichment Systems = $terrainenrichmentsystems_name;
+  // in the depot vs landenrichmentsystems in the market). The journal-name lookup
+  // misses those, so fall back to the localised display name — which resolves to
+  // the canonical market ID and lets carrier/ship stock match the project need.
+  const known = findCommodityByJournalName(r.Name) || findCommodityByDisplayName(r.Name_Localised);
   const rawName = r.Name || 'unknown';
   // Slug for unknown commodities: strip `$` prefix and `_name;` suffix (was previously
   // a broken character class that removed every n/a/m/e letter from the id).
@@ -660,6 +665,72 @@ export function extractDockHistory(journalDir) {
     }
   }
   return out;
+}
+
+// ===== Squadron + ship usage (journal scan) =====
+
+const SHIP_NAMES = {
+  adder: 'Adder', anaconda: 'Anaconda', asp: 'Asp Explorer', asp_scout: 'Asp Scout', belugaliner: 'Beluga Liner',
+  cobramkiii: 'Cobra Mk III', cobramkiv: 'Cobra Mk IV', cobramkv: 'Cobra Mk V', cutter: 'Imperial Cutter',
+  diamondback: 'Diamondback Scout', diamondbackxl: 'Diamondback Explorer', dolphin: 'Dolphin', eagle: 'Eagle',
+  empire_courier: 'Imperial Courier', empire_eagle: 'Imperial Eagle', empire_trader: 'Imperial Clipper',
+  federation_corvette: 'Federal Corvette', federation_dropship: 'Federal Dropship',
+  federation_dropship_mkii: 'Federal Assault Ship', federation_gunship: 'Federal Gunship', ferdelance: 'Fer-de-Lance',
+  hauler: 'Hauler', independant_trader: 'Keelback', krait_mkii: 'Krait Mk II', krait_light: 'Krait Phantom',
+  mamba: 'Mamba', mandalay: 'Mandalay', orca: 'Orca', panthermkii: 'Panther Clipper Mk II', python: 'Python',
+  python_nx: 'Python Mk II', sidewinder: 'Sidewinder', type6: 'Type-6 Transporter', type7: 'Type-7 Transporter',
+  type8: 'Type-8 Transporter', type9: 'Type-9 Heavy', type9_military: 'Type-10 Defender', typex: 'Alliance Chieftain',
+  typex_2: 'Alliance Crusader', typex_3: 'Alliance Challenger', viper: 'Viper Mk III', viper_mkiv: 'Viper Mk IV', vulture: 'Vulture',
+};
+const friendlyShip = (t) => SHIP_NAMES[t] || t;
+
+/**
+ * Walk every journal and derive (a) the latest squadron name/rank from
+ * SquadronStartup, and (b) per-ship playtime/sessions from LoadGame/ShipyardSwap
+ * (segments split at swaps, summed within each session — case-normalised, since
+ * LoadGame.Ship and ShipyardSwap.ShipType differ in case). Persisted as
+ * `journalScan` by Sync-All — data the single Statistics event doesn't carry.
+ */
+export function extractSquadronAndShips(journalDir) {
+  const files = listJournalFiles(journalDir);
+  let squadron = null;
+  const shipTime = {}, shipSessions = {}, shipNames = {};
+  const tms = (x) => { const t = Date.parse(x); return Number.isFinite(t) ? t : 0; };
+  const norm = (t) => String(t || '').toLowerCase();
+  for (const jf of files) {
+    let text;
+    try { text = fs.readFileSync(jf.fullPath, 'utf-8'); } catch { continue; }
+    let firstTs = null, lastTs = null, loadShip = null, loadName = null;
+    const swaps = [];
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      const ti = line.indexOf('"timestamp":"');
+      if (ti >= 0) { const t = tms(line.slice(ti + 13, line.indexOf('"', ti + 13))); if (t) { if (!firstTs) firstTs = t; lastTs = t; } }
+      if (line.indexOf('"event":"SquadronStartup"') >= 0) {
+        try { const e = JSON.parse(line); if (e.SquadronName) squadron = { name: e.SquadronName, rank: e.CurrentRank != null ? e.CurrentRank : null, at: e.timestamp }; } catch { /* skip */ }
+      } else if (line.indexOf('"event":"LoadGame"') >= 0 && line.indexOf('"Ship"') >= 0) {
+        try { const e = JSON.parse(line); const sp = norm(e.Ship); if (sp && !/buggy|srv|fighter|test/i.test(sp) && !loadShip) { loadShip = sp; loadName = e.ShipName; } } catch { /* skip */ }
+      } else if (line.indexOf('"event":"ShipyardSwap"') >= 0) {
+        try { const e = JSON.parse(line); if (e.ShipType) swaps.push({ ts: tms(e.timestamp), ship: norm(e.ShipType) }); } catch { /* skip */ }
+      }
+    }
+    if (!firstTs || !lastTs || !loadShip) continue;
+    const segs = [{ ts: firstTs, ship: loadShip }];
+    for (const sw of swaps.sort((a, b) => a.ts - b.ts)) if (sw.ts >= firstTs && sw.ts <= lastTs) segs.push(sw);
+    for (let i = 0; i < segs.length; i++) {
+      const end = i + 1 < segs.length ? segs[i + 1].ts : lastTs;
+      shipTime[segs[i].ship] = (shipTime[segs[i].ship] || 0) + Math.max(0, end - segs[i].ts);
+    }
+    shipSessions[loadShip] = (shipSessions[loadShip] || 0) + 1;
+    if (loadName) { (shipNames[loadShip] = shipNames[loadShip] || new Set()).add(loadName); }
+  }
+  const ships = {};
+  for (const ship of Object.keys(shipTime)) {
+    ships[ship] = { hours: Math.round(shipTime[ship] / 3600000), sessions: shipSessions[ship] || 0, friendly: friendlyShip(ship), name: shipNames[ship] ? [...shipNames[ship]][0] : undefined };
+  }
+  let top = null;
+  for (const ship of Object.keys(ships)) if (!top || ships[ship].hours > ships[top].hours) top = ship;
+  return { squadron, shipUsage: { ships, top: top ? Object.assign({ type: top }, ships[top]) : null } };
 }
 
 // ===== Travel-time matrix =====

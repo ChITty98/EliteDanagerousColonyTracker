@@ -115,6 +115,8 @@ export function processNewEvents(parsed, deps) {
   processDockEvents(parsed, existing, patch, extraEvents, deps);
   processNpcThreat(parsed, extraEvents, deps);
   processMaterialEvents(parsed, existing, patch, extraEvents);
+  processStatisticsEvents(parsed, existing, patch);
+  processCodexEvents(parsed, existing, patch);
 
   // Overlay message builders (run AFTER other processors so they see a
   // consistent view of the state — e.g. handleDockedOverlay checks
@@ -179,6 +181,75 @@ export function processNewEvents(parsed, deps) {
     deps.applyStatePatch(patch);
   }
   for (const evt of extraEvents) deps.broadcastEvent(evt);
+}
+
+// ===== Statistics (game lifetime totals → persisted journalStats) =====
+
+// The game writes a `Statistics` event (the in-game Stats panel: trade tonnage,
+// jumps, bodies scanned, carrier hauling, time played, …) on load and
+// periodically. Persist the latest snapshot so the carrier-dock fun-fact
+// overlay (and any future UI) has it without a manual journal scan. Replace
+// strategy — a plain-object patch value is a wholesale replace server-side.
+function processStatisticsEvents(parsed, existing, patch) {
+  const evs = parsed.statisticsEvents;
+  if (!evs || evs.length === 0) return;
+  const ev = evs[evs.length - 1]; // latest snapshot in this batch
+  const { event, timestamp, ...groups } = ev;
+  void event;
+  if (Object.keys(groups).length === 0) return;
+  // Skip the write/broadcast when the snapshot is byte-identical to what's stored.
+  const prev = existing.journalStats && existing.journalStats.statistics;
+  try {
+    if (prev && JSON.stringify(prev) === JSON.stringify(groups)) return;
+  } catch { /* fall through and write */ }
+  patch.journalStats = { capturedAt: timestamp || null, statistics: groups };
+}
+
+// ===== Codex entries (brain trees → per-body flag) =====
+
+// Resolve a CodexEntry's BodyID to a body name via cached body data. The
+// per-body flag is keyed "systemName|bodyName" (matching the client), so we need
+// the name, not the numeric id.
+function resolveBodyNameById(existing, systemAddress, bodyId) {
+  if (typeof bodyId !== 'number') return null;
+  const key = String(systemAddress);
+  const sc = existing.scoutedSystems && existing.scoutedSystems[key];
+  if (sc && Array.isArray(sc.cachedBodies)) {
+    const b = sc.cachedBodies.find((x) => x && x.bodyId === bodyId);
+    if (b && b.name) return b.name;
+  }
+  const jc = existing.journalExplorationCache && existing.journalExplorationCache[key];
+  if (jc && Array.isArray(jc.scannedBodies)) {
+    const b = jc.scannedBodies.find((x) => x && x.bodyId === bodyId);
+    if (b && b.bodyName) return b.bodyName;
+  }
+  return null;
+}
+
+// A scanned brain-tree CodexEntry auto-confirms the brain-tree flag on that body.
+// All colour variants localise to "<Colour> Brain Tree" (raw Name is the genus
+// $Codex_Ent_Seed_Name;). If we can't pin the body (no cached bodies for the
+// system), skip rather than flag the whole system. Never downgrades an existing
+// flag (manual confirmation stays manual).
+function processCodexEvents(parsed, existing, patch) {
+  const evs = parsed.codexEntryEvents;
+  if (!evs || evs.length === 0) return;
+  const existingFlags = existing.bodyFlags || {};
+  const upserts = {};
+  for (const ev of evs) {
+    if (!ev || !/brain tree/i.test(ev.Name_Localised || '')) continue;
+    const sysName = ev.System;
+    if (!sysName) continue;
+    const bodyName = resolveBodyNameById(existing, ev.SystemAddress, ev.BodyID);
+    if (!bodyName) continue;
+    const flagKey = `${sysName}|${bodyName}`;
+    const prior = existingFlags[flagKey] || upserts[flagKey] || {};
+    if (prior.brainTrees) continue; // already confirmed — leave source as-is
+    upserts[flagKey] = { ...prior, brainTrees: { source: 'scanned' } };
+  }
+  if (Object.keys(upserts).length === 0) return;
+  patch.bodyFlags = { __upsert: upserts };
+  console.log(`[Codex] Auto-flagged brain trees on ${Object.keys(upserts).length} body(ies)`);
 }
 
 // ===== Position =====
@@ -434,6 +505,36 @@ function backfillCarrierCargoIds(carrierCargo) {
     }
   }
   return { changed: Object.keys(upserts).length > 0, upserts, itemsFixed };
+}
+
+// ===== Project-commodity backfill — fix depot-vs-market commodity-ID drift =====
+//
+// Elite reports a few goods by a different internal symbol in the construction
+// depot than in the commodity market (Land Enrichment Systems = terrainenrichment-
+// systems in the depot vs landenrichmentsystems in the market; H.E. Suits =
+// hazardousenvironmentsuits vs hesuits; Microbial Furnaces = heliostaticfurnaces
+// vs microbialfurnaces). Project requirements parsed from the depot stored the
+// depot symbol, which never matched carrier/ship stock — so the Projects tab's
+// "need to buy" ignored a full hold. The resolver now falls back to the display
+// name for NEW depot syncs; this backfill repairs already-stored projects by the
+// same route (and cleans up old vowel-mangled slugs). Idempotent: a commodity
+// already on its canonical ID passes through unchanged.
+function backfillProjectCommodityIds(projects) {
+  const upserts = {};
+  let fixed = 0;
+  for (const p of projects) {
+    if (!p || !Array.isArray(p.commodities)) continue;
+    let changed = false;
+    const commodities = p.commodities.map((c) => {
+      const def = findCommodityByDisplayName(c.name);
+      if (!def || def.id === c.commodityId) return c; // unknown name or already canonical
+      changed = true;
+      fixed++;
+      return { ...c, commodityId: def.id };
+    });
+    if (changed) upserts[p.id] = { ...p, commodities };
+  }
+  return { changed: Object.keys(upserts).length > 0, upserts, fixed };
 }
 
 // ===== Companion feed SSE + state writes (non-overlay) =====
@@ -1235,6 +1336,14 @@ export function pollCompanionFiles(journalDir, deps) {
   if (carrierCargoFix.changed) {
     patch.carrierCargo = { __upsert: carrierCargoFix.upserts };
     console.log(`[CarrierCargo] Backfill normalised IDs for ${Object.keys(carrierCargoFix.upserts).length} carrier(s) (${carrierCargoFix.itemsFixed} items)`);
+  }
+
+  // Backfill: repair project commodity IDs that were stored under the depot's
+  // internal symbol (or an old mangled slug) so carrier/ship stock registers.
+  const projectFix = backfillProjectCommodityIds(Array.isArray(existing.projects) ? existing.projects : []);
+  if (projectFix.changed) {
+    patch.projects = { __idKey: 'id', __upsert: projectFix.upserts };
+    console.log(`[Projects] Backfill normalised commodity IDs for ${Object.keys(projectFix.upserts).length} project(s) (${projectFix.fixed} items)`);
   }
 
   const shipCargo = readShipCargo(journalDir);

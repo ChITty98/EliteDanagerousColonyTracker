@@ -1,0 +1,92 @@
+{
+ "agriculture": [
+  {
+   "modifier": 0.4,
+   "scope": "body",
+   "reason": "+ agriculture boost: Body is ELW/WW or has BIO"
+  },
+  {
+   "modifier": -0.4,
+   "scope": "body",
+   "reason": "- agriculture boost: Body is ICY or has TIDAL"
+  }
+ ],
+ "extraction": [
+  {
+   "modifier": 0.4,
+   "scope": "sys",
+   "reason": "+ extraction boost: System reserveLevel is MAJOR or PRISTINE"
+  },
+  {
+   "modifier": -0.4,
+   "scope": "sys",
+   "reason": "- extraction boost: System reserveLevel is LOW or DEPLETED"
+  },
+  {
+   "modifier": 0.4,
+   "scope": "body",
+   "reason": "+ extraction boost: Body has VOLCANISM"
+  }
+ ],
+ "hightech": [
+  {
+   "modifier": 0.4,
+   "scope": "body",
+   "reason": "+ hightech boost: Body is AW/ELW/WW"
+  },
+  {
+   "modifier": 0.4,
+   "scope": "body",
+   "reason": "+ hightech boost: Body has BIO"
+  },
+  {
+   "modifier": 0.4,
+   "scope": "body",
+   "reason": "+ hightech boost: Body has GEO"
+  }
+ ],
+ "refinery": [
+  {
+   "modifier": 0.4,
+   "scope": "sys",
+   "reason": "+ refinery boost: System reserveLevel is MAJOR or PRISTINE"
+  },
+  {
+   "modifier": -0.4,
+   "scope": "sys",
+   "reason": "- refinery boost: System reserveLevel is LOW or DEPLETED"
+  }
+ ],
+ "tourism": [
+  {
+   "modifier": 0.4,
+   "scope": "body",
+   "reason": "+ tourism boost: Body is AW/ELW/WW"
+  },
+  {
+   "modifier": 0.4,
+   "scope": "body",
+   "reason": "+ tourism boost: Body has BIO"
+  },
+  {
+   "modifier": 0.4,
+   "scope": "body",
+   "reason": "+ tourism boost: Body has GEO"
+  },
+  {
+   "modifier": 0.4,
+   "scope": "sys",
+   "reason": "+ tourism boost: System has Neutron Star"
+  },
+  {
+   "modifier": 0.4,
+   "scope": "sys",
+   "reason": "+ tourism boost: System has Black Hole"
+  },
+  {
+   "modifier": 0.4,
+   "scope": "sys",
+   "reason": "+ tourism boost: System has White Dwarf"
+  }
+ ]
+}

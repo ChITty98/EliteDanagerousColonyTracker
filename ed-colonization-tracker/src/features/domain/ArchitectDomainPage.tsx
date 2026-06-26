@@ -152,6 +152,72 @@ function groupBySystem<T extends { systemName: string }>(items: T[]): [string, T
 
 // ===== Main Page =====
 
+/**
+ * Squadron Season comparison. Your colonisation contribution comes from your
+ * journal (the Statistics event's Squadron group); a squadron-mate's number is
+ * NOT journaled by ED, so it's entered manually (read off the in-game squadron
+ * leaderboard). Shows the head-to-head gap for the current season.
+ */
+function SquadronSeasonPanel() {
+  const journalStats = useAppStore((s) => s.journalStats);
+  const journalScan = useAppStore((s) => s.journalScan);
+  const settings = useAppStore((s) => s.settings);
+  const updateSettings = useAppStore((s) => s.updateSettings);
+
+  const sq = (journalStats?.statistics?.Squadron) || {};
+  const yours = Number(sq.Squadron_Leaderboard_colonisation_contribution_highestcontribution || 0);
+  const squadName = journalScan?.squadron?.name || null;
+  const mateName = settings.squadronMateName || '';
+  const mate = settings.squadronMateContribution;
+
+  if (!squadName && !yours) return null;
+
+  const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
+  const gap = typeof mate === 'number' ? yours - mate : null;
+
+  return (
+    <div className="bg-gradient-to-r from-card to-muted/30 border border-purple-500/25 rounded-lg p-4 mb-6">
+      <h3 className="text-xs font-semibold text-purple-300/80 uppercase tracking-wider mb-3">
+        {'\u{1F3F4}'} Squadron Season{squadName ? ` — ${squadName}` : ''}
+      </h3>
+      <div className="flex flex-wrap items-end gap-x-8 gap-y-3">
+        <div>
+          <div className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">Your colonisation contribution</div>
+          <div className="text-2xl font-bold text-foreground tabular-nums">{fmt(yours)}</div>
+        </div>
+        <div>
+          <div className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">Squadron-mate (manual)</div>
+          <div className="flex items-center gap-2">
+            <input
+              type="text" placeholder="name"
+              value={mateName}
+              onChange={(e) => updateSettings({ squadronMateName: e.target.value })}
+              className="w-28 bg-muted/50 border border-border/50 rounded px-2 py-1 text-sm text-foreground focus:outline-none focus:border-primary"
+            />
+            <input
+              type="number" placeholder="contribution"
+              value={mate ?? ''}
+              onChange={(e) => updateSettings({ squadronMateContribution: e.target.value === '' ? undefined : Number(e.target.value) })}
+              className="w-32 bg-muted/50 border border-border/50 rounded px-2 py-1 text-sm text-foreground tabular-nums focus:outline-none focus:border-primary"
+            />
+          </div>
+        </div>
+        {gap != null && (
+          <div>
+            <div className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">This season</div>
+            <div className={`text-lg font-bold ${gap >= 0 ? 'text-green-400' : 'text-amber-400'}`}>
+              {gap >= 0 ? `You lead by ${fmt(gap)}` : `Behind by ${fmt(-gap)}`}
+            </div>
+          </div>
+        )}
+      </div>
+      <p className="text-[11px] text-muted-foreground/60 mt-2">
+        Your figure tracks your journal automatically. ED doesn't journal other members' numbers, so enter {mateName || "your mate"}'s from the in-game squadron leaderboard.
+      </p>
+    </div>
+  );
+}
+
 export function ArchitectDomainPage() {
   const projects = useAppStore((s) => s.projects);
   const manualColonizedSystems = useAppStore((s) => s.manualColonizedSystems);
@@ -230,6 +296,8 @@ export function ArchitectDomainPage() {
         {domain.colonyCount} systems. {domain.totalStars} stars. {domain.totalLandable} landable bodies. {domain.totalStations} stations.
         {domain.totalPopulation > 0 && ` Population: ${Math.round(domain.totalPopulation / 1_000_000)}M.`}
       </p>
+
+      <SquadronSeasonPanel />
 
       {/* Showpieces — Domain Highlights */}
       {domain.showpieces.length > 0 && (

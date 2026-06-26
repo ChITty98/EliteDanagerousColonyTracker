@@ -1052,7 +1052,12 @@ function buildStationInfoMap(
 // ===== Commodity Conversion =====
 
 export function resourceToCommodity(r: JournalResourceRequired): ProjectCommodity {
-  const known = findCommodityByJournalName(r.Name);
+  // The construction depot names some goods by a different internal symbol than
+  // the commodity market (Land Enrichment Systems = $terrainenrichmentsystems_name;
+  // in the depot vs landenrichmentsystems in the market). The journal-name lookup
+  // misses those, so fall back to the localised display name — which resolves to
+  // the canonical market ID and lets carrier/ship stock match the project need.
+  const known = findCommodityByJournalName(r.Name) || findCommodityByDisplayName(r.Name_Localised);
   const rawName = r.Name || 'unknown';
   // Slug: strip `$` prefix and `_name;` suffix (was previously a broken character
   // class that removed every n/a/m/e letter from the id).

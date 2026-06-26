@@ -2,6 +2,47 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.16.0] — 2026-06-25
+
+### Added / Changed
+- **Commodity build-recommender overhaul (Raven Colonial data).** The "what should I build to *produce* commodity X?" feature got three upgrades:
+  - **Every commodity is now covered.** Its commodity→economy table was missing 17 — including **Medical Diagnostic Equipment** (now mapped to High-Tech), plus the colonisation-construction goods (Steel, CMM Composite, Building Fabricators, Surface Stabilisers, Structural Regulators, etc.). Completed using the table's own category→economy pattern.
+  - **Body-aware — it now tells you *which body*.** For each recommendation it computes the production buff a body gives the target economy (Raven Colonial's ±0.4 model — e.g. High-Tech +0.4 on Earth-like/Water/Ammonia worlds and on bodies with bio or geo signals), ranks buffed bodies first, and shows why (✨ +0.4 on [body] · bio signals). Applies to both colony-port paths and supporting hubs, so Medical Diagnostic Equipment now points at the best High-Tech host body in your system, not just the build type.
+  - **Accurate build tonnage.** Installations with no itemised requirement list now show Raven Colonial's authoritative total haul instead of a vague tier-typical range.
+- **Offline Raven data.** Build requirements per installation (`src/data/ravenBuildTypes.json`, 60 installations) and body/system economy buffs (`ravenBodyBuffs.json`) are bundled offline — no live API calls at runtime.
+- **Docs.** New FAQ category **Commodity Production** (how the recommender works, body buffs, data sources) and a **Colony economy production buffs** reference table in the Wiki. Raven Colonial credit updated for the expanded offline data.
+
+## [1.15.0] — 2026-06-24
+
+### Added
+- **🧠 Brain Tree flags on bodies.** Mark which bodies host Brain Trees (renewable raw-material farms — Grade 1–4 raws incl. Yttrium/Polonium — and Guardian-linked organic structures). They leave no trace in Spansh or journal scan data unless you codex-scan them, so this captures what you've *seen*. Three states:
+  - **Candidate** (auto, derived): any landable body with volcanism and a 200–496 K surface temperature shows a faint 🧠 hint — it *could* host brain trees (necessary-not-sufficient; ejecta-crater/Guardian proximity isn't in the data, so expect false positives).
+  - **Scanned** (auto): scanning a Brain Tree in-game fires a `CodexEntry`, which the server now captures and resolves to the exact body (by BodyID) to auto-confirm the flag.
+  - **Marked** (manual): toggle 🧠 on any landable body in the System → Bodies tab for ones you've seen but not scanned (e.g. Col 173 AX-J d9-52 · 2A).
+  - A global **"Brain Tree sites"** panel on the Scouting page rolls up every confirmed site across colonies *and* scouted systems. State persists per body (`bodyFlags`), syncs across devices, and a scan never downgrades a manual mark.
+
+### Changed
+- **Carrier-dock facts overhauled — far more variety, no more repeats.** The "did you know" pool grew from 13 to ~35 facts (added lifetime mining / exploration / bounty / trade / exobiology profits, biggest single trade, most-hauled commodity, your biggest colony by builds, materials traded, passengers ferried, ships owned, farthest-from-start, plus a few cheeky ones), and the picker is now a **shuffle-bag** — every fact shows once before any repeat. So re-docking the carrier mid-haul stops cycling the same few lines (which it did before: a weak last-only guard plus 3× hauling weighting kept surfacing "Best hauling session").
+- **Squadron Season comparison + lots more facts.** A new **Squadron Season** card on the Architect's Domain page puts your colonisation contribution (from your journal) head-to-head against a squadron-mate's — entered manually, since ED doesn't journal other members' figures. A Sync-All journal scan now persists your **squadron name/rank** (`SquadronStartup`) and **per-ship playtime** (`journalScan`), powering new dock facts — *"Flying with FFR RED PEREGRINES," "Your workhorse: Panther Clipper Mk II (357 h)," "Top squadron colonisation contribution: 271,537," "6.45B CR deposited to the squadron bank"* — alongside domain superlatives (most populated colony, empire span, cargo ordered, temperature range, ice-ball %). The dock-fact pool went from 13 → ~47.
+
+---
+
+## [1.14.1] — 2026-06-17
+
+### Fixed
+- **Carrier/ship stock now counts against colony needs for goods the construction depot names differently than the market.** Elite reports a few commodities by a different internal symbol in the `ColonisationConstructionDepot` event than in the commodity market — **Land Enrichment Systems** (`terrainenrichmentsystems` vs `landenrichmentsystems`), **H.E. Suits** (`hazardousenvironmentsuits` vs `hesuits`), **Microbial Furnaces** (`heliostaticfurnaces` vs `microbialfurnaces`). The project parser matched only the depot symbol, so the Projects tab's "need to buy" ignored stock held under the market symbol (e.g. showed "need 272" with 412 on the carrier). The depot parser (client + server) now falls back to the localised display name, which resolves to the canonical market ID, and a one-time backfill repairs commodity IDs on existing projects (also cleaning up old vowel-mangled slugs from a past bug). Mirrors the existing carrier-cargo backfill.
+- **Carrier-dock fact labels corrected.** The session/project-derived "did you know" lines used misleading nouns: "biggest single haul" was actually a whole hauling *session* total (e.g. 16,876 t over ~3 hours — impossible as one ship load), "across N runs" were N *sessions*, and "N colony builds" were completed *construction projects*. Relabeled to **"Best hauling session: X delivered"**, **"X delivered over N hauling sessions"**, and **"N construction projects completed (M in progress)"**. No fabricated colony count — the app's colonisation records are incomplete. The Frontier-`Statistics` facts were already accurate.
+
+---
+
+## [1.14.0] — 2026-06-17
+
+### Added
+- **Carrier-dock "did you know" overlay.** Docking at your own fleet carrier now pops a random milestone line on the in-game overlay — weighted toward hauling/colonisation (tonnes delivered to your colonies, biggest single haul, colony builds completed, lifetime tonnage traded, carrier export volume) with career facts mixed in (jumps, bodies mapped, first footfalls, days played, net worth). A no-repeat guard avoids showing the same line twice in a row.
+- **Persisted journal stats.** The game's `Statistics` event (lifetime totals) is now captured server-side and persisted to `colony-data.json` as `journalStats`, so the facts are always available without a manual journal scan and survive restarts. It's a replace-strategy, server-sole-writer slice (mirrors `materialInventory`), updated only when the snapshot actually changes.
+
+---
+
 ## [1.13.4] — 2026-06-16
 
 ### Changed

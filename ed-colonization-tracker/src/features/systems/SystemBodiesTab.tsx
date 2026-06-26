@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, type MouseEvent as ReactMouseEvent } from 'react';
 import { useAppStore } from '@/store';
 import { ImageGallery } from '@/components/ImageGallery';
 import { galleryKey } from '@/store/galleryStore';
@@ -18,6 +18,7 @@ import {
   type QualifyingBody,
 } from '@/lib/scoutingScorer';
 import { BodyAnalysisModal } from './BodyAnalysisModal';
+import { isBrainTreeCandidate, bodyFlagKey } from '@/lib/brainTrees';
 
 interface SystemBodiesTabProps {
   systemName: string;
@@ -712,6 +713,7 @@ function BodyRow({
         {volc && (
           <span className="text-xs text-orange-400 shrink-0" title={volc}>{'\u{1F30B}'}</span>
         )}
+        <BrainTreeFlag body={body} systemName={systemName} variant="badge" />
         {isTerraformable && (
           <span className="text-xs text-emerald-400 shrink-0" title={body.terraformingState ?? undefined}>{'\u{1F30D}'}</span>
         )}
@@ -854,6 +856,13 @@ function BodyDetailPanel({
       {/* Body visit info */}
       <BodyVisitInfo bodyName={body.name} systemName={systemName} />
 
+      {/* Brain-tree flag (manual confirm; landable bodies only) */}
+      {body.isLandable && (
+        <div className="pt-0.5">
+          <BrainTreeFlag body={body} systemName={systemName} variant="toggle" />
+        </div>
+      )}
+
       {/* Body note */}
       <BodyNoteInput bodyName={body.name} systemName={systemName} />
 
@@ -862,6 +871,62 @@ function BodyDetailPanel({
         <ImageGallery galleryKey={galleryKey(systemName, 'body', body.name)} compact />
       </div>
     </div>
+  );
+}
+
+/**
+ * Brain-tree marker. `badge` = inline glanceable chip (shown only for confirmed
+ * or candidate bodies; click toggles a manual confirm). `toggle` = labelled
+ * button in the expanded panel for any landable body. A confirmed flag may come
+ * from a manual click or an auto-captured in-game scan (source shown).
+ */
+function BrainTreeFlag({ body, systemName, variant }: { body: SpanshDumpBody; systemName: string; variant: 'badge' | 'toggle' }) {
+  const key = bodyFlagKey(systemName, body.name);
+  const flag = useAppStore((s) => s.bodyFlags[key]?.brainTrees);
+  const setBodyFlag = useAppStore((s) => s.setBodyFlag);
+  const confirmed = !!flag;
+  const candidate = isBrainTreeCandidate(body);
+  const toggle = (e: ReactMouseEvent) => {
+    e.stopPropagation();
+    setBodyFlag(systemName, body.name, 'brainTrees', !confirmed, 'manual');
+  };
+
+  if (variant === 'badge') {
+    if (!confirmed && !candidate) return null;
+    const title = confirmed
+      ? `Brain trees — ${flag!.source === 'scanned' ? 'scanned in-game' : 'marked'}. Click to remove.`
+      : 'Possible brain trees (volcanic, in 200–496 K). Click to confirm.';
+    return (
+      <button
+        type="button"
+        onClick={toggle}
+        title={title}
+        className={`text-xs shrink-0 ${confirmed ? 'text-purple-400' : 'text-purple-400/30 hover:text-purple-400/70'}`}
+      >
+        {'\u{1F9E0}'}
+      </button>
+    );
+  }
+
+  // toggle variant (expanded panel)
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 border text-[11px] transition-colors ${
+        confirmed
+          ? 'border-purple-500/40 bg-purple-500/15 text-purple-200'
+          : candidate
+          ? 'border-purple-500/25 text-purple-300/70 hover:bg-purple-500/10'
+          : 'border-border text-muted-foreground hover:text-purple-300 hover:border-purple-500/30'
+      }`}
+    >
+      {'\u{1F9E0}'} {confirmed
+        ? `Brain trees ✓ (${flag!.source})`
+        : candidate
+        ? 'Mark brain trees (candidate)'
+        : 'Mark brain trees'}
+    </button>
   );
 }
 

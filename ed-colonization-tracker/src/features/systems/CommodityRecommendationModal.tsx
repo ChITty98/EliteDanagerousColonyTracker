@@ -15,6 +15,20 @@ import {
 import type { WikiEconomy } from '@/data/wikiCommoditySupplyDemand';
 import type { InstallationType } from '@/data/installationTypes';
 import { COMMODITIES } from '@/data/commodities';
+import ravenBuildTypes from '@/data/ravenBuildTypes.json';
+
+// Raven Colonial's authoritative total haul tonnage per installation, keyed by
+// building name (offline data extracted to src/data/ravenBuildTypes.json).
+const RAVEN_HAUL_BY_NAME = new Map<string, number>();
+for (const bt of ravenBuildTypes as { displayName?: string; displayName2?: string; haul?: number }[]) {
+  if (typeof bt.haul === 'number') {
+    if (bt.displayName2) RAVEN_HAUL_BY_NAME.set(bt.displayName2.toLowerCase(), bt.haul);
+    if (bt.displayName) RAVEN_HAUL_BY_NAME.set(bt.displayName.toLowerCase(), bt.haul);
+  }
+}
+function ravenHaul(name: string | undefined): number | null {
+  return name ? RAVEN_HAUL_BY_NAME.get(name.toLowerCase()) ?? null : null;
+}
 
 interface Props {
   systemName: string;
@@ -48,14 +62,18 @@ const TIER_TYPICAL_TONNAGE: Record<number, string> = {
 
 function BuildRequirementsCard({ inst }: { inst: InstallationType }) {
   const reqs = inst.buildRequirements;
+  const haul = ravenHaul(inst.name);
   if (!reqs || reqs.length === 0) {
     return (
       <div className="mt-2 rounded border border-border bg-muted/20 p-2 text-xs">
         <div className="text-muted-foreground italic">
-          Build requirements not yet mapped for this type.
-          Tier {inst.tier} typical: {TIER_TYPICAL_TONNAGE[inst.tier] ?? 'unknown'}.
-          Once a build of this type completes in-app, run{' '}
-          <code>tools/backfill-installation-builds.mjs</code> to derive median tonnages.
+          {haul != null ? (
+            <>Commodity breakdown not itemised yet, but Raven Colonial's total haul is{' '}
+            <span className="text-foreground font-medium not-italic">{haul.toLocaleString()} t</span>.</>
+          ) : (
+            <>Build requirements not yet mapped for this type.
+            Tier {inst.tier} typical: {TIER_TYPICAL_TONNAGE[inst.tier] ?? 'unknown'}.</>
+          )}
         </div>
       </div>
     );
@@ -399,13 +417,26 @@ function ColonyPortRow({ path }: { path: ColonyPortPath }) {
             {path.matchedEconomies.map((e) => (
               <span key={e} className={`text-xs px-1.5 py-0.5 rounded ${ECONOMY_COLORS[e]}`}>{e}</span>
             ))}
+            {path.buff && path.buff.modifier > 0 && (
+              <span
+                className="text-xs px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300"
+                title={`Production buff (Raven model): ${path.buff.reasons.join(', ')}`}
+              >
+                {'✨'} +{path.buff.modifier.toFixed(1)} buff
+              </span>
+            )}
             <span className="text-xs text-muted-foreground">
               on <span className="text-foreground">{path.body}</span>
             </span>
           </>
         }
       />
-      <div className="text-[11px] text-muted-foreground/70 italic ml-7 mt-0.5">{path.bodyDetail}</div>
+      <div className="text-[11px] text-muted-foreground/70 italic ml-7 mt-0.5">
+        {path.bodyDetail}
+        {path.buff && path.buff.modifier > 0 && (
+          <span className="text-purple-300/80"> {'·'} production buff: {path.buff.reasons.join(', ')}</span>
+        )}
+      </div>
     </li>
   );
 }
@@ -418,12 +449,26 @@ function SupportingHubRow({ hub }: { hub: SupportingHub }) {
         rightSlot={
           <>
             <span className={`text-xs px-1.5 py-0.5 rounded ${ECONOMY_COLORS[hub.matchedEconomy]}`}>{hub.matchedEconomy}</span>
+            {hub.bestBuffBody && (
+              <span
+                className="text-xs px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300"
+                title={`Production buff (Raven model): ${hub.bestBuffBody.buff.reasons.join(', ')}`}
+              >
+                {'✨'} +{hub.bestBuffBody.buff.modifier.toFixed(1)} on {hub.bestBuffBody.body}
+              </span>
+            )}
             {!hub.feasibility.ok && (
               <span className="text-amber-300 text-xs italic">— {hub.feasibility.reason}</span>
             )}
           </>
         }
       />
+      {hub.bestBuffBody && (
+        <div className="text-[11px] text-purple-300/70 italic ml-7 mt-0.5">
+          best on <span className="text-foreground not-italic">{hub.bestBuffBody.body}</span>
+          {' — '}{hub.bestBuffBody.buff.reasons.join(', ')}
+        </div>
+      )}
     </li>
   );
 }

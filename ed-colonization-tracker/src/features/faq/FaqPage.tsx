@@ -92,8 +92,12 @@ const faqItems: FaqItem[] = [
           <li>
             <strong>Raven Colonial</strong> by CMDR Grinning2001 &mdash; canonical
             installation type list (the 55 entries that seed
-            <code> src/data/installationTypes.ts</code>) and the colonization
-            bridge plotter that complements this app for system planning.
+            <code> src/data/installationTypes.ts</code>), the per-installation build
+            requirements and total haul tonnage (60 build types) plus the
+            body/system economy buffs &mdash; both extracted offline to{' '}
+            <code>ravenBuildTypes.json</code> / <code>ravenBodyBuffs.json</code> to
+            power the commodity build-recommender &mdash; and the colonization bridge
+            plotter that complements this app for system planning.
           </li>
           <li>
             <strong>Spansh galaxy data</strong> by CMDR Spansh &mdash; powers the
@@ -810,6 +814,100 @@ const faqItems: FaqItem[] = [
     ),
   },
 
+  // --- Commodity Production ---
+  {
+    category: 'Commodity Production',
+    question: 'How do I find what to build to produce a commodity?',
+    answer: (
+      <>
+        <p>
+          Open the <strong>commodity build-recommender</strong> from a system page
+          and pick a commodity. The app maps it to the economy that produces it
+          (e.g. <strong>Medical Diagnostic Equipment &rarr; High&nbsp;Tech</strong>)
+          and shows, for that system, four routes to producing it:
+        </p>
+        <ul className="list-disc ml-5 mt-2 space-y-1">
+          <li><strong>Existing producers</strong> &mdash; stations you already have whose economy makes it.</li>
+          <li><strong>Expansion targets</strong> &mdash; build on the <em>same body</em> as an existing producer to reinforce that economy.</li>
+          <li><strong>Colony-port paths</strong> &mdash; bodies whose base inheritable economy matches; a colony-type port built there inherits it.</li>
+          <li><strong>Supporting hubs</strong> &mdash; a specialized installation (e.g. a Scientific Outpost / High&nbsp;Tech Hub) that supplies the economy directly, for when no body carries the base economy.</li>
+        </ul>
+        <p className="mt-2">
+          <strong>Every commodity is covered</strong> &mdash; including the
+          colonization construction goods (Steel, CMM Composite, Building
+          Fabricators, Structural Regulators&hellip;) and medicines/tech goods that
+          were previously missing from the table.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Commodity Production',
+    question: 'How does it know which body to build on?',
+    answer: (
+      <>
+        <p>
+          Each candidate body is scored for the <strong>production buff</strong> it
+          gives the target economy, using Raven Colonial&rsquo;s economy model.
+          Every qualifying condition is worth <strong>&plusmn;0.4</strong>, buffed
+          bodies are ranked first, and a{' '}
+          <span className="text-purple-300">✨ +0.4 buff</span> badge explains why.
+        </p>
+        <p className="mt-2">Body-derived buffs currently applied:</p>
+        <ul className="list-disc ml-5 mt-2 space-y-1">
+          <li><strong>High&nbsp;Tech / Tourism</strong> &mdash; +0.4 on Earth-like / Water / Ammonia worlds, +0.4 per bio signal, +0.4 per geo signal.</li>
+          <li><strong>Agriculture</strong> &mdash; +0.4 on Earth-like / Water worlds or bodies with bio signals; &minus;0.4 on icy bodies.</li>
+        </ul>
+        <p className="mt-2">
+          <strong>Worked example:</strong> ask for Medical Diagnostic Equipment and
+          the app points at the best High-Tech host in your system &mdash; e.g.
+          &ldquo;✨ +0.8 on [body] &mdash; bio signals, geo signals&rdquo; &mdash;
+          not just the build type.
+        </p>
+        <p className="mt-2 text-muted-foreground text-xs">
+          Extraction / Refinery / Industrial buffs key off the body&rsquo;s reserve
+          level and volcanism, which aren&rsquo;t in the recommender&rsquo;s body
+          context yet, so those show neutral (not wrong) for now.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Commodity Production',
+    question: 'Where does the commodity and build-tonnage data come from?',
+    answer: (
+      <>
+        <p>
+          Three data sets, all bundled with the app &mdash; no live API calls at
+          runtime:
+        </p>
+        <ul className="list-disc ml-5 mt-2 space-y-2">
+          <li>
+            <strong>Commodity &rarr; economy table</strong> &mdash; which economy
+            produces each commodity (from the ED wiki). Bulk colonization materials
+            (Steel, CMM Composite, Water&hellip;) follow the wiki&rsquo;s
+            category pattern and list both plausible producers; if one ever points
+            at the wrong economy it&rsquo;s a one-line data fix.
+          </li>
+          <li>
+            <strong>Raven Colonial build data</strong>{' '}
+            (<code>ravenBuildTypes.json</code>, 60 installations) &mdash;
+            authoritative total haul tonnage per installation, shown when an
+            installation&rsquo;s itemized requirement list isn&rsquo;t mapped
+            instead of a vague tier-typical range.
+          </li>
+          <li>
+            <strong>Raven Colonial body buffs</strong>{' '}
+            (<code>ravenBodyBuffs.json</code>) &mdash; the &plusmn;0.4 economy
+            rules used for the body scoring above. See{' '}
+            <em>Wiki &rarr; &ldquo;Colony economy production buffs&rdquo;</em> for
+            the full table.
+          </li>
+        </ul>
+      </>
+    ),
+  },
+
   // --- Fleet Carrier ---
   {
     category: 'Fleet Carrier',
@@ -1448,6 +1546,7 @@ export function FaqPage() {
                 {group.category === 'In-Game Overlay' && '🖥️'}
                 {group.category === 'Journal Watcher' && '📋'}
                 {group.category === 'Projects & Data' && '📊'}
+                {group.category === 'Commodity Production' && '🏗️'}
                 {group.category === 'Fleet Carrier' && '⚓'}
                 {group.category === 'APIs & External Services' && '🔌'}
                 {group.category === 'Network Access' && '📱'}

@@ -35,6 +35,7 @@ import {
   resolveBodyEconomies,
   type Economy as BodyEconomy,
 } from '@/data/bodyEconomies';
+import { bestBodyBuff, bodyBuffForEconomy, type BodyBuff } from '@/lib/bodyBuffs';
 
 // ---------------------------------------------------------------------------
 // Public input types
@@ -103,6 +104,8 @@ export interface ColonyPortPath {
   /** What makes this body match — e.g. "Rocky Body — base Refinery + Industrial" */
   bodyDetail: string;
   matchedEconomies: WikiEconomy[];
+  /** Production buff this body gives the matched economy (Raven model), if any. */
+  buff?: BodyBuff;
   rankScore: number;
 }
 
@@ -110,6 +113,8 @@ export interface SupportingHub {
   installation: InstallationType;
   matchedEconomy: WikiEconomy;
   feasibility: { ok: boolean; reason?: string };
+  /** Best body in the system to host this hub for a production buff, if any. */
+  bestBuffBody?: { body: string; buff: BodyBuff };
   rankScore: number;
 }
 
@@ -346,6 +351,9 @@ function buildColonyPortPaths(
     const matched = wikiEcons.filter((e) => producingSet.has(e));
     if (matched.length === 0) continue;
 
+    // Production buff this body gives the matched economy (Raven model) — boosts
+    // buffed bodies up the ranking and explains why (e.g. bio signals for High-Tech).
+    const buff = bestBodyBuff(matched, body);
     // For each colony port type, recommend (with surface/orbital feasibility)
     for (const portId of COLONY_PORT_IDS) {
       const t = INSTALLATION_TYPES.find((i) => i.id === portId);
@@ -356,7 +364,8 @@ function buildColonyPortPaths(
         body: body.name,
         bodyDetail: `${profile.label} — base economies: ${economies.join(', ')}`,
         matchedEconomies: matched,
-        rankScore: (4 - t.tier) * 10 + matched.length * 5,
+        buff: buff.modifier !== 0 ? buff : undefined,
+        rankScore: (4 - t.tier) * 10 + matched.length * 5 + Math.round(buff.modifier * 12),
       });
     }
   }
@@ -379,12 +388,20 @@ function buildSupportingHubs(
       if (producingSet.has(econ)) { matched = econ; break; }
     }
     if (!matched) continue;
+    const matchedEcon = matched;
     const feasibility: { ok: boolean; reason?: string } = (t.location === 'Surface' && !hasLandable)
       ? { ok: false, reason: 'No landable body in system' }
       : { ok: true };
-    let rankScore = (4 - t.tier) * 2;
+    // Best body to host this hub for a production buff to the matched economy
+    // (Raven model) — e.g. a bio/geo-signal body for a High-Tech hub.
+    const bestBuffBody = ctx.bodies
+      .filter((b) => t.location !== 'Surface' || b.isLandable)
+      .map((b) => ({ body: b.name, buff: bodyBuffForEconomy(matchedEcon, b) }))
+      .filter((x) => x.buff.modifier > 0)
+      .sort((a, b) => b.buff.modifier - a.buff.modifier)[0];
+    let rankScore = (4 - t.tier) * 2 + (bestBuffBody ? Math.round(bestBuffBody.buff.modifier * 12) : 0);
     if (!feasibility.ok) rankScore -= 200;
-    out.push({ installation: t, matchedEconomy: matched, feasibility, rankScore });
+    out.push({ installation: t, matchedEconomy: matched, feasibility, bestBuffBody, rankScore });
   }
   out.sort((a, b) => b.rankScore - a.rankScore);
   return out;

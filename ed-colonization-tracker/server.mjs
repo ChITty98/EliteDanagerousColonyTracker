@@ -28,6 +28,7 @@ import {
   extractKnowledgeBase,
   extractDockHistory,
   extractStationTravelTimes,
+  extractSquadronAndShips,
   extractExplorationData,
   scanForVisitedMarkets,
   scanJournalFiles,
@@ -192,6 +193,7 @@ const APPEND_ONLY_KEYS = new Set([
   'scoutedConflicts',         // War & Peace scout reports — refresh by re-scout, not delete
   'stationBodyOverrides',     // user-set body for stations without marketId
   'materialInventory',        // ship engineering mats — derived from journals, hard to re-acquire
+  'journalScan',              // squadron name/rank + ship usage (expensive journal scan)
   'populationOverrides',      // user-edited system populations
   'stationDistOverrides',     // user-edited station distances
 ]);
@@ -758,6 +760,7 @@ const server = http.createServer((req, res) => {
           const currentCargo = readShipCargo(journalDir);
           const latestPosition = fetchLatestPositionFromJournal(journalDir);
           const materialInventory = extractMaterialInventory(journalDir);
+          const journalScan = extractSquadronAndShips(journalDir); // squadron name/rank + ship usage
           const ms = Date.now() - t0;
           const matCounts = materialInventory
             ? `R${Object.keys(materialInventory.raw).length}/M${Object.keys(materialInventory.manufactured).length}/E${Object.keys(materialInventory.encoded).length}`
@@ -839,6 +842,7 @@ const server = http.createServer((req, res) => {
               __idKey: 'marketId',
               __upsert: Object.fromEntries(visitedMarkets.map((m) => [String(m.marketId), m])),
             },
+            journalScan: { squadron: journalScan.squadron, shipUsage: journalScan.shipUsage, scannedAt: new Date().toISOString() },
           };
 
           // Auto-update populationOverrides when journal has fresher Population

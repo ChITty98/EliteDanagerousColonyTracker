@@ -30,6 +30,7 @@ import {
   classifyStars,
 } from './scorer.js';
 import { mapStarType } from './extractor.js';
+import { pickJournalFact } from './journalFacts.js';
 
 // Module state: last target dedupe (so repeated FSDTarget for same system
 // doesn't re-broadcast every tick)
@@ -42,6 +43,10 @@ const Y_MARKET = 80;
 const Y_SCAN = 120;
 const Y_IMAGE = 160;
 const Y_DISTANCE = 200;
+// Carrier-dock fun fact. Shares the row Y_DISTANCE uses on jumps, but the two
+// never co-occur (distance shows on FSDJump; the fact only on a carrier dock,
+// minutes later) and it sits clear of the welcome stack (Y_DOCK = 240 upward).
+const Y_FACT = 200;
 
 const MAX_OVERLAY_ITEMS = 6;
 
@@ -301,32 +306,46 @@ export function handleDockedOverlay(ev, existing, deps) {
 
   const activeProject = getActiveProject(existing);
 
-  // 1. Docked at own FC with active project — show needs summary + load suggestions
-  if (activeProject && isFleetCarrier(ev.StationType, ev.MarketID)) {
+  // 1. Docked at own FC — load suggestions (active project only) + a fun fact
+  if (isFleetCarrier(ev.StationType, ev.MarketID)) {
     const isMyFC =
       settings.myFleetCarrierMarketId === ev.MarketID ||
       (settings.myFleetCarrier && (ev.StationName || '').toUpperCase().includes(settings.myFleetCarrier.toUpperCase()));
     if (isMyFC) {
-      const fcCallsign = settings.myFleetCarrier;
-      const cargo = fcCallsign ? (existing.carrierCargo || {})[fcCallsign] : null;
-      if (cargo && cargo.items && cargo.items.length > 0) {
-        const matches = findCarrierLoadMatches(cargo.items, activeProject);
-        if (matches.length > 0) {
-          const list = formatCommodityList(matches.map((m) => ({ name: m.name, count: m.loadQty })));
+      if (activeProject) {
+        const fcCallsign = settings.myFleetCarrier;
+        const cargo = fcCallsign ? (existing.carrierCargo || {})[fcCallsign] : null;
+        if (cargo && cargo.items && cargo.items.length > 0) {
+          const matches = findCarrierLoadMatches(cargo.items, activeProject);
+          if (matches.length > 0) {
+            const list = formatCommodityList(matches.map((m) => ({ name: m.name, count: m.loadQty })));
+            deps.sendOverlay({
+              id: 'edcolony_fc_load',
+              text: `Load from FC: ${list}`,
+              color: '#38bdf8',
+              x: X_LEFT, y: Y_SCAN, ttl: 20,
+            });
+          }
+        }
+        deps.sendOverlay({
+          id: 'edcolony_fc_reminder',
+          text: 'Remember: open Carrier Market tab to sync cargo before leaving',
+          color: '#fcd34d',
+          x: X_LEFT, y: Y_IMAGE, ttl: 15,
+        });
+      }
+      // "Did you know" morale line on every own-carrier dock — best-effort.
+      try {
+        const fact = pickJournalFact(existing);
+        if (fact) {
           deps.sendOverlay({
-            id: 'edcolony_fc_load',
-            text: `Load from FC: ${list}`,
-            color: '#38bdf8',
-            x: X_LEFT, y: Y_SCAN, ttl: 20,
+            id: 'edcolony_fc_fact',
+            text: fact,
+            color: '#c084fc',
+            x: X_LEFT, y: Y_FACT, ttl: 18,
           });
         }
-      }
-      deps.sendOverlay({
-        id: 'edcolony_fc_reminder',
-        text: 'Remember: open Carrier Market tab to sync cargo before leaving',
-        color: '#fcd34d',
-        x: X_LEFT, y: Y_IMAGE, ttl: 15,
-      });
+      } catch (e) { void e; /* facts are non-essential */ }
     }
   }
 

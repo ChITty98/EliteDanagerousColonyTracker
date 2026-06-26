@@ -155,6 +155,10 @@ export interface AppSettings {
   overlayEnabled: boolean;
   targetPopupEnabled?: boolean; // Show the global target-info pop-up (corner card) on any tab — default on
 
+  // Squadron-season comparison (manual — other members' contributions aren't journaled)
+  squadronMateName?: string;
+  squadronMateContribution?: number;
+
   // Domain Highlights — configurable lists of which types show as showpieces on the Architect's Domain page
   domainHighlightStars: string[];
   domainHighlightAtmos: string[];
@@ -213,6 +217,41 @@ export interface PersistedCarrierCargo {
   items: { commodityId: string; name: string; count: number }[];
   isEstimate: boolean;
   updatedAt: string; // ISO timestamp
+}
+
+// --- Persisted journal lifetime stats (the game's Statistics event) ---
+//
+// Latest Statistics snapshot, captured server-side and persisted so the
+// carrier-dock fun-fact overlay (and any future UI) has lifetime totals
+// without a manual journal scan. `statistics` holds the raw event groups
+// (Bank_Account, Trading, Exploration, FLEETCARRIER, Exobiology, …); every
+// leaf value is a number.
+export interface JournalStatsSnapshot {
+  capturedAt: string | null;
+  statistics: Record<string, Record<string, number>>;
+}
+
+// --- Per-body notable-feature flags (brain trees, …) ---
+//
+// A flag's *presence* means "confirmed on this body"; `source` records how.
+// "Candidate" status (a body that merely *could* host the feature — e.g.
+// landable + volcanic + in temperature range for brain trees) is derived from
+// body data at render time, never stored here.
+export type BodyFlagSource = 'manual' | 'scanned'; // hand-marked vs auto-set from a CodexEntry scan
+
+export interface BodyFlags {
+  brainTrees?: { source: BodyFlagSource };
+}
+
+// --- Journal-scan-derived aggregates (squadron name/rank + ship usage) ---
+//
+// Populated by the server's Sync-All journal scan — data the single Statistics
+// event doesn't carry. Replace-strategy, server-sole-writer.
+export interface ShipUsageEntry { hours: number; sessions: number; friendly?: string; name?: string }
+export interface JournalScan {
+  squadron: { name: string; rank: number | null; at?: string } | null;
+  shipUsage: { ships: Record<string, ShipUsageEntry>; top: ({ type: string } & ShipUsageEntry) | null } | null;
+  scannedAt: string;
 }
 
 // --- War & Peace scout reports ---

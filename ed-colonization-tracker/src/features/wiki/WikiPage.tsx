@@ -211,6 +211,22 @@ const STAR_RARITY: { count: number; type: string }[] = [
   { count: 717877,  type: 'M Red dwarf (most common)' },
 ];
 
+// Raven Colonial colonisation economy buffs — ±0.4 per condition.
+// Source: src/data/ravenBodyBuffs.json (encoded as evaluable rules in src/lib/bodyBuffs.ts).
+const ECONOMY_BUFFS: {
+  economy: string;
+  positives: string[];
+  negatives: string[];
+  status: 'applied' | 'partial' | 'pending';
+  statusNote: string;
+}[] = [
+  { economy: 'High Tech', positives: ['Ammonia / Earth-like / Water world', 'Bio signals', 'Geo signals'], negatives: [], status: 'applied', statusNote: 'fully applied' },
+  { economy: 'Agriculture', positives: ['Earth-like / Water world', 'Bio signals'], negatives: ['Icy body'], status: 'applied', statusNote: 'body type + bio signals' },
+  { economy: 'Tourism', positives: ['Ammonia / Earth-like / Water world', 'Bio signals', 'Geo signals', 'Neutron / Black Hole / White Dwarf primary'], negatives: [], status: 'partial', statusNote: 'body buffs yes; star-type buff not wired' },
+  { economy: 'Extraction', positives: ['Major / Pristine reserves', 'Volcanism'], negatives: ['Low / Depleted reserves'], status: 'pending', statusNote: 'needs reserve / volcanism data' },
+  { economy: 'Refinery / Industrial', positives: ['Major / Pristine reserves'], negatives: ['Low / Depleted reserves'], status: 'pending', statusNote: 'needs reserve data' },
+];
+
 function formatAnchor(r: { anchor: number; anchorName: string }) {
   return `${r.anchor} ly (${r.anchorName})`;
 }
@@ -904,6 +920,74 @@ export function WikiPage() {
             <div className="text-foreground font-mono text-base">0.51%</div>
             <div className="text-xs text-muted-foreground">6,429 of 1.27M</div>
           </div>
+        </div>
+      </section>
+
+      {/* ============ Colony economy production buffs ============ */}
+      <section className="bg-card border border-border rounded-lg p-5 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-foreground">Colony economy production buffs</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Raven Colonial&rsquo;s colonisation model gives each economy a{' '}
+            <strong className="text-foreground">&plusmn;0.4</strong> production modifier per
+            qualifying body or system condition. The commodity build-recommender applies these to
+            rank the best host body for a build &mdash; e.g. a High-Tech installation for Medical
+            Diagnostic Equipment lands best on a body with bio/geo signals. Extracted offline to{' '}
+            <code className="bg-muted/50 px-1 rounded">src/data/ravenBodyBuffs.json</code>.
+          </p>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm border-collapse">
+            <thead>
+              <tr className="text-left border-b border-border">
+                <th className="py-2 px-2 text-muted-foreground font-medium">Economy</th>
+                <th className="py-2 px-2 text-muted-foreground font-medium">+0.4 each</th>
+                <th className="py-2 px-2 text-muted-foreground font-medium">&minus;0.4 each</th>
+                <th className="py-2 px-2 text-muted-foreground font-medium">In recommender</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ECONOMY_BUFFS.map((r) => (
+                <tr key={r.economy} className="border-b border-border/40 hover:bg-muted/20 align-top">
+                  <td className="py-2 px-2 font-medium text-foreground whitespace-nowrap">{r.economy}</td>
+                  <td className="py-2 px-2 text-foreground/90">
+                    {r.positives.length ? (
+                      <ul className="space-y-0.5">{r.positives.map((p) => <li key={p}>{p}</li>)}</ul>
+                    ) : '—'}
+                  </td>
+                  <td className="py-2 px-2 text-muted-foreground">
+                    {r.negatives.length ? (
+                      <ul className="space-y-0.5">{r.negatives.map((n) => <li key={n}>{n}</li>)}</ul>
+                    ) : '—'}
+                  </td>
+                  <td className="py-2 px-2 text-xs">
+                    <span className={
+                      r.status === 'applied' ? 'text-primary' :
+                      r.status === 'partial' ? 'text-amber-400/90' : 'text-muted-foreground'
+                    }>
+                      {r.status === 'applied' ? '✓ applied' : r.status === 'partial' ? '◐ partial' : '○ pending'}
+                    </span>
+                    <span className="text-muted-foreground"> &mdash; {r.statusNote}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="text-xs text-muted-foreground border-t border-border/50 pt-3 space-y-1">
+          <p>
+            <strong className="text-foreground">How it&rsquo;s used:</strong> the recommender sums
+            the buffs a body gives the target economy, ranks buffed bodies first, and shows a{' '}
+            <span className="text-purple-300">✨</span> badge with the reasons. A body that&rsquo;s
+            an Earth-like world <em>and</em> has bio + geo signals scores +1.2 for High Tech.
+          </p>
+          <p>
+            <strong className="text-foreground">Pending buffs:</strong> reserve-level and volcanism
+            conditions need data the recommender&rsquo;s body context doesn&rsquo;t carry yet, so
+            Extraction / Refinery / Industrial currently score neutral rather than wrong.
+          </p>
         </div>
       </section>
     </div>

@@ -145,6 +145,49 @@ function searchLocalJournal(
   return out.sort((a, b) => a.distance - b.distance);
 }
 
+/**
+ * Global roll-up of confirmed Brain Tree sites across every system (colony or
+ * scouted), read straight from bodyFlags. Domain-agnostic on purpose — brain
+ * trees aren't only in your colonies. Hidden when there are none.
+ */
+function BrainTreeSitesPanel() {
+  const bodyFlags = useAppStore((s) => s.bodyFlags);
+  const sites = Object.entries(bodyFlags)
+    .filter(([, f]) => f?.brainTrees)
+    .map(([key, f]) => {
+      const i = key.indexOf('|');
+      return {
+        system: i >= 0 ? key.slice(0, i) : key,
+        body: i >= 0 ? key.slice(i + 1) : '',
+        source: f!.brainTrees!.source,
+      };
+    })
+    .sort((a, b) => a.system.localeCompare(b.system) || a.body.localeCompare(b.body));
+
+  if (sites.length === 0) return null;
+  return (
+    <div className="mb-4 rounded-lg border border-purple-500/30 bg-purple-500/5 px-4 py-3">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-base">{'\u{1F9E0}'}</span>
+        <span className="text-sm font-semibold text-purple-200">Brain Tree sites ({sites.length})</span>
+        <span className="text-xs text-muted-foreground">raw-material farms across your systems</span>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {sites.map((s) => (
+          <span
+            key={`${s.system}|${s.body}`}
+            className="text-xs rounded bg-purple-500/10 border border-purple-500/20 px-2 py-1 text-purple-100"
+          >
+            {s.system}{' '}
+            <span className="text-purple-300 font-medium">{s.body.replace(s.system, '').trim() || s.body}</span>
+            <span className="text-purple-400/60 ml-1">{s.source === 'scanned' ? '· scanned' : '· marked'}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ScoutingPage() {
   const settings = useAppStore((s) => s.settings);
   const projects = useAppStore((s) => s.projects);
@@ -838,6 +881,8 @@ export function ScoutingPage() {
           </p>
         </div>
       </div>
+
+      <BrainTreeSitesPanel />
 
       {/* Comparison bar — sticky when systems selected */}
       {compareIds.length > 0 && (

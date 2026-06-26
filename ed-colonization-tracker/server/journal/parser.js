@@ -64,6 +64,8 @@ export function parseJournalLines(lines) {
   const missionCompletedEvents = [];
   // Statistics (game-generated lifetime stats)
   const statisticsEvents = [];
+  // Codex entries (brain trees & other notable POIs)
+  const codexEntryEvents = [];
   // Galaxy-map targeting
   const fsdTargetEvents = [];
   const navRouteEvents = [];
@@ -133,6 +135,7 @@ export function parseJournalLines(lines) {
       case 'MultiSellExplorationData': multiSellExplorationDataEvents.push(event); break;
       case 'MissionCompleted': missionCompletedEvents.push(event); break;
       case 'Statistics': statisticsEvents.push(event); break;
+      case 'CodexEntry': codexEntryEvents.push(event); break;
       case 'FSDTarget': fsdTargetEvents.push(event); break;
       case 'NavRoute': navRouteEvents.push(event); break;
       case 'NavRouteClear': navRouteClearEvents.push(event); break;
@@ -193,6 +196,7 @@ export function parseJournalLines(lines) {
     multiSellExplorationDataEvents,
     missionCompletedEvents,
     statisticsEvents,
+    codexEntryEvents,
     fsdTargetEvents,
     navRouteEvents,
     navRouteClearEvents,

@@ -139,6 +139,28 @@ export const WIKI_COMMODITIES: Record<string, WikiCommodityEntry> = {
   'Non-Lethal Weapons': { category: 'Weapons', suppliedBy: ['HighTech'], demandedBy: ['Extraction', 'Refinery', 'Agriculture', 'Industrial', 'Terraforming', 'Tourism'] },
   'Personal Weapons': { category: 'Weapons', suppliedBy: [], demandedBy: [] },
   'Reactive Armour': { category: 'Weapons', suppliedBy: ['HighTech'], demandedBy: ['Extraction', 'Agriculture', 'Industrial', 'Terraforming', 'Tourism'] },
+
+  // === Colonisation / construction commodities ===
+  // Mapped by the table's category→economy pattern (Technology/Medicines→HighTech,
+  // Machinery→Industrial, Industrial Materials→Refinery). Bulk materials hedge
+  // both plausible producers. Medical Diagnostic Equipment is High-Tech (Medicines).
+  'Steel': { category: 'Industrial Materials', suppliedBy: ['Refinery', 'Industrial'], demandedBy: ['Industrial'] },
+  'CMM Composite': { category: 'Industrial Materials', suppliedBy: ['Refinery', 'Industrial'], demandedBy: [] },
+  'Ceramic Composites': { category: 'Industrial Materials', suppliedBy: ['Refinery', 'Industrial'], demandedBy: [] },
+  'Liquid Oxygen': { category: 'Chemicals', suppliedBy: ['Refinery'], demandedBy: ['Tourism'] },
+  'Water': { category: 'Chemicals', suppliedBy: ['Refinery', 'Agriculture'], demandedBy: ['Tourism'] },
+  'Building Fabricators': { category: 'Machinery', suppliedBy: ['Industrial'], demandedBy: [] },
+  'Geological Equipment': { category: 'Machinery', suppliedBy: ['Industrial', 'HighTech'], demandedBy: [] },
+  'Thermal Cooling Units': { category: 'Machinery', suppliedBy: ['Industrial'], demandedBy: [] },
+  'Surface Stabilisers': { category: 'Technology', suppliedBy: ['HighTech'], demandedBy: [] },
+  'Structural Regulators': { category: 'Technology', suppliedBy: ['HighTech'], demandedBy: [] },
+  'Auto-Fabricators': { category: 'Technology', suppliedBy: ['HighTech'], demandedBy: ['Industrial', 'Terraforming'] },
+  'Emergency Power Cells': { category: 'Technology', suppliedBy: ['HighTech'], demandedBy: [] },
+  'Evacuation Shelter': { category: 'Technology', suppliedBy: ['HighTech'], demandedBy: [] },
+  'Survival Equipment': { category: 'Technology', suppliedBy: ['HighTech'], demandedBy: [] },
+  'Muon Imager': { category: 'Technology', suppliedBy: ['HighTech'], demandedBy: [] },
+  'Medical Diagnostic Equipment': { category: 'Medicines', suppliedBy: ['HighTech'], demandedBy: [] },
+  'Military Grade Fabrics': { category: 'Textiles', suppliedBy: ['Industrial'], demandedBy: ['Military'] },
 };
 
 export const WIKI_CATEGORIES: { name: string; description: string }[] = [

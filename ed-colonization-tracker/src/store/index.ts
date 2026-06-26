@@ -135,6 +135,7 @@ const MERGE_STRATEGIES: Record<string, MergeStrategy> = {
   scoutedSystems: { kind: 'map' },
   bodyVisits: { kind: 'map' },
   bodyNotes: { kind: 'map' },
+  bodyFlags: { kind: 'map' },
   fleetCarrierSpaceUsage: { kind: 'map' },
   scoutedConflicts: { kind: 'map' },
   stationBodyOverrides: { kind: 'map' },
@@ -162,6 +163,10 @@ const MERGE_STRATEGIES: Record<string, MergeStrategy> = {
   materialInventory: { kind: 'replace' },
   // Current dock — server is sole writer, replace strategy (null when undocked)
   currentDock: { kind: 'replace' },
+  // Journal lifetime stats snapshot (game Statistics event) — server-written, replace
+  journalStats: { kind: 'replace' },
+  // Journal-scan aggregates (squadron name/rank + ship usage) — server-written, replace
+  journalScan: { kind: 'replace' },
   // User-authored override maps — sparse merge so cross-tab races can't wipe them
   populationOverrides: { kind: 'map' },
   stationDistOverrides: { kind: 'map' },
@@ -689,9 +694,23 @@ interface AppState {
   bodyNotes: Record<string, string>;
   setBodyNote: (systemName: string, bodyName: string, note: string) => void;
 
+  // Body POI flags — confirmed notable surface features per body, keyed
+  // "systemName|bodyName". Server (CodexEntry capture) and the user (manual
+  // toggle) both write here; "candidate" status is derived, not stored.
+  bodyFlags: Record<string, import('./types').BodyFlags>;
+  setBodyFlag: (systemName: string, bodyName: string, flag: keyof import('./types').BodyFlags, value: boolean, source?: import('./types').BodyFlagSource) => void;
+
   // Ship-engineering material inventory — server-derived, replace strategy.
   materialInventory: import('./types').MaterialInventory | null;
   setMaterialInventory: (inv: import('./types').MaterialInventory) => void;
+
+  // Journal lifetime stats snapshot (game Statistics event) — server-written.
+  journalStats: import('./types').JournalStatsSnapshot | null;
+  setJournalStats: (snapshot: import('./types').JournalStatsSnapshot) => void;
+
+  // Journal-scan aggregates (squadron name/rank + ship usage) — server-written.
+  journalScan: import('./types').JournalScan | null;
+  setJournalScan: (scan: import('./types').JournalScan) => void;
 
   // Current dock state — set on Docked, cleared on Undocked. Replaces the
   // module-level lastDocked* variables which only updated when CompanionPage
@@ -1499,6 +1518,23 @@ export const useAppStore = create<AppState>()(
           return { bodyNotes: updated };
         }),
 
+      // Body POI flags (brain trees, …). Manual toggle or server CodexEntry capture.
+      bodyFlags: {},
+      setBodyFlag: (systemName, bodyName, flag, value, source = 'manual') =>
+        set((state) => {
+          const key = `${systemName}|${bodyName}`;
+          const updated = { ...state.bodyFlags };
+          const entry = { ...updated[key] };
+          if (value) {
+            entry[flag] = { source };
+          } else {
+            delete entry[flag];
+          }
+          if (Object.keys(entry).length === 0) delete updated[key];
+          else updated[key] = entry;
+          return { bodyFlags: updated };
+        }),
+
       // Journal exploration cache
       journalExplorationCache: {},
       setJournalExplorationCache: (cache) => set({ journalExplorationCache: cache }),
@@ -1507,6 +1543,14 @@ export const useAppStore = create<AppState>()(
       // Material inventory (ship engineering mats)
       materialInventory: null,
       setMaterialInventory: (inv) => set({ materialInventory: inv }),
+
+      // Journal lifetime stats snapshot (game Statistics event)
+      journalStats: null,
+      setJournalStats: (snapshot) => set({ journalStats: snapshot }),
+
+      // Journal-scan aggregates (squadron + ship usage)
+      journalScan: null,
+      setJournalScan: (scan) => set({ journalScan: scan }),
 
       // Current dock — server-managed via Docked/Undocked events
       currentDock: null,
@@ -1583,11 +1627,14 @@ export const useAppStore = create<AppState>()(
         scoutedConflicts: state.scoutedConflicts,
         bodyVisits: state.bodyVisits,
         bodyNotes: state.bodyNotes,
+        bodyFlags: state.bodyFlags,
         populationOverrides: state.populationOverrides,
         stationDistOverrides: state.stationDistOverrides,
         lastSessionSummaryShown: state.lastSessionSummaryShown,
         stationBodyOverrides: state.stationBodyOverrides,
         materialInventory: state.materialInventory,
+        journalStats: state.journalStats,
+        journalScan: state.journalScan,
         currentDock: state.currentDock,
         commanderPosition: state.commanderPosition,
         currentBody: state.currentBody,

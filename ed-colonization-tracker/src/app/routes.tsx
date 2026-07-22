@@ -20,6 +20,8 @@ import { ColonyMapPage } from '@/features/map/ColonyMapPage';
 import { SystemViewPage } from '@/features/system-view/SystemViewPage';
 import { WarPeacePage } from '@/features/war-peace/WarPeacePage';
 import { MaterialsPage } from '@/features/materials/MaterialsPage';
+import { CopilotPage } from '@/features/copilot/CopilotPage';
+import { MiningPage } from '@/features/mining/MiningPage';
 
 export const router = createBrowserRouter([
   {
@@ -40,8 +42,10 @@ export const router = createBrowserRouter([
       { path: 'map', element: <ColonyMapPage /> },
       { path: 'system-view', element: <SystemViewPage /> },
       { path: 'companion', element: <CompanionPage /> },
+      { path: 'cockpit', element: <CopilotPage /> },
       { path: 'war-peace', element: <WarPeacePage /> },
       { path: 'materials', element: <MaterialsPage /> },
+      { path: 'mining', element: <MiningPage /> },
       { path: 'journal-stats', element: <JournalStatsPage /> },
       { path: 'settings', element: <SettingsPage /> },
       { path: 'wiki', element: <WikiPage /> },

@@ -96,7 +96,7 @@ export function getActiveProject(state) {
  * Find commodities at this market that the active project still needs to BUY.
  * Subtracts myFC stock + ship stock from required - provided.
  */
-function findMarketMatches(commodities, project, state) {
+export function findMarketMatches(commodities, project, state) {
   const settings = state.settings || {};
   const myFcCallsign = settings.myFleetCarrier;
   const myFcCargo = myFcCallsign ? (state.carrierCargo || {})[myFcCallsign] : null;
@@ -122,7 +122,7 @@ function findMarketMatches(commodities, project, state) {
 }
 
 /** Find commodities on FC that an active project needs (for load suggestions). */
-function findCarrierLoadMatches(carrierItems, project) {
+export function findCarrierLoadMatches(carrierItems, project) {
   const matches = [];
   for (const pc of project.commodities) {
     const remaining = pc.requiredQuantity - pc.providedQuantity;

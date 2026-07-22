@@ -726,7 +726,7 @@ function BodyRow({
           <span className="text-xs text-muted-foreground shrink-0">{'\u{1F4F7}'}</span>
         )}
         {visit && (
-          <span className="text-xs text-sky-400 shrink-0" title={`Landed ${visit.landingCount} time${visit.landingCount !== 1 ? 's' : ''} · Last: ${new Date(visit.lastLanded).toLocaleDateString()}`}>
+          <span className="text-xs text-sky-400 shrink-0" title={`Disembarked on surface ${visit.landingCount}× · Last: ${new Date(visit.lastLanded).toLocaleDateString()}`}>
             {'\u{1F6EC}'}{visit.landingCount > 1 ? `\u00D7${visit.landingCount}` : ''}
           </span>
         )}
@@ -767,13 +767,19 @@ function BodyVisitInfo({ bodyName, systemName }: { bodyName: string; systemName:
   const visit = Object.values(useAppStore((s) => s.bodyVisits)).find(
     (v) => v.bodyName === bodyName && v.systemName.toLowerCase() === systemName.toLowerCase()
   );
-  if (!visit) return null;
-  const lastDate = new Date(visit.lastLanded);
-  const dateStr = lastDate.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  // "Landed" only counted surface set-downs; a planetary station on this body (e.g. a construction
+  // depot) is a DOCKING, not a landing. Tally both for the real "times at this body".
+  const dockings = Object.values(useAppStore((s) => s.knownStations))
+    .filter((st) => String(st.body || '').toLowerCase() === bodyName.toLowerCase())
+    .reduce((a, st) => a + (st.dockedCount || st.visitCount || 0), 0);
+  const landings = visit ? visit.landingCount : 0;
+  if (!landings && !dockings) return null;
+  const dateStr = visit ? new Date(visit.lastLanded).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : null;
   return (
     <div className="text-sky-400">
-      {'\u{1F6EC}'} Landed {visit.landingCount} time{visit.landingCount !== 1 ? 's' : ''} {'\u2022'} Last: {dateStr}
-      {visit.lastCoords && (
+      {'\u{1F6EC}'} Visited {landings + dockings}{'\u00d7'} {'\u2014'} {landings} disembarked on surface, {dockings} docked at sites here
+      {dateStr && <> {'\u2022'} Last: {dateStr}</>}
+      {visit && visit.lastCoords && (
         <span className="text-muted-foreground ml-2">
           ({visit.lastCoords.lat.toFixed(2)}, {visit.lastCoords.lon.toFixed(2)})
         </span>

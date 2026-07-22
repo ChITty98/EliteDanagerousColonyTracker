@@ -682,7 +682,47 @@ const SHIP_NAMES = {
   type8: 'Type-8 Transporter', type9: 'Type-9 Heavy', type9_military: 'Type-10 Defender', typex: 'Alliance Chieftain',
   typex_2: 'Alliance Crusader', typex_3: 'Alliance Challenger', viper: 'Viper Mk III', viper_mkiv: 'Viper Mk IV', vulture: 'Vulture',
 };
-const friendlyShip = (t) => SHIP_NAMES[t] || t;
+export const friendlyShip = (t) => SHIP_NAMES[t] || t;
+
+// SINGLE SOURCE OF TRUTH for the co-pilot's seat situation — TWO DISTINCT attributes, do not conflate:
+//   - SINGLE_SEAT (crew=1, verified from coriolis-data + INARA; see memory reference_ship_crew_seats):
+//     no co-pilot seat → the persona flies from the CARGO HOLD by remote ("stuck in the hold"). This
+//     INCLUDES the LARGE Type-6/7/8 haulers — roomy, but he is not up front. Crew count ≠ ship size.
+//   - SMALL_COCKPIT: a physically cramped flight deck → a big frame folded in ("cramped"). Small-pad
+//     ships, INCLUDING crew-2 ones (Adder/Cobra/Vulture) that are NOT single-seat.
+// A small single-seater (Eagle/Sidewinder) is BOTH; the Type-8 is single-seat but NOT cramped; a
+// Cobra/Vulture is cramped but NOT single-seat. The K2 grumble branches on these — one path, two
+// sub-variants. (Kestrel Mk II is crew-1 but has no known journal symbol yet — add once confirmed.)
+const SINGLE_SEAT_SHIPS = new Set([
+  'sidewinder', 'eagle', 'empire_eagle', 'hauler', 'viper', 'viper_mkiv',
+  'diamondback', 'diamondbackxl', 'type6', 'type7', 'type8', 'dolphin', 'empire_courier',
+]);
+const SMALL_COCKPIT_SHIPS = new Set([
+  'sidewinder', 'eagle', 'empire_eagle', 'hauler', 'adder', 'viper', 'viper_mkiv',
+  'cobramkiii', 'cobramkiv', 'cobramkv', 'diamondback', 'diamondbackxl',
+  'empire_courier', 'vulture', 'dolphin', 'mandalay',
+]);
+export const isSingleSeatShip = (t) => SINGLE_SEAT_SHIPS.has(String(t || '').toLowerCase());
+export const isCrampedShip = (t) => SMALL_COCKPIT_SHIPS.has(String(t || '').toLowerCase());
+
+// Ship ROLE — what a hull is BUILT FOR. Feeds persona affinities (Wash loves nimble ships, TARS
+// values explorers, K2 respects combat capability). Unknown hulls return null (fail-safe).
+const SHIP_ROLES = {
+  eagle: 'combat', empire_eagle: 'combat', viper: 'combat', viper_mkiv: 'combat',
+  vulture: 'combat', ferdelance: 'combat', mamba: 'combat', krait_mkii: 'combat',
+  federation_dropship: 'combat', federation_dropship_mkii: 'combat', federation_gunship: 'combat',
+  federation_corvette: 'combat', typex: 'combat', typex_2: 'combat', typex_3: 'combat',
+  type9_military: 'combat',
+  hauler: 'hauler', type6: 'hauler', type7: 'hauler', type8: 'hauler',
+  type9: 'hauler', independant_trader: 'hauler', panthermkii: 'hauler',
+  diamondback: 'explorer', diamondbackxl: 'explorer', asp: 'explorer', asp_scout: 'explorer',
+  dolphin: 'explorer', mandalay: 'explorer', krait_light: 'explorer',
+  orca: 'passenger', belugaliner: 'passenger',
+  sidewinder: 'multi', adder: 'multi', cobramkiii: 'multi', cobramkiv: 'multi', cobramkv: 'multi',
+  python: 'multi', python_nx: 'multi', anaconda: 'multi',
+  empire_trader: 'multi', empire_courier: 'multi', cutter: 'multi',
+};
+export const shipRole = (t) => SHIP_ROLES[String(t || '').toLowerCase()] || null;
 
 /**
  * Walk every journal and derive (a) the latest squadron name/rank from

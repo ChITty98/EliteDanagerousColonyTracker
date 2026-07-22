@@ -2,6 +2,66 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.21.0] — 2026-07-22
+
+### Added
+- **🏆 The catch card — a trophy shot for every rock you finish.** When a rock is done, it's weighed against every rock you've ever mined and presented as a catch, not a receipt: tier banner, tonnage and credits side by side, what came out of it, and a **measuring board** — your whole logged distribution drawn as a histogram with a marker showing where this one landed. Seeing a rock sit out on the tail is what makes it read as a whopper; a number on its own doesn't.
+  - Tiers from your own percentiles (346 rocks): **IN THE HOLD** → **GOOD ONE** (top 50%) → **✨ TROPHY** (top 10%) → **💎 WHOPPER** (top 5%) → **🔥 MONSTER** (top 1%) → **🏆 PERSONAL BEST**. Higher tiers hold on screen longer.
+  - **Fires on every rock that produced tonnes**, not just standouts. Deciding to spend time lasering a rock is itself the filter — anything that gets that far was already worth your attention. Prospected-and-skipped rocks never reach it.
+  - **Ranked on tonnage AND credits**, tiering by whichever percentile is higher and saying which earned it. A fat cheap haul and a lean rich one are different achievements: 26t of water worth 14k still lands MONSTER *by size*, while 8t of Bromellite worth 1.1M lands WHOPPER *by value*.
+  - Ranking prices every rock, past and present, at today's rates including live mission prices — comparing a mission rock at 136k/t against history priced at 37k/t would crown a record on nearly every rock and make the tiers worthless within an hour.
+
+## [1.20.0] — 2026-07-22
+
+### Added
+- **⛏️ Mining credits ticker.** A live HUD in the corner of the app while you're mining: every refined tonne throws a floating `+136k` that drifts up and fades, and the session total *rolls* upward rather than snapping. Colour and size scale with the tonne's value, mission tonnes are tagged, and it retires itself when mining stops. This replaces routing per-tonne credits through the popup card — tonnes arrive every ~11s while a card lingers 20s, so the card system could only ever show them by staying permanently on screen (which is why they were previously gated to ≥150k and mostly invisible). A dedicated ticker takes every tonne with no compromise.
+- **Personal records.** The rock log is uncapped, so a personal best is a real bar — 346 rocks deep. Finish a rock and it's ranked against every rock you've ever mined: `🏆 NEW BEST ROCK — 3.9M from 27t (beat 3.82M)`, `💎 2nd best rock ever`, or a quiet `✔ Rock done — 6t · 817k` for the ordinary ones. Ranking values every rock — historical and current — at today's rates including live mission prices, so the comparison is like-for-like; ranking a mission rock at 136k/t against history priced at 37k/t would have declared a new record on nearly every rock.
+- **Rotating overlay copy.** The EDMC overlay renders text and colour and nothing else, so variety is the only lever it has. Per-tonne lines now cycle phrasing by value tier instead of repeating one template every 11 seconds.
+
+### Fixed
+- **The session milestone could never fire.** It was set at 50M, but the best *day* on record is 27.92M — so the 🏆 was unreachable dead code. Now 5M, which lands several times in a good session.
+
+## [1.19.0] — 2026-07-22
+
+### Added
+- **Mining alerts now pop in the app, not just the in-game overlay.** Target rocks, standout rocks, big refined tonnes, session milestones, collection stalls, hold warnings, going-cold and ring-arrival all raise the same corner card the target/threat popups use, on whatever tab is open. Routine refined tonnes are deliberately **not** broadcast — they fire roughly every 11 seconds while the card lingers 20, so only notable ones (≥150k, or a milestone) earn a card; the running total stays on the overlay and the Mining page header.
+
+### Fixed
+- **Collection warnings no longer invent causes.** The cause ladder read Status.json flags at a single instant and asserted them as sustained reasons. It was wrong twice on real hardware in one session: it reported *"hostiles on you"* with no hostiles anywhere (`IsInDanger` is a generic danger/damage state, seemingly set by something as ordinary as nudging a limpet), and *"cargo scoop is retracted"* with the scoop deployed — captured flag transitions show that bit genuinely toggling mid-mining (set at 06:14:36, clear at 06:14:44, set again at 06:14:48) and a 5-second poll lands in the gaps. Flag-derived causes are gone entirely. The warning now states only what's independently checkable — seconds since the last tonne, limpets aboard, time since the last collector launch.
+- **Collection warnings only fire on a rock that was actually delivering.** `HardpointsDeployed` was useless as an "actively mining" gate because miners leave hardpoints out permanently, so it was true nearly all session. The warning now requires the open rock to have already produced a tonne, which rules out flying between rocks, prospecting and combat at the root rather than filtering symptoms. Threshold raised 60s → 90s: 15% of measured inter-tonne gaps exceeded 60s (p90 68s, max 352s), so the old value sat inside the normal range.
+- **Ring finder was silently dropping every Spansh result.** Spansh's `ring_signals` filter is **AND** across entries, and the finder sent all targets in one query. With live missions for Bromellite *and* Osmium — and Osmium not being a ring-hotspot commodity at all — `[Bromellite, Osmium]` returned **0** where `[Bromellite]` returns 10,000 including a Pristine ring **12 ly** out. Because the journal index ORs, some results still appeared and the failure looked like thin coverage. Spansh is now queried once per target and merged, matching the journal's OR semantics.
+- **A rock's most valuable material could be invisible.** Rock-list chips were styled by target membership only, so on a 2.1M Cr asteroid the Low Temperature Diamonds component — worth **1,017,016 Cr** on its own — rendered identically to a 526 Cr Water chip. Chips now show their own credit value and are emphasised by it, independent of whether anything has declared them a target.
+- **The rock you're currently shooting appears immediately.** The log only writes a rock once the next prospect supersedes it, so the current one didn't show until you moved on, and then only at the next poll. The in-flight rock is now rendered at the top of the list.
+
+## [1.18.0] — 2026-07-22
+
+### Added / Changed
+- **The "worth it" line is now measured, not invented.** It was a hardcoded 60,000 Cr. Measuring the logged rock population showed a fixed threshold can't work: **median rock value spans 24× across rings** — ~402k in HIP 43296 5 A Ring against ~17k in HIP 52629 A 9 B Ring. One global line marks every rock in the first ring worth mining and every rock in the second a skip, carrying no information in either. The threshold is now the **median rock of the ring you're actually in**, drawn from your own log, falling back to your galaxy-wide median and only then to a constant. A second tier at the ring's 75th percentile calls out a **GOOD ONE**, and a skip says what it's comparing against (`below 468k ring median`) rather than asserting a verdict.
+- **❄ Going-cold warning.** When the last 10 prospected rocks come in at less than half the ring's own median, the overlay suggests relocating — `Last 10 rocks median ~65k vs ~468k for this ring — try moving`. This answers the "am I working this area effectively" question as far as the data honestly permits: `ProspectedAsteroid` has no coordinates, so *where* you are in the ring is unknowable, but whether the rocks in front of you are poorer than the ring's norm is not. The window resets on entering a new ring.
+- **💠 Ring hotspot readout on arrival.** Dropping into a ring reports its mapped hotspots, or tells you there are none recorded and to run a DSS pass — the case that applies to HIP 52629 A 9 B Ring, where 250t was mined with no signal data on file.
+- **Per-ring quality columns** — **Avg/rock** and **Worth it %**. The percentage is measured against your galaxy-wide median rock, not each ring's own (which is a tautology returning ~50% everywhere — the first implementation did exactly that and was replaced). It surfaces real differences: Polahukuna A 1 A at 68% versus HIP 52629 A 9 B at 23%, where that icy ring has the *highest* average per rock but the lowest hit rate — mostly junk with occasional large Bromellite strikes.
+- **One valuation, everywhere.** The page's "worth it %" and the overlay's worth-it/skip call now run through the same rock-valuation function, so they cannot disagree about an identical rock.
+
+## [1.17.0] — 2026-07-21
+
+### Added
+- **⛏️ Mining page + mining-assist overlay.** A full mining workflow driven by measured data rather than estimates.
+  - **Is this rock worth it?** The prospect overlay now shows an expected **credit total** for the rock, not a material list the HUD already gives you. Proportion → tonnes uses a **per-material yield table measured from your own history** (bootstrap 0.163 t per 1% from 322 samples, then re-derived per material as you mine — Bromellite measures ~0.52, so a flat constant under-called it 3×). Content level is deliberately ignored: measured Low 0.216 / Medium 0.213 / High 0.211, i.e. no effect.
+  - **Mission-aware pricing.** While a mining mission is live, its Cr/t overrides market pricing. Verified live: Bromellite paying 136,198 Cr/t against a 36,693 market average (3.7×), Osmium 196,362 vs 61,622 (3.2×). Pricing mining off market data alone is simply wrong whenever a mission is running.
+  - **Targets & ignore list.** Targets alert on prospect *regardless of value* (a mission commodity matters even when it prices low) and **auto-populate from your accepted mining missions**. Ignored materials drop out of a rock's total but stay visible, so a low number is explained. Both editable from the rock components themselves, and stored as per-element merge sets so two devices can't clobber each other.
+  - **Where to mine.** Set a target, get ranked rings by hotspot count, **reserve level** (Pristine → Depleted), distance in ly and **depth in Ls** (a ring 70 ly out at 13,460 Ls is not the same trip as one at 1,500 Ls), ring class, and co-located targets. Two sources: your own DSS-mapped rings, plus galaxy-wide discovery via the Spansh `bodies/search` API. Rings you've actually mined are ranked on **measured t/hr**, which outranks every inferred signal.
+  - **Collection warnings that name a cause.** Gated on hardpoints-deployed, so no more false alarms while flying between rocks. Cause ladder from Status.json flags: cargo scoop retracted → overheating → hostiles → out of limpets → no collector launched recently → drifted. The stall threshold moved **12s → 60s**; the old value fired below the *median* 11s gap between refined tonnes, i.e. during entirely normal mining.
+  - **Hold warning on effective ore space** (`capacity − cargo + limpets aboard`). Limpets occupy cargo but each launch returns a tonne, so warning on raw free space would send you to a station early.
+  - **Prospected-rock log** (`mining-log.jsonl`) — append-only and uncapped, kept out of `colony-data.json` (already ~21 MB and hydrated to every device). Rocks are identified by a material-proportion fingerprint, so re-prospecting the same asteroid updates one record instead of double-counting. **Seeded from your journal history on first run** so the yield table and rate figures work immediately.
+  - **Credits banked as they refine.** Every refined tonne pops a running tally — `💎 Osmium +196k (mission) · rock 333k · session 622k / 5t` — with the marker escalating by value (✅ / 💰 / 💎) and a 🏆 milestone every 50M. Each tonne is priced at the moment it lands in the hold, so a tonne pulled under a live 136k/t mission is recorded at what it was actually worth even after that mission expires.
+  - **Credits by rock and by location.** The rock log records what each asteroid actually earned (alongside its pre-mining estimate, so the two can be compared), and totals roll up per ring and per system. Two separate columns, never conflated: **Earned** (real, priced at refine time) and **@ today** (the same tonnage re-valued at current prices — useful for comparing rings, but not what you were paid).
+  - **Extraction rate by ring over time**, and a worst-case mission completion estimate. The estimate is explicitly labelled worst case: `CargoDepot` does not fire for mining missions, so wing-mates' tonnage is invisible and the figure assumes you mine every tonne yourself.
+
+### Notes
+- The target picker's material list is **derived from evidence** — the union of what you've prospected, refined, cored, or hotspot-mapped (33 materials) — so it extends itself and classifies nothing by assumption. Materials never seen in a laser prospect are marked "hotspot only".
+- Hotspot `Count` is displayed as-is. The journal records no hotspot positions, so overlap isn't knowable and no yield multiplier is inferred from it.
+- No core-mining alerts: with no seismic charge launcher fitted and zero `AsteroidCracked` events on record, a motherlode callout would be an alert for a mechanic the ship can't perform. Cores are still logged.
+
 ## [1.16.0] — 2026-06-25
 
 ### Added / Changed

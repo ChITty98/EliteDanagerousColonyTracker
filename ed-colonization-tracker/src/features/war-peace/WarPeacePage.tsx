@@ -7,6 +7,7 @@
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useAppStore } from '@/store';
+import { sseSubscribe } from '@/services/sseBus';
 
 function apiUrl(path: string): string {
   try {
@@ -15,6 +16,13 @@ function apiUrl(path: string): string {
   } catch {
     return path;
   }
+}
+
+// "7h ago" / "42m ago" for the galaxy-tick badge.
+function tickAgo(iso: string): string {
+  const age = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(age) || age < 0) return '';
+  return age >= 3_600_000 ? `${Math.floor(age / 3_600_000)}h ago` : `${Math.max(1, Math.floor(age / 60_000))}m ago`;
 }
 
 type ConflictState = 'War' | 'Civil War' | 'Election';
@@ -104,6 +112,18 @@ function formatPop(n: number): string {
 }
 
 export function WarPeacePage() {
+  // Galaxy BGS tick — fetched once, then live via SSE. Absent (service down) → badge hidden.
+  const [galaxyTick, setGalaxyTick] = useState<string | null>(null);
+  useEffect(() => {
+    fetch(apiUrl('/api/tick'))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { lastGalaxyTick?: string } | null) => { if (d?.lastGalaxyTick) setGalaxyTick(d.lastGalaxyTick); })
+      .catch(() => {});
+    return sseSubscribe('galaxy_tick', (ev) => {
+      const t = (ev as { lastGalaxyTick?: string }).lastGalaxyTick;
+      if (t) setGalaxyTick(t);
+    });
+  }, []);
   const commanderPosition = useAppStore((s) => s.commanderPosition);
   const scoutedConflicts = useAppStore((s) => s.scoutedConflicts);
   const upsertScoutedConflict = useAppStore((s) => s.upsertScoutedConflict);
@@ -208,7 +228,14 @@ export function WarPeacePage() {
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-2xl font-bold">⚔ War & Peace</h2>
+        <div className="flex items-baseline gap-3">
+          <h2 className="text-2xl font-bold">⚔ War & Peace</h2>
+          {galaxyTick && (
+            <span className="text-xs text-muted-foreground" title={`Last galaxy BGS tick: ${galaxyTick}`}>
+              Galaxy tick: {tickAgo(galaxyTick)}
+            </span>
+          )}
+        </div>
         <p className="text-sm text-muted-foreground mt-1">
           Find systems in conflict near you. Combat zones spawn during <span className="text-red-400">War</span> and <span className="text-orange-400">Civil War</span>.
           Election is mission-only (no CZs).

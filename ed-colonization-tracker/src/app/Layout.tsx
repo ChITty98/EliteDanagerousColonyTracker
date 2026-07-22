@@ -4,6 +4,8 @@ import { useAppStore } from '@/store';
 import { startJournalWatcher, isWatcherRunning } from '@/services/journalWatcher';
 import { getJournalFolderHandle } from '@/services/journalReader';
 import { TargetPopup } from '@/components/TargetPopup';
+import { MiningTicker } from '@/components/MiningTicker';
+import { CatchCard } from '@/components/CatchCard';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '\u25C6' },
@@ -17,8 +19,10 @@ const navItems = [
   { to: '/sources', label: 'Sources', icon: '\u2605' },
   { to: '/sessions', label: 'Sessions', icon: '\u25F7' },
   { to: '/companion', label: 'Companion', icon: '\u{1F4E1}' },
+  { to: '/cockpit', label: 'Cockpit', icon: '\u{1F680}' },
   { to: '/war-peace', label: 'War & Peace', icon: '⚔\u{FE0F}' },
   { to: '/materials', label: 'Materials', icon: '\u{1F6E0}\u{FE0F}' },
+  { to: '/mining', label: 'Mining', icon: '\u{26CF}\u{FE0F}' },
   { to: '/journal-stats', label: 'Journal Stats', icon: '\u{1F4D6}' },
   { to: '/settings', label: 'Settings', icon: '\u2699' },
   { to: '/wiki', label: 'Wiki', icon: '\u{1F4DA}' },
@@ -89,6 +93,8 @@ export function Layout() {
 
       {/* Global target info pop-up — bottom-right corner card on every page */}
       <TargetPopup />
+      <MiningTicker />
+      <CatchCard />
     </div>
   );
 }

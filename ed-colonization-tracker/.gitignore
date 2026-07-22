@@ -44,10 +44,20 @@ ed-colony-tracker.bat
 colony-data*.json
 colony-token.txt
 colony-images/
+# Mining side-stores: append-only rock log + cached ring/hotspot index. Deliberately outside
+# colony-data.json so the synced state blob doesn't grow without bound.
+mining-log.jsonl
+mining-rings.json
 colony-gallery.json
 backups/
 backups - Copy/
 app-icon.ico
+
+# Co-pilot runtime state — personal data (commander/crew names, Q&A answers about the user,
+# colony coords, every generated line + its inputs). Written to APP_DIR (repo root in dev).
+copilot-memory.json
+copilot-captures.jsonl
+copilot-characters/
 
 # Project handoff
 PROJECT-HANDOFF.md

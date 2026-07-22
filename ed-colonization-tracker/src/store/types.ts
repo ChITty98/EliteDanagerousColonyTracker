@@ -155,6 +155,18 @@ export interface AppSettings {
   overlayEnabled: boolean;
   targetPopupEnabled?: boolean; // Show the global target-info pop-up (corner card) on any tab — default on
 
+  // AI co-pilot — companion cockpit comms. Requires the local `claude` CLI +
+  // Max subscription on the PC running the exe; silent otherwise. Opt-in.
+  copilotEnabled?: boolean;
+  copilotPersonality?: 'wash' | 'tars' | 'k2';
+  copilotModel?: 'haiku' | 'sonnet' | 'opus'; // optional global override; per-beat default otherwise
+  copilotThrottleSec?: number; // min seconds between non-urgent lines (default 30)
+  copilotIdleGapSec?: number; // min seconds of quiet before ambient chatter (default 240)
+  copilotCharacter?: string; // active character pack id ('placeholder' or a folder under copilot-characters/)
+  copilotSound?: boolean; // play a chime on each new co-pilot line
+  copilotTarsHumor?: number; // TARS humour dial 0-100 (default 60) — injected into TARS live gen
+  copilotTarsHonesty?: number; // TARS honesty dial 0-100 (default 80)
+
   // Squadron-season comparison (manual — other members' contributions aren't journaled)
   squadronMateName?: string;
   squadronMateContribution?: number;
@@ -356,6 +368,7 @@ export interface FleetCarrierSpaceUsage {
   totalCapacity: number;
   cargo: number;
   freeSpace: number;
+  name?: string; // carrier's user-given name (from CarrierStats.Name)
   updatedAt: string; // ISO timestamp
 }
 

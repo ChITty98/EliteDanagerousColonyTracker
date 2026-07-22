@@ -34,6 +34,7 @@
  *   - !colony chat commands (project + cargo context)
  */
 
+import { randomUUID } from 'node:crypto';
 import {
   extractKnowledgeBaseFromEvents,
   readMarketJson,
@@ -61,6 +62,8 @@ import {
   resetScanState,
 } from './overlay.js';
 import { processChatCommands } from './chat.js';
+import { runCopilot } from '../ai/copilot.js';
+import { processMiningEvents } from './mining.js';
 
 // ===== Overlay layout (must match src/services/overlayService.ts) =====
 const X_LEFT = 40;
@@ -111,6 +114,7 @@ export function processNewEvents(parsed, deps) {
   processShipEvents(parsed, existing, patch);
   processKBEvents(parsed, existing, settings, patch);
   processDepotEvents(parsed, existing, patch);
+  processSystemClaims(parsed, existing, patch);
   processCompanionFeedEvents(parsed, existing, settings, patch, extraEvents, deps);
   processDockEvents(parsed, existing, patch, extraEvents, deps);
   processNpcThreat(parsed, extraEvents, deps);
@@ -146,6 +150,11 @@ export function processNewEvents(parsed, deps) {
     }
   }
 
+  // Mining assist — prospect verdict + target alerts (stall/cargo checks run on the periodic tick).
+  // Deliberately OUTSIDE the overlay block: this call also ingests mission lifecycle events, ring
+  // hotspot scans and the rock log, all of which must stay current whether or not EDMC is connected.
+  try { processMiningEvents(parsed, existing, deps); } catch (e) { console.error('[Mining] event error:', e && e.message); }
+
   // FSDTarget (galaxy-map target alert) — async Spansh name check if uncached.
   // Always fires regardless of overlay enable (this is a Companion-only event).
   if (parsed.fsdTargetEvents.length > 0) {
@@ -164,6 +173,10 @@ export function processNewEvents(parsed, deps) {
     }
   }
 
+  // AI co-pilot — reacts to this tick's live events in character. Companion-only,
+  // gated by settings.copilotEnabled, and silent without the local claude CLI.
+  runCopilot(parsed, existing, deps).catch((e) => console.error('[Copilot]', e && e.message));
+
   // !colony chat commands (SendText with `!colony` prefix). Works even when
   // sendOverlay is null — the response may also be broadcast as a Companion
   // SSE event for iPad.
@@ -175,6 +188,33 @@ export function processNewEvents(parsed, deps) {
     });
   } catch (e) {
     console.error('[Chat] processChatCommands error:', e && e.message);
+  }
+
+  // Keep the FC's stored cargo (carrierCargo, otherwise only refreshed when you OPEN the FC market)
+  // in sync with cargo TRANSFERS while docked at it. Without this the co-pilot kept telling the
+  // commander to "load steel/composite off the carrier" they had already moved to the ship — the
+  // single loudest source of 👎. Marks the result an estimate until the next real Market.json read.
+  if (parsed.cargoTransferEvents && parsed.cargoTransferEvents.length > 0) {
+    const fcCallsign = (existing.settings || {}).myFleetCarrier;
+    const fcMarketId = (existing.settings || {}).myFleetCarrierMarketId;
+    const dock = existing.currentDock;
+    const atFc = !!fcCallsign && !!dock && ((fcMarketId != null && dock.marketId === fcMarketId) || dock.stationName === fcCallsign);
+    const cargo = atFc ? (existing.carrierCargo || {})[fcCallsign] : null;
+    if (cargo && Array.isArray(cargo.items)) {
+      const items = cargo.items.map((it) => ({ ...it }));
+      const byId = {};
+      for (const it of items) byId[String(it.commodityId).toLowerCase()] = it;
+      for (const ev of parsed.cargoTransferEvents) {
+        for (const t of (ev.Transfers || [])) {
+          const id = String(t.Type || '').toLowerCase();
+          const delta = t.Direction === 'toship' ? -(t.Count || 0) : (t.Count || 0); // toship leaves the carrier
+          const it = byId[id];
+          if (it) it.count = Math.max(0, (it.count || 0) + delta);
+          else if (delta > 0) { const ni = { commodityId: id, name: t.Type_Localised || t.Type, count: delta }; items.push(ni); byId[id] = ni; }
+        }
+      }
+      patch.carrierCargo = { __upsert: { [fcCallsign]: { ...cargo, items: items.filter((it) => it.count > 0), isEstimate: true, updatedAt: new Date().toISOString() } } };
+    }
   }
 
   if (Object.keys(patch).length > 0) {
@@ -418,22 +458,72 @@ function processKBEvents(parsed, existing, settings, patch) {
   // set; incremental appending without a canonical id explodes the array.
 }
 
+// ===== System claims (live) =====
+// ColonisationSystemClaim was parsed and then DROPPED live — claimed systems only reached the
+// colonized list via the browser's Sync All pass (same gap as depot auto-create). A claim is the
+// FIRST moment of a colonization effort; the app must see it the moment it happens.
+function processSystemClaims(parsed, existing, patch) {
+  const claims = (parsed && parsed.systemClaimEvents) || [];
+  if (!claims.length) return;
+  const have = new Set((Array.isArray(existing.manualColonizedSystems) ? existing.manualColonizedSystems : []).map((s) => String(s).toLowerCase()));
+  const projSys = new Set((Array.isArray(existing.projects) ? existing.projects : []).map((p) => p && String(p.systemName || '').toLowerCase()).filter(Boolean));
+  const add = [];
+  for (const ev of claims) {
+    const nm = ev && ev.StarSystem;
+    if (!nm) continue;
+    const low = String(nm).toLowerCase();
+    if (have.has(low) || projSys.has(low)) continue; // already colonized-listed or has a project
+    have.add(low);
+    add.push(nm);
+  }
+  if (add.length) {
+    patch.manualColonizedSystems = { __add: add };
+    console.log(`[Claim] AUTO-ADDED claimed system(s) to the colonized list: ${add.join(', ')}`);
+  }
+}
+
 // ===== Depot progression (active project commodities + auto-complete) =====
 
 function processDepotEvents(parsed, existing, patch) {
   if (parsed.depotEvents.length === 0) return;
   const projects = Array.isArray(existing.projects) ? existing.projects : [];
-  if (projects.length === 0) {
-    console.log(`[Depot] ${parsed.depotEvents.length} depot event(s) but no projects exist — ignored`);
-    return;
-  }
 
   const touched = [];
   const skipped = [];
+  const createdIds = new Set(); // marketIds auto-created THIS tick (depot events repeat every ~15s while docked)
   for (const depot of parsed.depotEvents) {
-    const project = projects.find((p) => p.marketId === depot.MarketID);
+    const project = projects.find((p) => p.marketId === depot.MarketID)
+      || touched.find((p) => p.marketId === depot.MarketID); // just created this tick — treat later events as updates
     if (!project) {
-      skipped.push(`marketId=${depot.MarketID} (no matching project)`);
+      // LIVE AUTO-CREATE — a depot event for a marketId we don't know is a construction site the
+      // commander just placed/docked at. Historically projects were only created by the browser's
+      // Sync All pass, so brand-new sites were invisible until the next manual sync ("I docked at
+      // one of them and the app doesn't see it"). Mirror the client's creation shape; respect
+      // dismissed depots; never create already-finished/failed ones.
+      const dismissed = Array.isArray(existing.dismissedMarketIds) ? existing.dismissedMarketIds : [];
+      if (dismissed.includes(depot.MarketID)) { skipped.push(`marketId=${depot.MarketID} (dismissed)`); continue; }
+      if (depot.ConstructionComplete || depot.ConstructionFailed) { skipped.push(`marketId=${depot.MarketID} (already ${depot.ConstructionFailed ? 'failed' : 'complete'})`); continue; }
+      if (createdIds.has(depot.MarketID)) continue;
+      // Station identity: the Docked event that preceded this depot (same batch), else the known-station record.
+      const dockEv = (parsed.dockedEvents || []).find((d) => d && d.MarketID === depot.MarketID);
+      const known = Object.values(existing.knownStations || {}).find((s) => s && s.marketId === depot.MarketID);
+      const stationName = (dockEv && dockEv.StationName) || (known && known.stationName) || '';
+      const systemName = (dockEv && dockEv.StarSystem) || (known && known.systemName) || '';
+      const systemAddress = (dockEv && dockEv.SystemAddress) || (known && known.systemAddress) || null;
+      const stationType = (dockEv && dockEv.StationType) || (known && known.stationType) || '';
+      const nowIso = new Date().toISOString();
+      const fresh = {
+        id: randomUUID(),
+        name: systemName ? `${systemName}${stationName ? ` - ${stationName}` : ''}` : `Depot ${depot.MarketID}`,
+        systemName, systemAddress, stationType, stationName,
+        marketId: depot.MarketID,
+        commodities: (depot.ResourcesRequired || []).map(resourceToCommodity),
+        status: 'active', notes: '',
+        createdAt: nowIso, lastUpdatedAt: nowIso,
+      };
+      createdIds.add(depot.MarketID);
+      touched.push(fresh);
+      console.log(`[Depot] AUTO-CREATED project for new construction site: ${fresh.name} (marketId=${depot.MarketID}, ${fresh.commodities.length} commodities)`);
       continue;
     }
     if (project.status !== 'active') {
@@ -452,6 +542,19 @@ function processDepotEvents(parsed, existing, patch) {
           && !isColonisationShip(resolved.stationName, resolved.stationType)) {
         next.completedStationName = resolved.stationName;
         next.completedStationType = resolved.stationType || project.stationType || 'Outpost';
+      }
+      // Mirror of the client's manual-complete: if the project already carries a real completed
+      // name (user typed it) but the knownStations record is still the construction-era identity,
+      // update name+type FIELD-LEVEL (spread preserves dock history / faction histories).
+      const ks = existing.knownStations && existing.knownStations[depot.MarketID];
+      if (ks && next.completedStationName
+          && (isConstructionStationName(ks.stationName) || /ConstructionDepot/i.test(ks.stationType || ''))) {
+        if (!patch.knownStations) patch.knownStations = { __upsert: {} };
+        patch.knownStations.__upsert[depot.MarketID] = {
+          ...ks,
+          stationName: next.completedStationName,
+          stationType: next.completedStationType || ks.stationType,
+        };
       }
     }
     touched.push(next);
@@ -593,10 +696,21 @@ function processCompanionFeedEvents(parsed, existing, settings, patch, extraEven
     if (!ev.Callsign) continue;
     const usage = ev.SpaceUsage;
     if (!usage || typeof usage.FreeSpace !== 'number') continue;
+    // Anchor the cargo TRACKER's reading at snapshot time. Live free space is then
+    // freeSpace − (trackerNow − trackerAtStats): only the DELTA since this snapshot matters, so
+    // the tracker's absolute error (items it never saw) cancels instead of inflating free space.
+    const ccEntry = (patch.carrierCargo && patch.carrierCargo.__upsert && patch.carrierCargo.__upsert[ev.Callsign])
+      || ((existing.carrierCargo || {})[ev.Callsign]);
+    const trackerCargoAtStats = ccEntry && Array.isArray(ccEntry.items)
+      ? ccEntry.items.reduce((t, i) => t + (i && i.count > 0 ? i.count : 0), 0)
+      : null;
     const entry = {
       totalCapacity: usage.TotalCapacity,
       cargo: usage.Cargo,
       freeSpace: usage.FreeSpace,
+      trackerCargoAtStats,
+      fuelLevel: typeof ev.FuelLevel === 'number' ? ev.FuelLevel : null,
+      name: ev.Name || '',
       updatedAt: new Date().toISOString(),
     };
     // fleetCarrierSpaceUsage is a map keyed by callsign (merge strategy: 'map')
@@ -1203,18 +1317,10 @@ function renderDockWelcomeOverlay(summary, station, deps) {
     lines.push({ text: `   (${summary.previousFaction} ran this place during your last visit)`, color: '#94a3b8' });
   }
 
-  const state = summary.currentState;
-  if (state && state !== 'None') {
-    const style = STATE_STYLES[state] || { emoji: '⚡', color: '#94a3b8', label: state };
-    if (summary.stateChanged && summary.previousState) {
-      lines.push({ text: `${style.emoji} Now ${style.label} — was ${summary.previousState} last visit`, color: style.color });
-    } else if (!summary.factionChanged) {
-      lines.push({
-        text: `${style.emoji} ${style.label}${summary.currentFaction ? ` — ${summary.currentFaction}` : ''}`,
-        color: style.color,
-      });
-    }
-  }
+  // Faction STATE (War/Boom/…) intentionally NOT shown here. This welcome banner fires on
+  // DockingGranted from the CACHED dossier (your LAST visit), and BGS state churns between
+  // visits — so it would assert a stale "At War" exactly like the one reported. The co-pilot
+  // surfaces the LIVE state (hedged) from the actual Docked event instead.
 
   const LINE_HEIGHT = 26;
   const MAX_LINES = 6;

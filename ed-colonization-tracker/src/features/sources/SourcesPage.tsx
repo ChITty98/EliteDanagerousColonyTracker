@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, Fragment } from 'react';
 import { Link } from 'react-router-dom';
 import { useAppStore } from '@/store';
 import { cleanProjectName } from '@/lib/utils';
@@ -6,6 +6,35 @@ import { COMMODITY_BY_ID, COMMODITIES } from '@/data/commodities';
 import { findNearbySources, type ArdentStation } from '@/services/ardentApi';
 import { readMarketSnapshot, isEphemeralStation } from '@/services/journalReader';
 import type { CustomSource } from '@/store/types';
+
+// In-game market categories, in the order the game lists them. Used to bucket a station's
+// commodity list. Matching is case-insensitive (Spansh sends e.g. "Industrial materials").
+const CATEGORY_ORDER = [
+  'Chemicals', 'Consumer Items', 'Foods', 'Industrial Materials', 'Legal Drugs',
+  'Machinery', 'Medicines', 'Metals', 'Minerals', 'Salvage', 'Slavery',
+  'Technology', 'Textiles', 'Waste', 'Weapons',
+];
+const CATEGORY_IDX = new Map(CATEGORY_ORDER.map((c, i) => [c.toLowerCase(), i]));
+
+/** Group a station's commodities by in-game category, ordered like the game; stock-sorted within
+ *  each bucket. Blank/unknown categories fall into "Other" at the end. */
+function groupByCategory<T extends { category?: string; stock: number | null }>(commodities: T[]): { category: string; items: T[] }[] {
+  const groups = new Map<string, T[]>();
+  for (const c of commodities) {
+    const cat = c.category && c.category.trim() ? c.category.trim() : 'Other';
+    (groups.get(cat) ?? groups.set(cat, []).get(cat)!).push(c);
+  }
+  for (const items of groups.values()) items.sort((a, b) => (b.stock ?? 0) - (a.stock ?? 0));
+  return [...groups.entries()]
+    .sort(([a], [b]) => {
+      if (a === 'Other') return 1;
+      if (b === 'Other') return -1;
+      const ia = CATEGORY_IDX.get(a.toLowerCase()) ?? 999;
+      const ib = CATEGORY_IDX.get(b.toLowerCase()) ?? 999;
+      return ia - ib || a.localeCompare(b);
+    })
+    .map(([category, items]) => ({ category, items }));
+}
 
 interface CommodityNeed {
   commodityId: string;
@@ -49,6 +78,7 @@ function stationTypeIcon(stationType: string) {
 
 export function SourcesPage() {
   const projects = useAppStore((s) => s.projects);
+  const manualColonizedSystems = useAppStore((s) => s.manualColonizedSystems);
   const customSources = useAppStore((s) => s.customSources);
   const addCustomSource = useAppStore((s) => s.addCustomSource);
   const visitedMarkets = useAppStore((s) => s.visitedMarkets);
@@ -62,6 +92,14 @@ export function SourcesPage() {
   const stationTravelTimes = useAppStore((s) => s.stationTravelTimes);
   const fleetCarriers = useAppStore((s) => s.fleetCarriers);
   const activeProjects = useMemo(() => projects.filter((p) => p.status === 'active'), [projects]);
+  // Systems the commander has colonised (project systems + manually-added) — case-insensitive.
+  // A source station whose system is in here gets a clickable system-name link to that colony's dashboard.
+  const myColonySystems = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of projects) if (p.systemName) set.add(p.systemName.trim().toLowerCase());
+    for (const n of manualColonizedSystems) if (n) set.add(String(n).trim().toLowerCase());
+    return set;
+  }, [projects, manualColonizedSystems]);
 
   const [selectedProjectId, setSelectedProjectId] = useState<string | 'all'>('all');
   const [searchResults, setSearchResults] = useState<Record<string, SourceResults>>({});
@@ -179,7 +217,7 @@ export function SourcesPage() {
       stationType: string;
       isPlanetary: boolean;
       hasLargePads: boolean;
-      commodities: { commodityId: string; name: string; buyPrice: number; stock: number | null }[];
+      commodities: { commodityId: string; name: string; buyPrice: number; stock: number | null; category?: string }[];
       updatedAt: string;
       source: 'snapshot' | 'journal';
       distance: number;
@@ -198,7 +236,7 @@ export function SourcesPage() {
       // be null (journal-derived) or a real number (live snapshot). Show both.
       const commodities = s.commodities
         .filter((c) => c.buyPrice > 0 && (c.stock === null || c.stock > 0))
-        .map((c) => ({ commodityId: c.commodityId, name: c.name, buyPrice: c.buyPrice, stock: c.stock ?? null }));
+        .map((c) => ({ commodityId: c.commodityId, name: c.name, buyPrice: c.buyPrice, stock: c.stock ?? null, category: c.category }));
       if (commodities.length === 0) continue;
       byMarketId.set(s.marketId, {
         marketId: s.marketId,
@@ -442,6 +480,18 @@ export function SourcesPage() {
     );
   }
 
+  // A system name: link to its system dashboard when it's one of the commander's colonies, else plain text.
+  const renderSystemName = (name: string) => {
+    if (name && myColonySystems.has(name.trim().toLowerCase())) {
+      return (
+        <Link to={`/systems/${encodeURIComponent(name)}`} className="text-primary hover:underline">
+          {name}
+        </Link>
+      );
+    }
+    return name;
+  };
+
   const renderStationRow = (
     s: ArdentStation,
     i: number,
@@ -455,7 +505,7 @@ export function SourcesPage() {
         {s.stationName}
         {isInSystem && <span className="ml-1 text-xs text-progress-complete/70">(in-system)</span>}
       </td>
-      <td className="px-4 py-2 text-muted-foreground">{s.systemName}</td>
+      <td className="px-4 py-2 text-muted-foreground">{renderSystemName(s.systemName)}</td>
       <td className="text-right px-4 py-2 text-muted-foreground whitespace-nowrap">
         <span className={`text-xs mr-1 ${isPlanetary(s.stationType) ? 'text-amber-400' : 'text-sky-400'}`}>
           {stationTypeLabel(s.stationType)}
@@ -591,7 +641,7 @@ export function SourcesPage() {
                       <tr key={`${r.marketId}-${r.commodityName}-${i}`} className="border-t border-border/30">
                         <td className="py-1 pr-3 text-foreground">{r.commodityName}</td>
                         <td className="py-1 pr-3 text-foreground">{r.stationName}</td>
-                        <td className="py-1 pr-3 text-muted-foreground">{r.systemName}</td>
+                        <td className="py-1 pr-3 text-muted-foreground">{renderSystemName(r.systemName)}</td>
                         <td className="py-1 pr-3 text-right tabular-nums text-muted-foreground whitespace-nowrap">
                           {Number.isFinite(r.distance) ? `${Math.round(r.distance)} ly` : '—'}
                         </td>
@@ -617,7 +667,7 @@ export function SourcesPage() {
               <div className="space-y-3">
                 {(browseResults.rows as Array<{
                   marketId: number; stationName: string; systemName: string; stationType: string;
-                  commodities: { commodityId: string; name: string; buyPrice: number; stock: number | null }[];
+                  commodities: { commodityId: string; name: string; buyPrice: number; stock: number | null; category?: string }[];
                   updatedAt: string; source: 'snapshot' | 'journal'; distance: number;
                 }>).map((s) => (
                   <details key={s.marketId} className="rounded-lg border border-border bg-muted/30">
@@ -625,7 +675,7 @@ export function SourcesPage() {
                       <span className="flex items-center gap-2 min-w-0 flex-wrap">
                         <span>{stationTypeIcon(s.stationType)}</span>
                         <span className="font-semibold text-foreground truncate">{s.stationName}</span>
-                        <span className="text-muted-foreground truncate">{s.systemName}</span>
+                        <span className="text-muted-foreground truncate">{renderSystemName(s.systemName)}</span>
                         {stationEconomies(s.marketId).map((econ) => (
                           <span key={econ} className="px-1.5 py-0.5 rounded text-[10px] bg-primary/10 text-primary border border-primary/30">{econ}</span>
                         ))}
@@ -665,14 +715,21 @@ export function SourcesPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {[...s.commodities].sort((a, b) => (b.stock ?? 0) - (a.stock ?? 0)).map((c) => (
-                            <tr key={c.commodityId} className="border-t border-border/20">
-                              <td className="py-1 pr-3 text-foreground">{COMMODITY_BY_ID.get(c.commodityId)?.name || c.name}</td>
-                              <td className="py-1 pr-3 text-right tabular-nums whitespace-nowrap">
-                                {c.stock == null ? <span className="text-muted-foreground/50">—</span> : formatStock(c.stock)}
-                              </td>
-                              <td className="py-1 text-right tabular-nums whitespace-nowrap">{c.buyPrice > 0 ? c.buyPrice.toLocaleString() : '—'}</td>
-                            </tr>
+                          {groupByCategory(s.commodities).map(({ category, items }) => (
+                            <Fragment key={category}>
+                              <tr className="bg-muted/40">
+                                <td colSpan={3} className="py-1 px-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{category}</td>
+                              </tr>
+                              {items.map((c) => (
+                                <tr key={c.commodityId} className="border-t border-border/20">
+                                  <td className="py-1 pr-3 pl-3 text-foreground">{COMMODITY_BY_ID.get(c.commodityId)?.name || c.name}</td>
+                                  <td className="py-1 pr-3 text-right tabular-nums whitespace-nowrap">
+                                    {c.stock == null ? <span className="text-muted-foreground/50">—</span> : formatStock(c.stock)}
+                                  </td>
+                                  <td className="py-1 text-right tabular-nums whitespace-nowrap">{c.buyPrice > 0 ? c.buyPrice.toLocaleString() : '—'}</td>
+                                </tr>
+                              ))}
+                            </Fragment>
                           ))}
                         </tbody>
                       </table>
@@ -1193,7 +1250,7 @@ export function SourcesPage() {
                                 {r.tag === 'pinned' ? '\u2B50' : ''}
                               </span>
                             </td>
-                            <td className="px-4 py-2 text-muted-foreground">{r.systemName}</td>
+                            <td className="px-4 py-2 text-muted-foreground">{renderSystemName(r.systemName)}</td>
                             <td className="text-right px-4 py-2 text-muted-foreground whitespace-nowrap">
                               <span className={`text-xs ${isPlanetary(r.stationType) ? 'text-amber-400' : 'text-sky-400'}`}>
                                 {stationTypeLabel(r.stationType)}

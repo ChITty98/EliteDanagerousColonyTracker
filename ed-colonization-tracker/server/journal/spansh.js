@@ -149,6 +149,63 @@ export async function resolveSystemName(name) {
   return match ? { id64: match.id64, x: match.x, y: match.y, z: match.z } : null;
 }
 
+/**
+ * Galaxy-wide ring search by hotspot signal — the discovery half of the mining ring finder.
+ *
+ * Verified against the live API on 2026-07-21: POST /bodies/search with a `ring_signals` filter
+ * returns distance (ly), distance_to_arrival (Ls), reserve_level and rings[].{type,signals} in one
+ * call — every ranking dimension, no follow-up lookups. A Bromellite query reported 10,000 matches
+ * against the 9 rings this commander had personally mapped.
+ *
+ * Signals arrive as Spansh internal names ("Low Temperature Diamonds"); callers normalise.
+ *
+ * @param {string[]} signalNames - Spansh-style commodity names, e.g. ['Bromellite']
+ * @param {{x:number,y:number,z:number}} origin
+ * @param {{size?:number, minCount?:number, reserveLevels?:string[], ringTypes?:string[]}} [opts]
+ * @returns {Promise<Array>}
+ */
+export async function searchRingsBySignals(signalNames, origin, opts = {}) {
+  const names = (signalNames || []).filter(Boolean);
+  if (!names.length || !origin) return [];
+
+  const size = Math.min(opts.size || 25, 50);
+  const key = `rings:${names.slice().sort().join(',')}:${origin.x},${origin.y},${origin.z}:${size}:${(opts.reserveLevels || []).join(',')}:${(opts.ringTypes || []).join(',')}`;
+  const hit = searchCache.get(key);
+  if (hit && Date.now() - hit.ts < CACHE_TTL) return hit.data;
+
+  const filters = {
+    ring_signals: names.map((n) => ({ name: n, min: opts.minCount || 1 })),
+  };
+  if (opts.reserveLevels && opts.reserveLevels.length) filters.reserve_level = opts.reserveLevels;
+  if (opts.ringTypes && opts.ringTypes.length) filters.ring_type = opts.ringTypes;
+
+  const body = {
+    filters,
+    sort: [{ distance: { direction: 'asc' } }],
+    size,
+    page: 0,
+    reference_coords: { x: origin.x, y: origin.y, z: origin.z },
+  };
+
+  let data = [];
+  try {
+    const res = await rateLimitedFetch(`${SPANSH_BASE}/bodies/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`Spansh bodies search: ${res.status}`);
+    const json = await res.json();
+    data = Array.isArray(json.results) ? json.results : [];
+  } catch (e) {
+    console.error('[Spansh] ring search failed:', e && e.message);
+    return [];
+  }
+
+  searchCache.set(key, { data, ts: Date.now() });
+  return data;
+}
+
 export function clearSpanshCache() {
   searchCache.clear();
   dumpCache.clear();

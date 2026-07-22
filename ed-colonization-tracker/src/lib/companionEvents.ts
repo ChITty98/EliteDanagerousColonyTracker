@@ -21,6 +21,17 @@ export interface CompanionEvent {
 // --- Event icons/colors by type ---
 export function eventIcon(type: string): string {
   switch (type) {
+    // Mining assist
+    case 'mining_target': return '🎯';    // target
+    case 'mining_prospect': return '⛏️'; // pick
+    case 'mining_refined': return '💰';   // money bag
+    case 'mining_milestone': return '🏆'; // trophy
+    case 'mining_stall': return '⚠️';   // warning
+    case 'mining_cargo': return '📦';     // package
+    case 'mining_cold': return '❄️';    // snowflake
+    case 'mining_ring': return '💠';      // diamond shape
+    case 'mining_record': return '🏆';    // trophy
+    case 'mining_rock_done': return '✔️'; // check
     case 'fsd_jump': return '\u{1F680}'; // rocket
     case 'docked': return '⚓'; // anchor
     case 'scan_highlight': return '\u{1F52D}'; // telescope
@@ -43,6 +54,16 @@ export function eventIcon(type: string): string {
 
 export function eventColor(type: string): string {
   switch (type) {
+    case 'mining_target': return 'text-cyan-400';
+    case 'mining_prospect': return 'text-cyan-300';
+    case 'mining_refined': return 'text-green-400';
+    case 'mining_milestone': return 'text-amber-400';
+    case 'mining_stall': return 'text-amber-400';
+    case 'mining_cargo': return 'text-amber-400';
+    case 'mining_cold': return 'text-sky-300';
+    case 'mining_ring': return 'text-violet-400';
+    case 'mining_record': return 'text-amber-300';
+    case 'mining_rock_done': return 'text-green-400';
     case 'fsd_jump': return 'text-sky-400';
     case 'docked': return 'text-green-400';
     case 'scan_highlight': return 'text-yellow-400';
@@ -63,8 +84,33 @@ export function eventColor(type: string): string {
   }
 }
 
+const miningCr = (n: number): string =>
+  n >= 1_000_000 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${Math.round(n)}`;
+
 export function eventSummary(ev: CompanionEvent): string {
   switch (ev.type) {
+    case 'mining_target':
+      return `Target rock — ${ev.summary}`;
+    case 'mining_prospect':
+      return `Good rock — ~${miningCr(Number(ev.value) || 0)} Cr · ${ev.summary}`;
+    case 'mining_refined':
+      return `${ev.commodity} +${miningCr(Number(ev.credits) || 0)} Cr${ev.mission ? ' (mission)' : ''} — ${miningCr(Number(ev.sessionCredits) || 0)} this session`;
+    case 'mining_milestone':
+      return `${miningCr(Number(ev.sessionCredits) || 0)} Cr this session — ${ev.sessionTonnes}t refined`;
+    case 'mining_stall':
+      return String(ev.summary || 'Collection slowed');
+    case 'mining_cargo':
+      return String(ev.summary || 'Hold filling up');
+    case 'mining_cold':
+      return `Patch going cold — last ${ev.window} rocks ~${miningCr(Number(ev.recentMedian) || 0)} vs ~${miningCr(Number(ev.baseline) || 0)} here`;
+    case 'mining_ring':
+      return `${ev.ring} — ${ev.summary}`;
+    case 'mining_record':
+      return ev.kind === 'best'
+        ? `NEW BEST ROCK — ${miningCr(Number(ev.credits) || 0)} Cr from ${ev.tonnes}t (beat ${miningCr(Number(ev.previous) || 0)})`
+        : `#${ev.rank} best rock ever — ${miningCr(Number(ev.credits) || 0)} Cr from ${ev.tonnes}t`;
+    case 'mining_rock_done':
+      return `Rock done — ${ev.tonnes}t · ${miningCr(Number(ev.credits) || 0)} Cr`;
     case 'fsd_jump':
       return `Jumped to ${ev.system}${ev.population ? ` (pop: ${ev.population.toLocaleString()})` : ''}`;
     case 'docked':

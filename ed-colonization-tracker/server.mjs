@@ -22,6 +22,12 @@ import {
   journalDirExists,
   listJournalFiles,
 } from './server/journal/paths.js';
+import { createCaptureStore } from './server/ai/copilotCapture.js';
+import { initCopilotMemory, recordAnswer, recordQuiz, getQuizHistory } from './server/ai/copilotMemory.js';
+import { startTickPoll, getTickInfo, getGalaxyTick } from './server/journal/tick.js';
+import { runOnDemand, runNews } from './server/ai/copilot.js';
+import { startNewsRefresh } from './server/ai/copilotNews.js';
+import { buildTriviaRound } from './server/ai/copilotTrivia.js';
 import {
   fetchLatestPositionFromJournal,
   extractLatestCargoCapacity,
@@ -49,6 +55,19 @@ import {
   getServerWatcherStatus,
 } from './server/journal/watcher.js';
 import { pollCompanionFiles } from './server/journal/processors.js';
+import {
+  initMiningLog, readRocks, getRateHistory, measuredRateFor, flushNow as flushMiningLog,
+  backfillFromJournals, getLocationTotals,
+} from './server/journal/miningLog.js';
+import {
+  initRingIndex, buildRingIndex, findRingsForTargets, ringIndexStats, getMaterialCatalog, rankRings,
+  getRingInfo,
+} from './server/journal/miningIndex.js';
+import {
+  scanMiningMissions, getLiveMiningMissions, commodityKey,
+} from './server/journal/miningMissions.js';
+import { getMiningSnapshot, commodityValueNow, rockValueNow } from './server/journal/mining.js';
+import { searchRingsBySignals } from './server/journal/spansh.js';
 
 // SEA detection: when bundled via build-exe.mjs and injected as a single executable,
 // the node:sea API reports isSea() === true. In that case, runtime state (colony-data.json,
@@ -102,6 +121,16 @@ const GALLERY_META = path.join(APP_DIR, 'colony-gallery.json');
 
 // Ensure gallery directory exists
 try { fs.mkdirSync(GALLERY_DIR, { recursive: true }); } catch {}
+const COPILOT_DIR = path.join(APP_DIR, 'copilot-characters');
+try { fs.mkdirSync(COPILOT_DIR, { recursive: true }); } catch {}
+// Corpus flywheel: append-only log of every shown line + ratings (copilotCapture.js).
+const CAPTURE_FILE = path.join(APP_DIR, 'copilot-captures.jsonl');
+const captureStore = createCaptureStore(CAPTURE_FILE);
+// Co-pilot persistent memory (crew roster / session tenure / docking grudges) — its own
+// server-owned file, kept OUT of the synced client state. See copilotMemory.js.
+const MEMORY_FILE = path.join(APP_DIR, 'copilot-memory.json');
+initCopilotMemory(MEMORY_FILE);
+startNewsRefresh(); // keep the GalNet cache warm for TARS's news beat (real feed; best-effort)
 
 // --- Automatic backup on startup ---
 const BACKUP_DIR = path.join(APP_DIR, 'backups');
@@ -245,6 +274,13 @@ function mergeStatePatch(existing, incoming) {
         for (const k of removeList) delete merged[k];
         out[key] = merged;
       }
+    } else if (key === 'settings' && val && typeof val === 'object' && !Array.isArray(val)) {
+      // settings is an ACCUMULATING flat object — a partial or stale client sync must NEVER drop
+      // keys the server already holds. A wholesale replace here wiped copilotPersonality on a
+      // build (the fresh client came up without it and a Sound-toggle sync replaced the lot).
+      // Shallow-merge: existing keys survive, incoming keys overlay.
+      const curS = (existing.settings && typeof existing.settings === 'object' && !Array.isArray(existing.settings)) ? existing.settings : {};
+      out[key] = { ...curS, ...val };
     } else {
       // Wholesale replace (scalar, object, or legacy-format full value)
       out[key] = val;
@@ -655,8 +691,14 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const pathname = url.pathname;
 
-  // Token validation — only for API/data routes, not static files
-  const needsToken = pathname.startsWith('/api/') || pathname.startsWith('/overlay');
+  // Token validation — only for API/data routes, not static files.
+  // Co-pilot ACTION endpoints (compute-triggering or state-writing) require the token like /api/ —
+  // they were previously open to any LAN device. The static-like /copilot-art/ and /copilot-characters
+  // (images + pack picker) stay open, same as gallery images.
+  const isCopilotAction = pathname === '/copilot-ask' || pathname === '/copilot-news'
+    || pathname === '/copilot-rate' || pathname === '/copilot-answer'
+    || pathname === '/copilot-trivia' || pathname === '/copilot-trivia-result';
+  const needsToken = pathname.startsWith('/api/') || pathname.startsWith('/overlay') || isCopilotAction;
   if (needsToken && !validateToken(req)) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Invalid or missing token' }));
@@ -684,6 +726,13 @@ const server = http.createServer((req, res) => {
     const networkUrl = `http://${hostname}:${PORT}?token=${APP_TOKEN}`;
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ url: networkUrl, token: APP_TOKEN, hostname, port: PORT }));
+    return;
+  }
+
+  // Galaxy BGS tick (runtime-only, from the tick.infomancer.uk poll) — lastGalaxyTick null until first fetch
+  if (pathname === '/api/tick' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(getTickInfo()));
     return;
   }
 
@@ -958,6 +1007,46 @@ const server = http.createServer((req, res) => {
           // pollCompanionFiles can read a consistent state when it computes its own diff.
           const merged = mergeStatePatch(existing, patch);
           writeStateDebounced(merged);
+
+          // SERVER-SIDE depot auto-create — project creation must never depend on a browser
+          // handler. The Dashboard's response loop was the ONLY creator; when it doesn't run
+          // (any error, any other page), new construction sites stayed invisible no matter how
+          // many times Sync All was pressed. The server now writes them itself; the client loop
+          // then simply finds them as existing (no duplicates).
+          try {
+            const stNow = pendingState ?? readStateFile();
+            const haveIds = new Set((Array.isArray(stNow.projects) ? stNow.projects : []).map((p) => p && p.marketId).filter(Boolean));
+            const dismissedIds = new Set(Array.isArray(stNow.dismissedMarketIds) ? stNow.dismissedMarketIds : []);
+            const freshProjects = {};
+            for (const depot of depots) {
+              if (!depot || depot.isComplete || depot.isFailed) continue;
+              if (haveIds.has(depot.marketId) || dismissedIds.has(depot.marketId)) continue;
+              const id = crypto.randomUUID();
+              const nowIso = new Date().toISOString();
+              const stationName = depot.stationName || '';
+              freshProjects[id] = {
+                id,
+                name: depot.systemName ? `${depot.systemName}${stationName ? ` - ${stationName}` : ''}` : `Depot ${depot.marketId}`,
+                systemName: depot.systemName || '',
+                systemAddress: depot.systemAddress ?? null,
+                stationType: depot.stationType || '',
+                stationName,
+                marketId: depot.marketId,
+                commodities: depot.commodities || [],
+                status: 'active',
+                notes: '',
+                createdAt: nowIso,
+                lastUpdatedAt: nowIso,
+              };
+            }
+            if (Object.keys(freshProjects).length) {
+              applyStatePatch({ projects: { __idKey: 'id', __upsert: freshProjects } });
+              console.log(`[SyncAll] AUTO-CREATED ${Object.keys(freshProjects).length} project(s) server-side: ${Object.values(freshProjects).map((p) => p.name).join('; ')}`);
+            }
+          } catch (e) {
+            console.error('[SyncAll] server-side depot create failed:', e && e.message);
+          }
+
           if (currentMarket && currentMarket.marketId) {
             try {
               pollCompanionFiles(journalDir, {
@@ -1201,6 +1290,160 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Mining summary — live missions (with their Cr/t, which overrides market pricing), the rock
+  // currently under the lasers, measured extraction rate by ring over time, and index coverage.
+  if (pathname === '/api/mining/summary' && req.method === 'GET') {
+    try {
+      const existing = readStateFile();
+      const journalDir = resolveJournalDir((existing.settings || {}).journalDirOverride);
+      scanMiningMissions(journalDir);
+      const missions = getLiveMiningMissions();
+
+      // Completion estimate is deliberately worst-case: CargoDepot does not fire for Mission_Mining,
+      // so wing-mate contributions are invisible. Reporting this as a forecast would be a number
+      // built on tonnage the journal cannot see.
+      const pacing = Object.entries(missions.byCommodity).map(([key, m]) => {
+        const rate = measuredRateFor(key);
+        const hoursSolo = rate && rate.tonnesPerHour > 0 ? m.tonnes / rate.tonnesPerHour : null;
+        return {
+          key, label: m.label, tonnes: m.tonnes, crPerTonne: m.crPerTonne, expiry: m.expiry,
+          wing: m.wing, measuredTonnesPerHour: rate ? rate.tonnesPerHour : null,
+          hoursSoloWorstCase: hoursSolo,
+          basis: rate
+            ? `median of ${rate.sessions} session(s) — ${rate.tonnes}t over ${rate.hours.toFixed(1)}h actually mining`
+            : 'no measured rate yet',
+        };
+      });
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        missions: missions.byCommodity,
+        pacing,
+        wingCaveat: 'Estimates assume you mine every tonne yourself — wing contributions are not reported for mining missions.',
+        snapshot: getMiningSnapshot(),
+        rateHistory: getRateHistory().slice(0, 60),
+        locations: getLocationTotals((k) => commodityValueNow(k, existing), (rec) => rockValueNow(rec, existing)),
+        materials: getMaterialCatalog(),
+        index: ringIndexStats(),
+      }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message || String(e) }));
+    }
+    return;
+  }
+
+  // Prospected-rock log. Append-only and uncapped, so reads are explicitly paginated.
+  if (pathname === '/api/mining-log' && req.method === 'GET') {
+    try {
+      flushMiningLog();
+      const limit = Math.min(parseInt(url.searchParams.get('limit') || '200', 10) || 200, 2000);
+      const ring = url.searchParams.get('ring');
+      let rows = readRocks();
+      if (ring) rows = rows.filter((r) => r.ring === ring);
+      const total = rows.length;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ total, returned: Math.min(limit, total), rocks: rows.slice(-limit).reverse() }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message || String(e) }));
+    }
+    return;
+  }
+
+  // Ring finder. Two sources with different strengths, merged and labelled:
+  //   journal — only rings this commander has DSS-mapped, but joinable to what they actually
+  //             extracted there, which is the only non-speculative quality signal available.
+  //   spansh  — galaxy-wide discovery for rings never visited.
+  if (pathname === '/api/mining/rings' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', async () => {
+      try {
+        const input = body ? JSON.parse(body) : {};
+        const targets = Array.isArray(input.targets) ? input.targets : [];
+        if (!targets.length) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ rings: [], note: 'No targets set.' }));
+          return;
+        }
+        const existing = readStateFile();
+        const journalDir = resolveJournalDir((existing.settings || {}).journalDirOverride);
+        const pos = existing.commanderPosition || {};
+        const origin = pos.coordinates || null;
+
+        buildRingIndex(journalDir);
+
+        // Measured tonnes/hour per ring — outranks every inferred signal in the ranking.
+        const measuredByRing = {};
+        for (const h of getRateHistory()) {
+          if (!h.tonnesPerHour) continue;
+          const cur = measuredByRing[h.ring];
+          if (!cur || h.tonnesPerHour > cur.tonnesPerHour) measuredByRing[h.ring] = h;
+        }
+
+        const journalRings = findRingsForTargets(targets, origin, { measuredByRing });
+
+        let spanshRings = [];
+        if (input.includeSpansh !== false && origin) {
+          // Spansh uses full internal names; the journal abbreviates ("Low Temp. Diamonds").
+          const spanshNames = targets.map((t) => (commodityKey(t) === 'lowtemperaturediamond' ? 'Low Temperature Diamonds' : t));
+          const seen = new Set(journalRings.map((r) => r.ring));
+          const wantKeys = new Set(targets.map(commodityKey));
+
+          // ONE QUERY PER TARGET, merged. Spansh's ring_signals filter is AND across entries —
+          // verified 2026-07-22: [Bromellite] returns 10,000 rings, [Bromellite, Osmium] returns 0,
+          // because Osmium is not a ring-hotspot type at all. A combined query therefore silently
+          // returned nothing whenever a target wasn't a hotspot commodity, while the journal side
+          // (which ORs) still produced hits — so the finder looked like it worked and quietly hid
+          // every Spansh result. Querying separately matches the journal's OR semantics.
+          const raw = [];
+          for (const name of spanshNames) {
+            const hits = await searchRingsBySignals([name], origin, { size: 25 });
+            raw.push(...hits);
+          }
+          for (const b of raw) {
+            for (const ring of (b.rings || [])) {
+              if (!ring.signals || seen.has(ring.name)) continue;
+              const hits = ring.signals
+                .filter((s) => wantKeys.has(commodityKey(s.name)))
+                .map((s) => ({ key: commodityKey(s.name), label: s.name, count: s.count }));
+              if (!hits.length) continue;
+              seen.add(ring.name);
+              spanshRings.push({
+                source: 'spansh',
+                ring: ring.name,
+                system: b.system_name || '',
+                ringClass: ring.type || '',
+                reserve: b.reserve_level || '',
+                depthLs: b.distance_to_arrival != null ? Math.round(b.distance_to_arrival) : null,
+                distanceLy: b.distance != null ? b.distance : null,
+                hits,
+                hitCount: hits.reduce((a, h) => a + h.count, 0),
+                other: ring.signals.filter((s) => !wantKeys.has(commodityKey(s.name))).map((s) => s.name),
+              });
+            }
+          }
+        }
+
+        // Rank the COMBINED list — journal and Spansh rows must compete on one scale, otherwise a
+        // distant journal ring would always outrank a closer Spansh one purely by source order.
+        const ranked = rankRings(journalRings.concat(spanshRings), { measuredByRing });
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          rings: ranked,
+          origin: pos.systemName || null,
+          counts: { journal: journalRings.length, spansh: spanshRings.length },
+        }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message || String(e) }));
+      }
+    });
+    return;
+  }
+
   // War & Peace API: POST /api/war-peace/search
   // Proxy a Spansh systems-search query for systems in conflict (War / Civil War / Election)
   // near a reference system. Caches per filter-hash until the next BGS tick (Thursday 07:00 UTC)
@@ -1245,7 +1488,12 @@ const server = http.createServer((req, res) => {
         const cacheKey = JSON.stringify({ referenceSystem: canonicalRef, radius, states, allegiances, size });
         const cached = warPeaceCache.get(cacheKey);
         const now = Date.now();
-        if (cached && cached.expiresAt > now) {
+        // Tick-based validity: an entry is fresh while the galaxy tick hasn't moved since it was
+        // fetched — faction states only change on the tick. Falls back to the time-based expiry
+        // when the tick service is unavailable (or for entries cached before it answered).
+        const nowTick = getGalaxyTick();
+        const cacheValid = cached && ((nowTick && cached.tick) ? cached.tick === nowTick : cached.expiresAt > now);
+        if (cacheValid) {
           // Even on cache hit, post-filter (combatantAllegiances/minPopulation) at request time
           // — these don't affect the upstream query, just trim the cached response.
           const filtered = filterWarPeaceResults(cached.results, { combatantAllegiances, minPopulation });
@@ -1291,7 +1539,7 @@ const server = http.createServer((req, res) => {
         const allResults = Array.isArray(spanshJson.results) ? spanshJson.results : [];
         // Cache the full result set (without combatant/population post-filter — those vary per request)
         const expiresAt = nextBgsTick(now);
-        warPeaceCache.set(cacheKey, { results: allResults, cachedAt: now, expiresAt });
+        warPeaceCache.set(cacheKey, { results: allResults, cachedAt: now, expiresAt, tick: getGalaxyTick() });
         const filtered = filterWarPeaceResults(allResults, { combatantAllegiances, minPopulation });
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1471,6 +1719,108 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Serve co-pilot character art (no token — like gallery images). Files live
+  // under copilot-characters/<packId>/<mood>.png (+ cockpit.png, pack.json).
+  if (pathname.startsWith('/copilot-art/')) {
+    const rel = pathname.slice('/copilot-art/'.length).split('/').filter(Boolean).map((s) => path.basename(s));
+    const filePath = path.join(COPILOT_DIR, ...rel);
+    fs.readFile(filePath, (err, data) => {
+      if (err) { res.writeHead(404); res.end('Not found'); return; }
+      const ext = path.extname(filePath).toLowerCase();
+      const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'image/png';
+      res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'public, max-age=3600' });
+      res.end(data);
+    });
+    return;
+  }
+
+  // List installed co-pilot character packs (no token — populates the picker).
+  if (pathname === '/copilot-characters' && req.method === 'GET') {
+    let packs = [];
+    try {
+      packs = fs.readdirSync(COPILOT_DIR, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => {
+          let name = d.name;
+          try {
+            const mf = JSON.parse(fs.readFileSync(path.join(COPILOT_DIR, d.name, 'pack.json'), 'utf8'));
+            if (mf && mf.name) name = String(mf.name);
+          } catch { /* no manifest — use folder name */ }
+          return { id: d.name, name };
+        });
+    } catch { /* dir missing — empty list */ }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(packs));
+    return;
+  }
+
+  // Rate a co-pilot line (👍 +1 / 👎 -1) — feeds the corpus promote/prune engine. No token.
+  if (pathname === '/copilot-rate' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      let ok = false;
+      try { const { id, rating, reason, comment } = JSON.parse(body || '{}'); ok = captureStore.rate(id, rating, reason, comment); } catch { /* bad body */ }
+      res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok }));
+    });
+    return;
+  }
+
+  // Store a Q&A answer (durable/session/goal) — builds the co-pilot's model of the commander
+  // for callbacks. "not now" sends nothing; "it's complicated" sends value 'complicated'. No token.
+  if (pathname === '/copilot-answer' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      let ok = false;
+      try { const { layer, learnKey, value, label, question } = JSON.parse(body || '{}'); ok = recordAnswer(layer, learnKey, { value, label, question }); } catch { /* bad body */ }
+      res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok }));
+    });
+    return;
+  }
+
+  // "What's on your mind?" — fire an on-demand live line; it returns via SSE. No token.
+  if (pathname === '/copilot-ask' && req.method === 'POST') {
+    runOnDemand(readStateFile(), { broadcastEvent, captureLine: captureStore.capture })
+      .catch((e) => console.error('[Copilot] on-demand failed:', e && e.message));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  // "What's the news?" — fetch a real GalNet headline + the co-pilot's take; returns via SSE.
+  if (pathname === '/copilot-news' && req.method === 'POST') {
+    runNews(readStateFile(), { broadcastEvent, captureLine: captureStore.capture })
+      .catch((e) => console.error('[Copilot] news failed:', e && e.message));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  // TARS trivia — a round of multiple-choice questions (personal-data + astronomy). No token.
+  if (pathname === '/copilot-trivia' && req.method === 'GET') {
+    let round = [];
+    try { round = buildTriviaRound(readStateFile(), 6); } catch (e) { console.error('[Copilot] trivia:', e && e.message); }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ questions: round, history: getQuizHistory() }));
+    return;
+  }
+
+  // Record a finished trivia round (score/total) into copilot-memory for the history. No token.
+  if (pathname === '/copilot-trivia-result' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      let ok = false;
+      try { const { score, total } = JSON.parse(body || '{}'); ok = recordQuiz(score, total); } catch { /* bad body */ }
+      res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok, history: getQuizHistory() }));
+    });
+    return;
+  }
+
   // SSE: GET /api/events — live event stream for Companion page
   if (pathname === '/api/events' && req.method === 'GET') {
     res.writeHead(200, {
@@ -1560,6 +1910,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
+  startTickPoll(broadcastEvent); // galaxy BGS tick awareness (optional; fail-silent)
   const hostname = os.hostname().toLowerCase();
   const localUrl = `http://localhost:${PORT}`;
   const networkUrl = `http://${hostname}:${PORT}`;
@@ -1603,12 +1954,35 @@ server.listen(PORT, '0.0.0.0', () => {
   // and Cargo.json / Market.json every 5s. Writes go through applyStatePatch
   // → state_updated SSE → all connected clients rehydrate. Overlay messages
   // go through sendOverlayMessage → EDMC TCP 127.0.0.1:5010.
+  // Mining side-stores. The rock log lives outside colony-data.json on purpose — it is append-only
+  // and uncapped, and colony-data.json is already ~21.5MB and hydrated to every connected device.
+  try {
+    initMiningLog(APP_DIR);
+    initRingIndex(APP_DIR);
+    const st = readStateFile();
+    const jd = resolveJournalDir((st.settings || {}).journalDirOverride);
+    // Deferred: the first ring-index build sweeps every journal, so keep it off the boot path.
+    setTimeout(() => {
+      try {
+        buildRingIndex(jd);
+        scanMiningMissions(jd);
+        const s = ringIndexStats();
+        console.log(`[Mining] Ring index ready: ${s.rings} mapped ring(s), ${s.systems} system(s)`);
+        const bf = backfillFromJournals(jd, listJournalFiles, getRingInfo);
+        if (bf.backfilled) console.log(`[Mining] Backfilled ${bf.backfilled} historical rock(s) — yield table seeded`);
+      } catch (e) { console.error('[Mining] index build failed:', e && e.message); }
+    }, 4000).unref?.();
+  } catch (e) {
+    console.error('[Mining] init failed:', e && e.message);
+  }
+
   try {
     startServerWatcher({
       readState: readStateFile,
       applyStatePatch,
       broadcastEvent,
       sendOverlay: sendOverlayMessage,
+      captureLine: captureStore.capture,
     });
   } catch (e) {
     console.error('[Watcher] Failed to start:', e && e.message);

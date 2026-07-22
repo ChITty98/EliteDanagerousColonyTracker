@@ -27,6 +27,18 @@ export function SettingsPage() {
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Auto-save the detected carrier Market ID. The app already knows it (fleetCarriers,
+  // populated when you dock at your carrier) and only showed it as a hint — write it
+  // into settings so the co-pilot / sourcing / chat all see it without making the user
+  // hand-copy a number we already have.
+  useEffect(() => {
+    if (!settings.myFleetCarrier || settings.myFleetCarrierMarketId != null) return;
+    const detected = fleetCarriers.find((fc) => fc.callsign === settings.myFleetCarrier);
+    if (detected && detected.marketId != null) {
+      updateSettings({ myFleetCarrierMarketId: detected.marketId });
+    }
+  }, [settings.myFleetCarrier, settings.myFleetCarrierMarketId, fleetCarriers, updateSettings]);
+
   const handleResetData = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);
     window.location.reload();

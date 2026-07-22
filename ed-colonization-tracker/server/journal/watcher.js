@@ -23,6 +23,8 @@ import {
   journalDirExists,
 } from './paths.js';
 import { processNewEvents, pollCompanionFiles } from './processors.js';
+import { pollStatus } from '../ai/copilotStatus.js';
+import { checkMiningStall } from './mining.js';
 import { fetchLatestPositionFromJournal } from './extractor.js';
 import { seedFcRegistryFromKnownStations } from './util.js';
 
@@ -280,4 +282,12 @@ function pollCompanionTick() {
     pollCompanionFiles(wstate.journalDir, wstate.deps);
     wstate.lastEventAt = new Date().toISOString();
   }
+
+  // Status.json live flags (fuel / hardpoints / flight-assist / night-vision /
+  // pips) — fires the co-pilot only on a rising edge; a cheap no-op otherwise.
+  try { pollStatus(wstate.journalDir, wstate.deps); } catch (e) { console.error('[Watcher] status error:', e && e.message); }
+
+  // Mining assist — periodic collection-stall + low-limpet check (a stall is the ABSENCE of events,
+  // so it can't live in the journal-event path). No-op unless a mining session is live.
+  try { checkMiningStall(wstate.journalDir, wstate.deps); } catch (e) { console.error('[Watcher] mining error:', e && e.message); }
 }

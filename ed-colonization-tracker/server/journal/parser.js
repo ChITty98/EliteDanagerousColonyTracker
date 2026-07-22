@@ -84,6 +84,7 @@ export function parseJournalLines(lines) {
   const materialTradeEvents = [];
   const scientificResearchEvents = [];
   const engineerContributionEvents = [];
+  const allEvents = []; // every parsed event this tick — for the AI co-pilot
 
   for (const line of lines) {
     if (!line || !line.trim()) continue;
@@ -93,6 +94,7 @@ export function parseJournalLines(lines) {
     } catch {
       continue; // Skip malformed lines
     }
+    allEvents.push(event);
     switch (event.event) {
       case 'ColonisationConstructionDepot': depotEvents.push(event); break;
       case 'ColonisationSystemClaim': systemClaimEvents.push(event); break;
@@ -213,6 +215,7 @@ export function parseJournalLines(lines) {
     materialTradeEvents,
     scientificResearchEvents,
     engineerContributionEvents,
+    allEvents,
   };
 }
 

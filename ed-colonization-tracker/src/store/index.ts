@@ -148,6 +148,10 @@ const MERGE_STRATEGIES: Record<string, MergeStrategy> = {
   visitedMarkets: { kind: 'arrayById', idKey: 'marketId' },
   // Sets
   manualColonizedSystems: { kind: 'stringSet' },
+  // Mining ignore/target sets. stringSet (not a settings field) so two devices toggling different
+  // materials merge per-element instead of last-write-wins clobbering each other's whole list.
+  miningIgnored: { kind: 'stringSet' },
+  miningTargets: { kind: 'stringSet' },
   hiddenInstallations: { kind: 'stringSet' },
   dismissedMarketIds: { kind: 'numberSet' },
   // Scalars / objects / no-good-id arrays — wholesale replace
@@ -660,6 +664,14 @@ interface AppState {
   addManualColonizedSystem: (systemName: string) => void;
   removeManualColonizedSystem: (systemName: string) => void;
 
+  // Mining. Ignored materials drop out of a rock's expected-value total (they still display, so a
+  // low total is explained). Targets alert on prospect regardless of value — a mission commodity
+  // matters even when it prices low. Stored as normalized commodity keys.
+  miningIgnored: string[];
+  miningTargets: string[];
+  toggleMiningIgnored: (commodityKey: string) => void;
+  toggleMiningTarget: (commodityKey: string) => void;
+
   // Manual installations (from signal mapping or user-added)
   manualInstallations: ManualInstallation[];
   addManualInstallation: (installation: Omit<ManualInstallation, 'id' | 'createdAt'>) => string;
@@ -797,25 +809,56 @@ export const useAppStore = create<AppState>()(
           ),
         })),
       completeProject: (id, completedStation) =>
-        set((state) => ({
-          projects: state.projects.map((p) =>
-            p.id === id
-              ? {
-                  ...p,
-                  status: 'completed' as const,
-                  completedAt: new Date().toISOString(),
-                  lastUpdatedAt: new Date().toISOString(),
-                  completedStationName: completedStation?.name || null,
-                  completedStationType: completedStation?.type || null,
-                  // Set all commodities to fully provided
-                  commodities: p.commodities.map((c) => ({
-                    ...c,
-                    providedQuantity: c.requiredQuantity,
-                  })),
-                }
-              : p
-          ),
-        })),
+        set((state) => {
+          const proj = state.projects.find((p) => p.id === id);
+          const newName = completedStation?.name?.trim() || '';
+          // The entered name must propagate EVERYWHERE the old identity lives, or the UI keeps
+          // showing the construction-era name (completed "ATMO SKY CAIRN ASC", dashboard still
+          // said "Bawa" + construction). Field-level patch on knownStations — NEVER replace the
+          // record: firstDocked/lastDocked/dockedCount/faction histories must survive.
+          let knownStations = state.knownStations;
+          if (proj?.marketId && newName) {
+            const ks = state.knownStations[proj.marketId];
+            if (ks) {
+              knownStations = {
+                ...state.knownStations,
+                [proj.marketId]: {
+                  ...ks,
+                  stationName: newName,
+                  stationType: completedStation?.type || ks.stationType,
+                },
+              };
+            }
+          }
+          return {
+            knownStations,
+            projects: state.projects.map((p) =>
+              p.id === id
+                ? {
+                    ...p,
+                    status: 'completed' as const,
+                    completedAt: new Date().toISOString(),
+                    lastUpdatedAt: new Date().toISOString(),
+                    completedStationName: completedStation?.name || null,
+                    completedStationType: completedStation?.type || null,
+                    // Rewrite the display identity too — `name` was frozen at creation as
+                    // "System - Planetary Construction Site: X" and never updated on completion.
+                    ...(newName
+                      ? {
+                          name: p.systemName ? `${p.systemName} - ${newName}` : newName,
+                          stationName: newName,
+                        }
+                      : {}),
+                    // Set all commodities to fully provided
+                    commodities: p.commodities.map((c) => ({
+                      ...c,
+                      providedQuantity: c.requiredQuantity,
+                    })),
+                  }
+                : p
+            ),
+          };
+        }),
       reactivateProject: (id) =>
         set((state) => ({
           projects: state.projects.map((p) =>
@@ -1406,6 +1449,24 @@ export const useAppStore = create<AppState>()(
           ),
         })),
 
+      // Mining ignore / target sets
+      miningIgnored: [],
+      miningTargets: [],
+      toggleMiningIgnored: (key) =>
+        set((state) => {
+          const cur = state.miningIgnored ?? [];
+          return cur.includes(key)
+            ? { miningIgnored: cur.filter((k) => k !== key) }
+            : { miningIgnored: [...cur, key] };
+        }),
+      toggleMiningTarget: (key) =>
+        set((state) => {
+          const cur = state.miningTargets ?? [];
+          return cur.includes(key)
+            ? { miningTargets: cur.filter((k) => k !== key) }
+            : { miningTargets: [...cur, key] };
+        }),
+
       // Manual installations
       manualInstallations: [],
       addManualInstallation: (installation) => {
@@ -1616,6 +1677,8 @@ export const useAppStore = create<AppState>()(
         systemAddressMap: state.systemAddressMap, // Needed for FSS signal → system mapping
         fssSignals: state.fssSignals, // FSS-discovered stations survive page reload
         manualColonizedSystems: state.manualColonizedSystems,
+        miningIgnored: state.miningIgnored,
+        miningTargets: state.miningTargets,
         manualInstallations: state.manualInstallations,
         hiddenInstallations: state.hiddenInstallations,
         dismissedMarketIds: state.dismissedMarketIds,

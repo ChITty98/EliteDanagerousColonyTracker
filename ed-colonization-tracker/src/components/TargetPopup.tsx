@@ -36,7 +36,14 @@ interface TargetEvent {
 }
 
 // Headline event types (besides target_selected) that pop a compact card.
-const HEADLINE_TYPES = ['first_footfall', 'score_update', 'npc_threat', 'station_dock_summary'] as const;
+// `mining_refined` is intentionally absent: it fires every ~11s while this card lingers 20s, so it
+// would never leave the screen. Per-tonne credits go to the MiningTicker HUD instead. What's listed
+// here is the genuinely interruption-worthy set.
+const HEADLINE_TYPES = [
+  'first_footfall', 'score_update', 'npc_threat', 'station_dock_summary',
+  'mining_target', 'mining_prospect', 'mining_milestone',
+  'mining_stall', 'mining_cargo', 'mining_cold', 'mining_ring',
+] as const;
 
 // Single discriminated pop-up state: the rich target card, or a compact
 // headline-event card, or nothing.

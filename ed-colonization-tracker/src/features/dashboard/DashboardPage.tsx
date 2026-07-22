@@ -161,6 +161,10 @@ export function DashboardPage() {
         if (st.systemName.toLowerCase() !== sys.systemName.toLowerCase()) continue;
         if (isColonisationShip(st.stationName, st.stationType)) continue;
         if (isConstructionStationName(st.stationName)) continue;
+        // Filter by TYPE too — a construction depot whose NAME lacks "Construction" (e.g. a
+        // record captured as plain "Bawa Station" mid-build) slipped past the name check and
+        // double-counted against the completed project's entry.
+        if (/ConstructionDepot/i.test(st.stationType || '')) continue;
         const key = st.stationName.toLowerCase();
         if (!seenNames.has(key)) {
           seenNames.add(key);

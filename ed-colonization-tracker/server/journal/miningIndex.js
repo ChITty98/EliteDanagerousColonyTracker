@@ -26,7 +26,10 @@ import { commodityKey } from './miningMissions.js';
 const CACHE_FILE = 'mining-rings.json';
 const RESCAN_MS = 10 * 60_000;
 
-let index = { rings: {}, coords: {}, materials: {}, builtAt: 0 };
+// `rings` = DSS-mapped (SAASignalsFound). `allRings` = every planetary ring ever seen in a body
+// Scan — the superset that makes "seen but never deep-scanned" computable. Belts are excluded:
+// they can't be DSS-mapped (0 of this commander's 111 SAASignalsFound records is a belt).
+let index = { rings: {}, allRings: {}, coords: {}, materials: {}, builtAt: 0 };
 let cachePath = null;
 let building = false;
 
@@ -37,7 +40,7 @@ export function initRingIndex(appDir) {
   try {
     if (fs.existsSync(cachePath)) {
       const j = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
-      if (j && j.rings) index = j;
+      if (j && j.rings) index = Object.assign({ allRings: {} }, j); // pre-allRings cache files lack the field
     }
   } catch { /* rebuild from journals */ }
   return cachePath;
@@ -54,6 +57,7 @@ export function buildRingIndex(journalDir, force = false) {
   building = true;
   try {
     const rings = Object.assign({}, index.rings);
+    const allRings = Object.assign({}, index.allRings);
     const coords = Object.assign({}, index.coords);
     const materials = Object.assign({}, index.materials);
     const depth = {};
@@ -100,6 +104,17 @@ export function buildRingIndex(journalDir, force = false) {
             if (!r || !r.Name) continue;
             rclass[r.Name] = normClass(r.RingClass);
             if (ev.ReserveLevel) reserve[r.Name] = normReserve(ev.ReserveLevel);
+            if (!/Belt$/i.test(r.Name)) {
+              const prev = allRings[r.Name] || {};
+              allRings[r.Name] = {
+                name: r.Name,
+                system: ev.StarSystem || prev.system || '',
+                systemAddress: ev.SystemAddress ?? prev.systemAddress ?? null,
+                ringClass: normClass(r.RingClass) || prev.ringClass || '',
+                reserve: ev.ReserveLevel ? normReserve(ev.ReserveLevel) : (prev.reserve || ''),
+                depthLs: ev.DistanceFromArrivalLS != null ? Math.round(ev.DistanceFromArrivalLS) : (prev.depthLs ?? null),
+              };
+            }
           }
         } else if (ev.event === 'SAASignalsFound' && /Ring/i.test(ev.BodyName || '')) {
           const sig = {};
@@ -129,7 +144,7 @@ export function buildRingIndex(journalDir, force = false) {
       r.systemName = r.systemName || guessSystem(name, coords);
     }
 
-    index = { rings, coords, materials, builtAt: Date.now() };
+    index = { rings, allRings, coords, materials, builtAt: Date.now() };
     if (cachePath) {
       try { fs.writeFileSync(cachePath, JSON.stringify(index), 'utf8'); } catch { /* non-fatal */ }
     }
@@ -169,7 +184,21 @@ export function ingestRingEvent(ev) {
     });
   } else if (ev.event === 'Scan') {
     for (const r of ev.Rings || []) {
-      if (!r || !r.Name || !index.rings[r.Name]) continue;
+      if (!r || !r.Name) continue;
+      // A freshly scanned body's rings join the seen-set live, so the DSS-gap list is current
+      // without waiting for the next full rebuild.
+      if (!/Belt$/i.test(r.Name)) {
+        const prev = index.allRings[r.Name] || {};
+        index.allRings[r.Name] = {
+          name: r.Name,
+          system: ev.StarSystem || prev.system || '',
+          systemAddress: ev.SystemAddress ?? prev.systemAddress ?? null,
+          ringClass: normClass(r.RingClass) || prev.ringClass || '',
+          reserve: ev.ReserveLevel ? normReserve(ev.ReserveLevel) : (prev.reserve || ''),
+          depthLs: ev.DistanceFromArrivalLS != null ? Math.round(ev.DistanceFromArrivalLS) : (prev.depthLs ?? null),
+        };
+      }
+      if (!index.rings[r.Name]) continue;
       index.rings[r.Name].ringClass = normClass(r.RingClass);
       if (ev.ReserveLevel) index.rings[r.Name].reserve = normReserve(ev.ReserveLevel);
     }
@@ -269,11 +298,19 @@ export function getRingInfo(ringName) {
  * entries are surfaced but sorted below, because a commander without a seismic charge launcher
  * cannot act on a core-only material — this is observation, not a claim about game mechanics.
  */
+// The journal is inconsistent about casing — some events carry Name_Localised ("Bromellite"),
+// others only a raw lowercase Name ("tritium", "water", "gold"). Title-case the all-lowercase ones
+// at the catalog boundary so every consumer (target picker, ignore chips) inherits the fix.
+const displayLabel = (s) => {
+  const t = String(s || '').trim();
+  return t && t === t.toLowerCase() ? t.replace(/\b\w/g, (c) => c.toUpperCase()) : t;
+};
+
 export function getMaterialCatalog() {
   return Object.values(index.materials)
     .map((m) => ({
       key: m.key,
-      label: m.label,
+      label: displayLabel(m.label),
       from: m.from,
       laserProven: m.from.includes('prospect') || m.from.includes('refined'),
     }))
@@ -283,9 +320,27 @@ export function getMaterialCatalog() {
     });
 }
 
+/**
+ * Rings seen in a body Scan but never DSS-mapped — the "you should scan these" list.
+ * `systemsLower` (a Set of lowercased system names) narrows it, e.g. to colony systems.
+ * Only covers systems where the parent body was actually scanned; a never-FSS'd system's rings
+ * are invisible to the journal and cannot appear here.
+ */
+export function getUnmappedRings(systemsLower) {
+  const out = [];
+  for (const r of Object.values(index.allRings || {})) {
+    if (index.rings[r.name]) continue;
+    if (systemsLower && !systemsLower.has(String(r.system || '').toLowerCase())) continue;
+    out.push(r);
+  }
+  return out.sort((a, b) =>
+    String(a.system).localeCompare(String(b.system)) || String(a.name).localeCompare(String(b.name)));
+}
+
 export function ringIndexStats() {
   return {
     rings: Object.keys(index.rings).length,
+    ringsSeen: Object.keys(index.allRings || {}).length,
     systems: Object.keys(index.coords).length,
     materials: Object.keys(index.materials).length,
     builtAt: index.builtAt,

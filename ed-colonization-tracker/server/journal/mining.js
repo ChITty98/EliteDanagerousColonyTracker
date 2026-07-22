@@ -30,9 +30,11 @@ import path from 'node:path';
 import { commodityKey, missionRateFor, missionTargetKeys, ingestMissionEvent } from './miningMissions.js';
 import {
   beginRock, creditRefined, finalizeRock, fingerprint, getYieldTable, getCurrentRock, getRingValueStats,
-  getRockRecords, invalidateRecords, getCatchStats,
+  getRockRecords, invalidateRecords, getCatchStats, readRocks,
 } from './miningLog.js';
-import { ingestRingEvent, getRingInfo } from './miningIndex.js';
+import { ingestRingEvent, getRingInfo, getUnmappedRings, getMaterialCatalog } from './miningIndex.js';
+import { pushMiningBeat } from '../ai/copilotMining.js';
+import { recordStreakRock, getStreak, computeAggregates, evaluateBadges } from './miningTrophies.js';
 
 const X_LEFT = 40;
 const Y_TARGET = 296;
@@ -88,6 +90,7 @@ let currentSystem = '';
 let priceMap = null;
 let priceMapAt = 0;
 let cargoWarnLevel = 0;          // 0 none, 1 warned, 2 full
+let sessionStartedAt = 0;        // first refine of the current session — the live-rate gauge's clock
 let sessionCredits = 0;          // credits refined since the current mining session began
 let sessionTonnes = 0;
 let rockCredits = 0;             // credits refined off the rock currently under the lasers
@@ -95,6 +98,7 @@ let lastMilestone = 0;           // highest session milestone already celebrated
 let recentRockValues = [];       // rolling window of prospected rock values, for going-cold
 let lastColdAlertAt = 0;
 let lastRingNudgedFor = null;    // ring already nudged about missing hotspot data
+let unmappedNudgedSystems = new Set(); // colony systems already nudged about DSS gaps this run
 
 const now = () => Date.now();
 const isRecent = (ts) => { const t = Date.parse(ts); return Number.isFinite(t) && now() - t < 120_000; };
@@ -111,7 +115,7 @@ const markActive = () => { lastMiningActivityAt = now(); };
  * the earlier mistake, since a 20s card versus an 11s event leaves a card permanently on screen.
  */
 function emit(deps, overlay, sse) {
-  if (deps && deps.sendOverlay) deps.sendOverlay(overlay);
+  if (deps && deps.sendOverlay && overlay) deps.sendOverlay(overlay);
   if (sse && deps && typeof deps.broadcastEvent === 'function') {
     try {
       deps.broadcastEvent(Object.assign({ timestamp: new Date().toISOString() }, sse));
@@ -224,6 +228,7 @@ export function processMiningEvents(parsed, state, deps) {
     } else if (ev.event === 'FSDJump' || ev.event === 'Location') {
       currentSystem = ev.StarSystem || currentSystem;
       if (ev.event === 'FSDJump') { finalizeRock(); currentRing = null; }
+      if (isRecent(ev.timestamp)) maybeNudgeUnmappedRings(state, deps);
     }
 
     if (!deps || !deps.sendOverlay || !isRecent(ev.timestamp)) continue;
@@ -257,6 +262,46 @@ export function processMiningEvents(parsed, state, deps) {
   }
 }
 
+/** "My systems" = every project's system plus the manually-marked colonies — the same definition
+ *  the Sources page uses. Lowercased for joining. */
+export function colonySystemsOf(state) {
+  const s = new Set();
+  for (const p of (state && state.projects) || []) {
+    const n = p && (p.systemName || p.system);
+    if (n) s.add(String(n).toLowerCase());
+  }
+  for (const n of (state && state.manualColonizedSystems) || []) s.add(String(n).toLowerCase());
+  return s;
+}
+
+/**
+ * Arrival nudge: entering one of YOUR systems that has rings you've seen but never DSS-mapped.
+ * Measured 2026-07-22: 63 such rings across the commander's 28 colony systems — almost all
+ * Pristine, including 5 in the active build system. Fires once per system per server run, on
+ * arrival only, so it prompts without nagging. Scoped to colony systems deliberately: an alert on
+ * every jump anywhere would fire constantly (496 unmapped rings galaxy-wide) and train the
+ * commander to ignore it.
+ */
+function maybeNudgeUnmappedRings(state, deps) {
+  if (!currentSystem) return;
+  const key = currentSystem.toLowerCase();
+  if (unmappedNudgedSystems.has(key)) return;
+  if (!colonySystemsOf(state).has(key)) return;
+  const rows = getUnmappedRings(new Set([key]));
+  if (!rows.length) return;
+  unmappedNudgedSystems.add(key);
+
+  // "HIP 52629 A 9 B Ring" → "A 9 B" for the in-system shortlist.
+  const short = rows.map((r) => (r.name.startsWith(currentSystem)
+    ? r.name.slice(currentSystem.length).replace(/\s*Ring$/i, '').trim()
+    : r.name));
+  emit(deps, {
+    id: 'edcolony_mining_unmapped',
+    text: `🔭 ${rows.length} ring${rows.length === 1 ? '' : 's'} here need a DSS scan — ${short.slice(0, 4).join(', ')}${rows.length > 4 ? '…' : ''}`,
+    color: '#a78bfa', x: X_LEFT, y: Y_PROSPECT - 28, ttl: 12,
+  }, { type: 'mining_unmapped', system: currentSystem, count: rows.length, rings: short });
+}
+
 /**
  * On dropping into a ring: report its hotspots, or point out that it has none recorded.
  *
@@ -279,6 +324,7 @@ function ringEntryNudge(ringName, info, deps) {
       id: 'edcolony_mining_ring', text: `💠 ${list}`, color: '#a78bfa',
       x: X_LEFT, y: Y_PROSPECT - 28, ttl: 10,
     }, { type: 'mining_ring', ring: ringName, summary: list, mapped: true });
+    if (info && info.reserve === 'Pristine') pushMiningBeat('ring-entry', { ring: ringName });
   } else {
     emit(deps, {
       id: 'edcolony_mining_ring', text: '💠 No hotspot data for this ring — map it with the DSS',
@@ -355,6 +401,30 @@ function catchTier(pct) {
 function closeRockWithFanfare(state, deps) {
   const rock = getCurrentRock();
   const tonnes = rock ? Object.values(rock.got || {}).reduce((a, b) => a + b, 0) : 0;
+
+  // Target streak — evaluated on EVERY closed rock. Rule (user-confirmed): a target-bearing rock
+  // (>=3% of a hunted commodity) mined extends it, one skipped/abandoned breaks it, junk rocks
+  // never touch it — skipping junk is discipline, not failure.
+  if (rock) {
+    const targets = targetSet(state);
+    const hadTarget = (rock.mats || []).some((m) => m && m.p >= WORTH_MIN_PROP && targets.has(m.k));
+    const st = recordStreakRock(hadTarget, tonnes > 0);
+    if (st.broke) {
+      emit(deps, {
+        id: 'edcolony_mining_streak',
+        text: `💔 Streak ends at ${st.ended} — best ${st.best}`,
+        color: '#94a3b8', x: X_LEFT, y: Y_TARGET - 28, ttl: 7,
+      }, { type: 'mining_streak', event: 'broke', current: 0, ended: st.ended, best: st.best });
+    } else if (hadTarget && tonnes > 0 && (st.isNewBest || st.current === 5 || st.current === 10 || st.current === 25 || st.current === 50)) {
+      const label = st.isNewBest ? `🔥 ${st.current} streak — NEW BEST` : `🔥 ${st.current} target rocks straight`;
+      emit(deps, {
+        id: 'edcolony_mining_streak', text: label, color: '#fb923c',
+        x: X_LEFT, y: Y_TARGET - 28, ttl: 8,
+      }, { type: 'mining_streak', event: st.isNewBest ? 'best' : 'milestone', current: st.current, best: st.best });
+      pushMiningBeat('streak', { streak: st.current });
+    }
+  }
+
   if (!rock || !(tonnes > 0)) { finalizeRock(); return; }
 
   // Rank every rock — historical and current — on ONE consistent basis: refined tonnage priced at
@@ -388,12 +458,32 @@ function closeRockWithFanfare(state, deps) {
     ? { key: 'record', label: 'PERSONAL BEST', icon: '🏆', color: '#fbbf24' }
     : catchTier(pct);
 
+  // Keys are squashed ("lowtemperaturediamond"), so displayName alone would render
+  // "Lowtemperaturediamond" — resolve through the material catalog for the proper label.
+  const labels = {};
+  for (const m of getMaterialCatalog()) labels[m.key] = m.label;
   const parts = Object.entries(rock.got || {})
-    .map(([k, t]) => ({ key: k, name: displayName(k), tonnes: t, credits: (valueOf(k, prices) || { cr: 0 }).cr * t }))
+    .map(([k, t]) => ({ key: k, name: labels[k] || displayName(k), tonnes: t, credits: (valueOf(k, prices) || { cr: 0 }).cr * t }))
     .sort((a, b) => b.credits - a.credits);
 
   finalizeRock();
   invalidateRecords();
+
+  // Character reaction for the big ones; the arbiter paces it so it never machine-guns.
+  if (tier.key === 'record') pushMiningBeat('record', { credits: earned, tonnes });
+  else if (tier.key === 'monster' || tier.key === 'whopper') pushMiningBeat('catch', { credits: earned, tonnes, tierLabel: tier.label });
+
+  // Badges — evaluated now the log contains this rock. First-ever pass marks history quietly
+  // (legacy, no events); only genuine transitions celebrate.
+  try {
+    const agg = computeAggregates(readRocks(), (r) => valueOfGot(r.got));
+    for (const b of evaluateBadges(agg)) {
+      emit(deps, {
+        id: 'edcolony_mining_badge', text: `🏅 BADGE — ${b.icon} ${b.label}: ${b.desc}`,
+        color: '#fbbf24', x: X_LEFT, y: Y_TARGET - 28, ttl: 12,
+      }, { type: 'mining_badge', id: b.id, icon: b.icon, label: b.label, desc: b.desc });
+    }
+  } catch { /* trophies must never break the catch path */ }
 
   const headline = `${tier.icon} ${tier.label} — ${tonnes}t · ${fmtCr(earned)}`;
   const detail = rank ? `  (${ordinal(rank)} best ever)` : `  (top ${Math.max(1, Math.round((1 - pct) * 100))}%)`;
@@ -419,6 +509,7 @@ function closeRockWithFanfare(state, deps) {
     valueHist: stats.value.hist,
     tonnesHist: stats.tonnes.hist,
     sampleSize: stats.count,
+    streak: getStreak().current,
   });
 }
 
@@ -442,6 +533,7 @@ function refinedHelper(ev, state, deps) {
   const credits = val ? val.cr : 0;
 
   creditRefined(key, 1, credits);
+  if (!sessionStartedAt) sessionStartedAt = now();
   rockCredits += credits;
   sessionCredits += credits;
   sessionTonnes += 1;
@@ -460,12 +552,13 @@ function refinedHelper(ev, state, deps) {
   const missionTag = val.source === 'mission' ? ' (mission)' : '';
   const text = `${mark} ${label} +${fmtCr(credits)}${missionTag}${flavour(credits, sessionTonnes)}  ·  rock ${fmtCr(rockCredits)}  ·  session ${fmtCr(sessionCredits)} / ${sessionTonnes}t`;
   emit(deps, { id: 'edcolony_mining_refined', text, color: '#4ade80', x: X_LEFT, y: Y_REFINED, ttl: 6 },
-    { type: 'mining_refined', commodity: label, credits, rockCredits, sessionCredits, sessionTonnes, mission: val.source === 'mission' });
+    { type: 'mining_refined', commodity: label, credits, rockCredits, sessionCredits, sessionTonnes, mission: val.source === 'mission', streak: getStreak().current, sessionStartedAt });
 
   // Session milestones, every 50M. Uses its own overlay id so it doesn't stomp the per-tonne line.
   const milestone = Math.floor(sessionCredits / MILESTONE_CR);
   if (milestone > lastMilestone) {
     lastMilestone = milestone;
+    pushMiningBeat('milestone', { sessionCredits, sessionTonnes });
     emit(deps, {
       id: 'edcolony_mining_milestone',
       text: `🏆 ${fmtCr(sessionCredits)} this session — ${sessionTonnes}t refined`,
@@ -538,7 +631,9 @@ function prospectHelper(ev, state, deps) {
     const txt = hits.map((m) => `${m.n.toUpperCase()} ${m.p.toFixed(1)}% ~${m.est}t`).join(' · ');
     emit(deps, {
       id: 'edcolony_mining_target', text: `🎯 ${txt} — TARGET`, color: '#22d3ee',
-      x: X_LEFT, y: Y_TARGET, ttl: 9,
+      // Long TTL by design: this is the "commit to this rock" signal and the commander is busy
+      // flying when it lands. 9s proved too short to reliably catch.
+      x: X_LEFT, y: Y_TARGET, ttl: 25,
     }, { type: 'mining_target', summary: txt, materials: hits.map((m) => ({ name: m.n, pct: m.p, est: m.est })) });
   }
 
@@ -576,6 +671,19 @@ function prospectHelper(ev, state, deps) {
       ? { type: 'mining_prospect', value: total, summary: shown.join(' · '), good: true, ring: currentRing ? currentRing.name : '' }
       : null);
 
+  // Board ping: EVERY prospect, the moment it's scanned — value vs this ring's bar, before the
+  // commander commits lasers. Consumed only by the Mining page's distribution board (not a popup).
+  emit(deps, null, {
+    type: 'mining_scan',
+    value: total,
+    bar: bar.cr,
+    strong: bar.strong,
+    basis: bar.basis,
+    hasTarget: hits.length > 0,
+    ring: currentRing ? currentRing.name : '',
+    streak: getStreak().current,
+  });
+
   trackPatchQuality(total, bar, deps);
 }
 
@@ -593,7 +701,7 @@ export function checkMiningStall(journalDir, deps) {
   if (!miningRecently) {
     // Session ended — bank the open rock and reset the running totals so the next session's
     // popup doesn't read as a continuation of one that finished hours ago.
-    if (sessionTonnes > 0) { finalizeRock(); sessionCredits = 0; sessionTonnes = 0; lastMilestone = 0; rockCredits = 0; }
+    if (sessionTonnes > 0) { finalizeRock(); sessionCredits = 0; sessionTonnes = 0; lastMilestone = 0; rockCredits = 0; sessionStartedAt = 0; }
     cargoWarnLevel = 0;
     return;
   }
@@ -616,6 +724,7 @@ export function checkMiningStall(journalDir, deps) {
     if ((quiet >= STALL_MS || collapsed) && now() - lastStallAlertAt >= STALL_COOLDOWN_MS) {
       lastStallAlertAt = now();
       const { text, color } = stallFacts(limpets, quiet >= STALL_MS, quiet);
+      pushMiningBeat('stall');
       emit(deps, { id: 'edcolony_mining_stall', text, color, x: X_LEFT, y: Y_STALL, ttl: 9 },
         { type: 'mining_stall', summary: text.replace(/^⚠ /, ''), limpets });
     }
@@ -745,5 +854,7 @@ export function getMiningSnapshot() {
     sessionCredits,
     sessionTonnes,
     rockCredits,
+    sessionStartedAt: sessionStartedAt || null,
+    streak: getStreak(),
   };
 }

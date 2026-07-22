@@ -48,6 +48,7 @@ colony-images/
 # colony-data.json so the synced state blob doesn't grow without bound.
 mining-log.jsonl
 mining-rings.json
+mining-trophies.json
 colony-gallery.json
 backups/
 backups - Copy/

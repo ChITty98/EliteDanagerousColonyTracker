@@ -13,8 +13,13 @@
  */
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useAppStore } from '@/store';
+import { sseSubscribe } from '@/services/sseBus';
+import {
+  cr, ringClassText, RESERVE_TONE, MiningHudCss, HeroBand, DistributionBoard, HBarChart, TrophyWall,
+  type Hist, type ScanPing, type BadgeInfo, type TrophyRecords,
+} from './MiningHud';
 
-interface MaterialInfo { key: string; label: string; from: string[]; laserProven: boolean }
+interface MaterialInfo { key: string; label: string; from: string[]; laserProven: boolean; crPerTonne?: number | null; mission?: boolean }
 interface MissionInfo { label: string; tonnes: number; reward: number; crPerTonne: number; count: number; expiry: string; wing: boolean }
 interface PacingInfo {
   key: string; label: string; tonnes: number; crPerTonne: number; expiry: string; wing: boolean;
@@ -41,6 +46,10 @@ interface RingRow {
   depthLs: number | null; distanceLy: number | null; hits: RingHit[]; hitCount: number;
   other: string[]; measuredTph?: number;
 }
+interface UnmappedRow {
+  name: string; system: string; systemAddress?: number | null;
+  ringClass?: string; reserve?: string; depthLs?: number | null;
+}
 interface Summary {
   missions: Record<string, MissionInfo>;
   pacing: PacingInfo[];
@@ -49,9 +58,14 @@ interface Summary {
     ring: { name: string; ringClass: string; reserve: string } | null; system: string;
     currentRock: Rock | null; miningActive: boolean;
     sessionCredits: number; sessionTonnes: number; rockCredits: number;
+    sessionStartedAt?: number | null;
+    streak?: { current: number; best: number };
   };
+  catchStats?: { value: { hist: Hist; best: number }; count: number };
+  trophies?: { records: TrophyRecords; badges: BadgeInfo[]; streak: { current: number; best: number } };
   rateHistory: RateRow[];
   locations: { rings: LocRow[]; systems: LocRow[] };
+  unmapped?: { mine: UnmappedRow[]; counts: { mine: number; total: number } };
   materials: MaterialInfo[];
   index: { rings: number; systems: number; materials: number };
 }
@@ -59,11 +73,7 @@ interface Summary {
 const token = () => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } };
 const q = (p: string) => { const t = token(); return t ? `${p}${p.includes('?') ? '&' : '?'}token=${t}` : p; };
 
-const cr = (n: number) => (n >= 1_000_000 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${Math.round(n)}`);
-const RESERVE_TONE: Record<string, string> = {
-  Pristine: 'text-emerald-400', Major: 'text-lime-400', Common: 'text-yellow-500',
-  Low: 'text-orange-400', Depleted: 'text-red-400',
-};
+// cr / ringClassText / RESERVE_TONE now live in MiningHud.tsx (single source).
 
 function timeLeft(iso: string): string {
   const ms = Date.parse(iso) - Date.now();
@@ -85,6 +95,12 @@ export function MiningPage() {
   const [ringsLoading, setRingsLoading] = useState(false);
   const [ringNote, setRingNote] = useState('');
   const [search, setSearch] = useState('');
+  const [unmappedScope, setUnmappedScope] = useState<'mine' | 'all'>('mine');
+  const [rocksExpanded, setRocksExpanded] = useState(false);
+  // Live layer — SSE events beat the 15s summary poll so the hero moves the moment a tonne lands.
+  const [live, setLive] = useState<{ sessionCredits: number; sessionTonnes: number; rockCredits: number; streak: number; sessionStartedAt: number | null; at: number } | null>(null);
+  const [scans, setScans] = useState<ScanPing[]>([]);
+  const [unmappedAll, setUnmappedAll] = useState<UnmappedRow[] | null>(null);
   const [error, setError] = useState('');
 
   const loadSummary = useCallback(() => {
@@ -107,6 +123,37 @@ export function MiningPage() {
     const id = setInterval(() => { loadSummary(); loadRocks(); }, 15000);
     return () => clearInterval(id);
   }, [loadSummary, loadRocks]);
+
+  // Live wiring: refined tonnes drive the hero counter/rate, scans ping the distribution board,
+  // catches refresh the rock list without waiting for the poll.
+  useEffect(() => {
+    const offs = [
+      sseSubscribe('mining_refined', (raw) => {
+        const e = raw as Record<string, unknown>;
+        setLive({
+          sessionCredits: Number(e.sessionCredits) || 0,
+          sessionTonnes: Number(e.sessionTonnes) || 0,
+          rockCredits: Number(e.rockCredits) || 0,
+          streak: Number(e.streak) || 0,
+          sessionStartedAt: Number(e.sessionStartedAt) || null,
+          at: Date.now(),
+        });
+      }),
+      sseSubscribe('mining_scan', (raw) => {
+        const e = raw as Record<string, unknown>;
+        setScans((prev) => [...prev, {
+          value: Number(e.value) || 0, bar: Number(e.bar) || 0, strong: Number(e.strong) || 0,
+          hasTarget: !!e.hasTarget, ring: String(e.ring || ''), at: Date.now(),
+        }].slice(-14));
+      }),
+      sseSubscribe('mining_streak', (raw) => {
+        const e = raw as Record<string, unknown>;
+        setLive((prev) => prev ? { ...prev, streak: Number(e.current) || 0, at: Date.now() } : prev);
+      }),
+      sseSubscribe('mining_catch', () => { loadRocks(); }),
+    ];
+    return () => { offs.forEach((f) => f()); };
+  }, [loadRocks]);
 
   // Mission commodities are targets whether or not they were picked by hand — you are mining them
   // for a reason that is already recorded in the journal.
@@ -143,7 +190,12 @@ export function MiningPage() {
 
   const filteredCatalog = useMemo(() => {
     const s = search.trim().toLowerCase();
-    return catalog.filter((m) => !s || m.label.toLowerCase().includes(s));
+    return catalog
+      .filter((m) => !s || m.label.toLowerCase().includes(s))
+      .slice()
+      .sort((a, b) => Number(b.laserProven) - Number(a.laserProven)
+        || (b.crPerTonne ?? 0) - (a.crPerTonne ?? 0)
+        || a.label.localeCompare(b.label));
   }, [catalog, search]);
 
   const snap = summary?.snapshot;
@@ -157,208 +209,66 @@ export function MiningPage() {
     return rocks.some((r) => r.id === cur.id && r.t === cur.t) ? rocks : [cur, ...rocks];
   }, [rocks, snap]);
 
+  // Live layer wins over the 15s poll when it's fresher.
+  const sess = {
+    credits: Math.max(live?.sessionCredits ?? 0, snap?.sessionCredits ?? 0),
+    tonnes: Math.max(live?.sessionTonnes ?? 0, snap?.sessionTonnes ?? 0),
+    rock: live?.rockCredits ?? snap?.rockCredits ?? 0,
+    startedAt: live?.sessionStartedAt ?? snap?.sessionStartedAt ?? null,
+    streak: live?.streak ?? snap?.streak?.current ?? summary?.trophies?.streak.current ?? 0,
+  };
+  const bestTphHere = useMemo(() => {
+    const hist = summary?.rateHistory ?? [];
+    const here = snap?.ring?.name;
+    const inRing = here ? hist.filter((h) => h.ring === here && h.tonnesPerHour) : [];
+    const pool = inRing.length ? inRing : hist.filter((h) => h.tonnesPerHour);
+    return {
+      tph: pool.length ? Math.max(...pool.map((h) => h.tonnesPerHour as number)) : 0,
+      scope: inRing.length ? 'your best here' : 'your best anywhere',
+    };
+  }, [summary, snap]);
+
   return (
     <div className="p-4 space-y-5 max-w-[1400px]">
-      <header className="flex items-baseline justify-between flex-wrap gap-2">
-        <h1 className="text-2xl font-bold">Mining</h1>
-        <div className="text-xs text-muted-foreground">
-          {summary?.index
-            ? `${summary.index.rings} mapped rings · ${summary.index.materials} known materials`
-            : 'loading index…'}
-          {snap?.miningActive && <span className="ml-2 text-emerald-400">● mining active</span>}
-        </div>
-      </header>
+      <MiningHudCss />
+      <HeroBand
+        active={!!snap?.miningActive}
+        credits={sess.credits}
+        tonnes={sess.tonnes}
+        rockCredits={sess.rock}
+        startedAt={sess.startedAt}
+        streak={sess.streak}
+        bestStreak={summary?.trophies?.streak.best ?? 0}
+        ring={snap?.ring ?? null}
+        bestTph={bestTphHere.tph}
+        bestTphScope={bestTphHere.scope}
+        indexLine={summary?.index ? `${summary.index.rings} mapped rings · ${summary.index.materials} materials` : ''}
+      />
 
       {error && <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</div>}
 
-      {(snap?.ring || (snap?.sessionTonnes ?? 0) > 0) && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/20 px-4 py-3 text-sm">
-          <div>
-            {snap?.ring ? (
-              <>
-                <span className="text-muted-foreground">Current ring </span>
-                <span className="font-semibold">{snap.ring.name}</span>
-                {snap.ring.ringClass && <span className="ml-2 text-muted-foreground">{snap.ring.ringClass}</span>}
-                {snap.ring.reserve && <span className={`ml-2 ${RESERVE_TONE[snap.ring.reserve] ?? ''}`}>{snap.ring.reserve}</span>}
-              </>
-            ) : <span className="text-muted-foreground">Not in a ring</span>}
-          </div>
-          {(snap?.sessionTonnes ?? 0) > 0 && (
-            <div className="text-right">
-              <span className="text-emerald-400 font-semibold text-base">{cr(snap!.sessionCredits)} Cr</span>
-              <span className="text-muted-foreground"> this session · {snap!.sessionTonnes}t</span>
-              {snap!.rockCredits > 0 && <span className="text-muted-foreground"> · {cr(snap!.rockCredits)} this rock</span>}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ---- Missions ---- */}
-      {summary && summary.pacing.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Active mining missions</h2>
-          <div className="grid gap-2 md:grid-cols-2">
-            {summary.pacing.map((p) => (
-              <div key={p.key} className="rounded-lg border border-border bg-muted/20 px-4 py-3">
-                <div className="flex items-baseline justify-between">
-                  <span className="font-semibold">{p.label}</span>
-                  <span className="text-xs text-muted-foreground">{timeLeft(p.expiry)} left</span>
-                </div>
-                <div className="mt-1 text-sm">
-                  <span className="text-foreground font-medium">{p.tonnes.toLocaleString()}t</span>
-                  <span className="text-muted-foreground"> · </span>
-                  <span className="text-emerald-400">{p.crPerTonne.toLocaleString()} Cr/t</span>
-                  {p.wing && <span className="ml-2 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] text-sky-300">WING</span>}
-                </div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {p.hoursSoloWorstCase != null
-                    ? `~${p.hoursSoloWorstCase.toFixed(1)}h solo worst case · ${p.basis}`
-                    : `no measured rate yet — ${p.basis}`}
-                </div>
-              </div>
-            ))}
-          </div>
-          <p className="text-xs text-muted-foreground/80">{summary.wingCaveat}</p>
-        </section>
-      )}
-
-      {/* ---- Targets ---- */}
-      <section className="space-y-2">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Targets</h2>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="filter materials…"
-            className="rounded border border-border bg-background px-2 py-1 text-sm w-48"
-          />
-        </div>
-        {effectiveTargets.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {effectiveTargets.map((k) => (
-              <span key={k} className="rounded bg-cyan-500/15 px-2 py-1 text-xs text-cyan-300">
-                🎯 {labelFor(k)}
-                {missionKeys.includes(k) && <span className="ml-1 opacity-70">(mission)</span>}
-              </span>
-            ))}
-          </div>
-        )}
-        <div className="flex flex-wrap gap-1.5">
-          {filteredCatalog.map((m) => {
-            const on = miningTargets.includes(m.key);
-            const fromMission = missionKeys.includes(m.key);
-            return (
-              <button
-                key={m.key}
-                onClick={() => toggleMiningTarget(m.key)}
-                title={fromMission ? 'Required by an active mission' : m.from.join(', ')}
-                className={`rounded border px-2 py-1 text-xs transition-colors ${
-                  on ? 'border-cyan-400/60 bg-cyan-500/15 text-cyan-300'
-                     : 'border-border bg-muted/20 text-muted-foreground hover:text-foreground'
-                } ${!m.laserProven ? 'opacity-60' : ''}`}
-              >
-                {m.label}
-                {!m.laserProven && <span className="ml-1 opacity-70">·hotspot only</span>}
-              </button>
-            );
-          })}
-        </div>
-        <p className="text-xs text-muted-foreground/70">
-          Derived from what you've prospected, refined and hotspot-mapped — it grows on its own.
-          “hotspot only” means never seen in a laser prospect.
-        </p>
-      </section>
-
-      {/* ---- Ring finder ---- */}
-      <section className="space-y-2">
-        <div className="flex items-center gap-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Where to mine</h2>
-          <button
-            onClick={findRings}
-            disabled={ringsLoading}
-            className="rounded border border-border bg-muted/30 px-3 py-1 text-xs hover:bg-muted/60 disabled:opacity-50"
-          >
-            {ringsLoading ? 'searching…' : 'Find rings'}
-          </button>
-          {ringNote && <span className="text-xs text-muted-foreground">{ringNote}</span>}
-        </div>
-        {rings.length > 0 && (
-          <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/30 text-xs uppercase tracking-wider text-muted-foreground">
-                <tr>
-                  <th className="px-3 py-2 text-left">Ring</th>
-                  <th className="px-3 py-2 text-right">ly</th>
-                  <th className="px-3 py-2 text-right">Ls deep</th>
-                  <th className="px-3 py-2 text-left">Reserve</th>
-                  <th className="px-3 py-2 text-left">Type</th>
-                  <th className="px-3 py-2 text-left">Your targets</th>
-                  <th className="px-3 py-2 text-left">Also</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rings.map((r) => (
-                  <tr key={`${r.source}:${r.ring}`} className="border-t border-border/60">
-                    <td className="px-3 py-2">
-                      <div className="font-medium">{r.ring}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {r.source === 'journal' ? 'your map' : 'spansh'}
-                        {r.measuredTph != null && (
-                          <span className="ml-2 text-emerald-400">measured {r.measuredTph.toFixed(0)} t/hr</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums">{r.distanceLy != null ? r.distanceLy.toFixed(0) : '—'}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{r.depthLs != null ? r.depthLs.toLocaleString() : '—'}</td>
-                    <td className={`px-3 py-2 ${RESERVE_TONE[r.reserve] ?? 'text-muted-foreground'}`}>{r.reserve || '—'}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{r.ringClass || '—'}</td>
-                    <td className="px-3 py-2">
-                      {r.hits.map((h) => (
-                        <span key={h.key} className="mr-1 rounded bg-cyan-500/15 px-1.5 py-0.5 text-xs text-cyan-300">
-                          {h.label}{h.count > 1 ? ` ×${h.count}` : ''}
-                        </span>
-                      ))}
-                    </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">{r.other.slice(0, 4).join(', ') || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <p className="text-xs text-muted-foreground/70">
-          Hotspot counts are how many hotspots of that type the ring has — the journal records no
-          positions, so overlap isn't knowable and no yield is inferred from the number.
-        </p>
-      </section>
-
-      {/* ---- Ignored ---- */}
-      {miningIgnored.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Ignored</h2>
-          <div className="flex flex-wrap gap-1.5">
-            {miningIgnored.map((k) => (
-              <button
-                key={k}
-                onClick={() => toggleMiningIgnored(k)}
-                className="rounded border border-border bg-muted/20 px-2 py-1 text-xs text-muted-foreground line-through hover:text-foreground"
-                title="Click to stop ignoring"
-              >
-                {labelFor(k)}
-              </button>
-            ))}
-          </div>
-          <p className="text-xs text-muted-foreground/70">Excluded from each rock's expected value, but still shown so a low total is explained.</p>
-        </section>
-      )}
+      <DistributionBoard
+        hist={summary?.catchStats?.value.hist ?? null}
+        best={summary?.catchStats?.value.best ?? 0}
+        count={summary?.catchStats?.count ?? 0}
+        scans={scans}
+      />
 
       {/* ---- Rock log ---- */}
       <section className="space-y-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-          Prospected rocks {rocks.length > 0 && <span className="normal-case font-normal">({rocks.length} shown)</span>}
-        </h2>
+        <div className="flex items-baseline gap-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Asteroids</h2>
+          {liveRocks.length > 5 && (
+            <button
+              onClick={() => setRocksExpanded((x) => !x)}
+              className="rounded border border-border bg-muted/30 px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground"
+            >
+              {rocksExpanded ? 'Show last 5' : `Show all ${liveRocks.length}`}
+            </button>
+          )}
+        </div>
         {rocks.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Nothing logged yet — prospect a rock and it lands here.</p>
+          <p className="text-sm text-muted-foreground">Nothing logged yet — prospect an asteroid and it lands here.</p>
         ) : (
           <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full text-sm">
@@ -373,7 +283,7 @@ export function MiningPage() {
                 </tr>
               </thead>
               <tbody>
-                {liveRocks.map((r) => (
+                {(rocksExpanded ? liveRocks : liveRocks.slice(0, 5)).map((r) => (
                   <tr key={`${r.id}:${r.t}`} className="border-t border-border/60 align-top">
                     <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">
                       {new Date(r.t).toLocaleTimeString()}
@@ -381,7 +291,7 @@ export function MiningPage() {
                     </td>
                     <td className="px-3 py-2 text-xs">
                       <div>{r.ring || r.sys || '—'}</div>
-                      <div className="text-muted-foreground">{[r.ringClass, r.reserve, r.content].filter(Boolean).join(' · ')}</div>
+                      <div className="text-muted-foreground">{[ringClassText(r.ringClass), r.reserve, r.content].filter(Boolean).join(' · ')}</div>
                     </td>
                     <td className="px-3 py-2">
                       {r.mats.map((m) => {
@@ -429,11 +339,224 @@ export function MiningPage() {
         )}
       </section>
 
+      {/* ---- Missions ---- */}
+      {summary && summary.pacing.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Active mining missions</h2>
+          <div className="grid gap-2 md:grid-cols-2">
+            {summary.pacing.map((p) => (
+              <div key={p.key} className="rounded-lg border border-border bg-muted/20 px-4 py-3">
+                <div className="flex items-baseline justify-between">
+                  <span className="font-semibold">{p.label}</span>
+                  <span className="text-xs text-muted-foreground">{timeLeft(p.expiry)} left</span>
+                </div>
+                <div className="mt-1 text-sm">
+                  <span className="text-foreground font-medium">{p.tonnes.toLocaleString()}t</span>
+                  <span className="text-muted-foreground"> · </span>
+                  <span className="text-emerald-400">{p.crPerTonne.toLocaleString()} Cr/t</span>
+                  {p.wing && <span className="ml-2 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] text-sky-300">WING</span>}
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {p.hoursSoloWorstCase != null
+                    ? `~${p.hoursSoloWorstCase.toFixed(1)}h solo worst case · ${p.basis}`
+                    : `no measured rate yet — ${p.basis}`}
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground/80">{summary.wingCaveat}</p>
+        </section>
+      )}
+
+      {/* ---- Targets ---- */}
+      <section className="space-y-2">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Targets</h2>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="filter materials…"
+            className="rounded border border-border bg-background px-2 py-1 text-sm w-48"
+          />
+        </div>
+        {effectiveTargets.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {effectiveTargets.map((k) => (
+              <span key={k} className="rounded bg-cyan-500/15 px-2 py-1 text-xs text-cyan-300">
+                🎯 {labelFor(k)}
+                {(() => { const m = catalog.find((c) => c.key === k); return m?.crPerTonne != null
+                  ? <span className="ml-1 tabular-nums opacity-80">{cr(m.crPerTonne)}</span> : null; })()}
+                {missionKeys.includes(k) && <span className="ml-1 opacity-70">(mission)</span>}
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="flex flex-wrap gap-1.5">
+          {filteredCatalog.map((m) => {
+            const on = miningTargets.includes(m.key);
+            const fromMission = missionKeys.includes(m.key);
+            return (
+              <button
+                key={m.key}
+                onClick={() => toggleMiningTarget(m.key)}
+                title={`${fromMission ? 'Required by an active mission · ' : ''}${m.crPerTonne != null ? `${m.crPerTonne.toLocaleString()} Cr/t (${m.mission ? 'mission rate' : 'avg of your markets'}) · ` : 'no price seen · '}${m.from.join(', ')}`}
+                className={`rounded border px-2 py-1 text-xs transition-colors ${
+                  on ? 'border-cyan-400/60 bg-cyan-500/15 text-cyan-300'
+                     : 'border-border bg-muted/20 text-muted-foreground hover:text-foreground'
+                } ${!m.laserProven ? 'opacity-60' : ''}`}
+              >
+                {m.label}
+                {m.crPerTonne != null && (
+                  <span className={`ml-1 tabular-nums ${m.mission ? 'text-emerald-300' : 'opacity-70'}`}>
+                    {cr(m.crPerTonne)}{m.mission ? ' ⚑' : ''}
+                  </span>
+                )}
+                {!m.laserProven && <span className="ml-1 opacity-60">·hotspot only</span>}
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-xs text-muted-foreground/70">
+          Derived from what you've prospected, refined and hotspot-mapped — it grows on its own.
+          “hotspot only” means never seen in a laser prospect.
+        </p>
+      </section>
+
+      {/* ---- Ring finder ---- */}
+      <section className="space-y-2">
+        <div className="flex items-center gap-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Where to mine</h2>
+          <button
+            onClick={findRings}
+            disabled={ringsLoading}
+            className="rounded border border-border bg-muted/30 px-3 py-1 text-xs hover:bg-muted/60 disabled:opacity-50"
+          >
+            {ringsLoading ? 'searching…' : 'Find rings'}
+          </button>
+          {ringNote && <span className="text-xs text-muted-foreground">{ringNote}</span>}
+        </div>
+        {rings.length > 0 && (
+          <div className="grid gap-2 md:grid-cols-3">
+            {rings.slice(0, 3).map((r, i) => (
+              <div key={`card:${r.ring}`} className={`edc-chamfer relative border bg-card/70 px-4 py-3 ${i === 0 ? 'border-amber-400/50 shadow-[0_0_22px_-8px_rgba(251,146,60,0.5)]' : 'border-border'}`}>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className={`text-[10px] font-bold tracking-widest ${i === 0 ? 'text-amber-300' : 'text-muted-foreground'}`}>#{i + 1}{i === 0 ? ' · BEST BET' : ''}</span>
+                  <span className="text-[10px] text-muted-foreground">{r.source === 'journal' ? 'your map' : 'spansh'}</span>
+                </div>
+                <div className="mt-1 text-sm font-semibold leading-tight">{r.ring}</div>
+                <div className="mt-1 text-xs text-muted-foreground whitespace-nowrap">
+                  {r.ringClass ? ringClassText(r.ringClass) : ''} <span className={RESERVE_TONE[r.reserve] ?? ''}>{r.reserve}</span>
+                </div>
+                <div className="mt-1.5 flex items-baseline gap-3 tabular-nums text-sm">
+                  <span>{r.distanceLy != null ? `${r.distanceLy.toFixed(0)} ly` : '— ly'}</span>
+                  <span className="text-muted-foreground">{r.depthLs != null ? `${r.depthLs.toLocaleString()} Ls` : ''}</span>
+                  {r.measuredTph != null && <span className="text-emerald-400">{r.measuredTph.toFixed(0)} t/hr measured</span>}
+                </div>
+                <div className="mt-1.5">
+                  {r.hits.map((h) => (
+                    <span key={h.key} className="mr-1 rounded bg-cyan-500/15 px-1.5 py-0.5 text-[11px] text-cyan-300">
+                      {h.label}{h.count > 1 ? ` ×${h.count}` : ''}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {rings.length > 3 && (
+          <details className="rounded-lg border border-border">
+            <summary className="cursor-pointer px-3 py-2 text-xs text-muted-foreground hover:text-foreground">All {rings.length} results</summary>
+          <div className="overflow-x-auto border-t border-border">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/30 text-xs uppercase tracking-wider text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 text-left">Ring</th>
+                  <th className="px-3 py-2 text-right">ly</th>
+                  <th className="px-3 py-2 text-right">Ls deep</th>
+                  <th className="px-3 py-2 text-left">Reserve</th>
+                  <th className="px-3 py-2 text-left">Type</th>
+                  <th className="px-3 py-2 text-left">Your targets</th>
+                  <th className="px-3 py-2 text-left">Also</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rings.map((r) => (
+                  <tr key={`${r.source}:${r.ring}`} className="border-t border-border/60">
+                    <td className="px-3 py-2">
+                      <div className="font-medium">{r.ring}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {r.source === 'journal' ? 'your map' : 'spansh'}
+                        {r.measuredTph != null && (
+                          <span className="ml-2 text-emerald-400">measured {r.measuredTph.toFixed(0)} t/hr</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">{r.distanceLy != null ? r.distanceLy.toFixed(0) : '—'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{r.depthLs != null ? r.depthLs.toLocaleString() : '—'}</td>
+                    <td className={`px-3 py-2 ${RESERVE_TONE[r.reserve] ?? 'text-muted-foreground'}`}>{r.reserve || '—'}</td>
+                    <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">{r.ringClass ? ringClassText(r.ringClass) : '—'}</td>
+                    <td className="px-3 py-2">
+                      {r.hits.map((h) => (
+                        <span key={h.key} className="mr-1 rounded bg-cyan-500/15 px-1.5 py-0.5 text-xs text-cyan-300">
+                          {h.label}{h.count > 1 ? ` ×${h.count}` : ''}
+                        </span>
+                      ))}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">{r.other.slice(0, 4).join(', ') || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          </details>
+        )}
+        <p className="text-xs text-muted-foreground/70">
+          Hotspot counts are how many hotspots of that type the ring has — the journal records no
+          positions, so overlap isn't knowable and no yield is inferred from the number.
+        </p>
+      </section>
+
+      {/* ---- Ignored ---- */}
+      {miningIgnored.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Ignored</h2>
+          <div className="flex flex-wrap gap-1.5">
+            {miningIgnored.map((k) => (
+              <button
+                key={k}
+                onClick={() => toggleMiningIgnored(k)}
+                className="rounded border border-border bg-muted/20 px-2 py-1 text-xs text-muted-foreground line-through hover:text-foreground"
+                title="Click to stop ignoring"
+              >
+                {labelFor(k)}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground/70">Excluded from each rock's expected value, but still shown so a low total is explained.</p>
+        </section>
+      )}
+
+      {/* ---- Trophy wall ---- */}
+      {summary?.trophies && (
+        <TrophyWall records={summary.trophies.records} badges={summary.trophies.badges} streak={summary.trophies.streak} />
+      )}
+
       {/* ---- Credits by location ---- */}
       {summary && (summary.locations?.rings?.length ?? 0) > 0 && (
         <section className="space-y-2">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Credits by location</h2>
-          <div className="grid gap-3 lg:grid-cols-2">
+          <HBarChart
+            title="Value pulled per ring — at today's prices"
+            rows={summary.locations.rings.slice(0, 8).map((l) => ({
+              label: l.name, sub: `${l.tonnes}t · ${l.rocks} rocks${l.worthPct != null ? ` · ${l.worthPct}% worth it` : ''}`,
+              value: l.valueToday || l.credits || 0,
+            }))}
+            fmt={(v) => `~${cr(v)}`}
+            barClass="bg-emerald-400/70"
+          />
+          <details className="rounded-lg border border-border">
+            <summary className="cursor-pointer px-3 py-2 text-xs text-muted-foreground hover:text-foreground">Raw tables — rings & systems</summary>
+          <div className="grid gap-3 lg:grid-cols-2 border-t border-border p-2">
             <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full text-sm">
                 <thead className="bg-muted/30 text-xs uppercase tracking-wider text-muted-foreground">
@@ -452,7 +575,7 @@ export function MiningPage() {
                       <td className="px-3 py-2">
                         <div className="truncate max-w-[20rem]">{l.name}</div>
                         <div className="text-xs text-muted-foreground">
-                          {[l.ringClass, l.reserve].filter(Boolean).join(' · ') || '—'} · {l.rocks} rocks
+                          {[ringClassText(l.ringClass), l.reserve].filter(Boolean).join(' · ') || '—'} · {l.rocks} rocks
                         </div>
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums">{l.tonnes}</td>
@@ -490,6 +613,7 @@ export function MiningPage() {
               </table>
             </div>
           </div>
+          </details>
           <p className="text-xs text-muted-foreground/70">
             <strong>Earned</strong> is real: each tonne priced at the mission or market rate in force
             the moment it refined. <strong>@ today</strong> re-values the same tonnage at current
@@ -504,7 +628,18 @@ export function MiningPage() {
       {summary && summary.rateHistory.length > 0 && (
         <section className="space-y-2">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Extraction rate by ring</h2>
-          <div className="overflow-x-auto rounded-lg border border-border">
+          <HBarChart
+            title="Measured tonnes per hour — best sessions"
+            rows={summary.rateHistory.filter((h) => h.tonnesPerHour).slice(0, 8).map((h) => ({
+              label: h.ring, sub: `${h.day} · ${ringClassText(h.ringClass)} ${h.reserve || ''} · ${h.tonnes}t`,
+              value: h.tonnesPerHour as number,
+            }))}
+            fmt={(v) => `${v.toFixed(0)} t/hr`}
+            barClass="bg-sky-400/70"
+          />
+          <details className="rounded-lg border border-border">
+            <summary className="cursor-pointer px-3 py-2 text-xs text-muted-foreground hover:text-foreground">Raw table — all sessions</summary>
+          <div className="overflow-x-auto border-t border-border">
             <table className="w-full text-sm">
               <thead className="bg-muted/30 text-xs uppercase tracking-wider text-muted-foreground">
                 <tr>
@@ -521,7 +656,7 @@ export function MiningPage() {
                     <td className="px-3 py-2 text-xs text-muted-foreground">{h.day}</td>
                     <td className="px-3 py-2">
                       <div>{h.ring}</div>
-                      <div className="text-xs text-muted-foreground">{[h.ringClass, h.reserve].filter(Boolean).join(' · ')}</div>
+                      <div className="text-xs text-muted-foreground">{[ringClassText(h.ringClass), h.reserve].filter(Boolean).join(' · ')}</div>
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">{h.rocks}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{h.tonnes}</td>
@@ -533,8 +668,90 @@ export function MiningPage() {
               </tbody>
             </table>
           </div>
+          </details>
         </section>
       )}
+      {/* ---- Rings needing a DSS scan ---- */}
+      {summary?.unmapped && summary.unmapped.counts.total > 0 && (
+        <details className="rounded-lg border border-border">
+          <summary className="cursor-pointer px-3 py-2 text-sm text-muted-foreground hover:text-foreground">
+            {'🔭'} Needs a DSS scan — {summary.unmapped.counts.mine} in your systems
+          </summary>
+        <section className="space-y-2 border-t border-border p-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-xs text-muted-foreground">
+              {summary.unmapped.counts.mine} in your systems · {summary.unmapped.counts.total} everywhere you've scanned
+            </span>
+            <button
+              onClick={() => {
+                const next = unmappedScope === 'mine' ? 'all' : 'mine';
+                setUnmappedScope(next);
+                if (next === 'all' && !unmappedAll) {
+                  fetch(q('/api/mining/unmapped?scope=all'))
+                    .then((r) => (r.ok ? r.json() : null))
+                    .then((d) => { if (d && Array.isArray(d.rings)) setUnmappedAll(d.rings); })
+                    .catch(() => { /* fall back to mine view */ });
+                }
+              }}
+              className="rounded border border-border bg-muted/30 px-2 py-0.5 text-xs hover:bg-muted/60"
+            >
+              {unmappedScope === 'mine' ? 'Show all' : 'My systems'}
+            </button>
+          </div>
+          {(() => {
+            const rows = unmappedScope === 'all' ? (unmappedAll ?? summary.unmapped.mine) : summary.unmapped.mine;
+            if (!rows.length) {
+              return (
+                <p className="text-sm text-muted-foreground">
+                  Every ring in your colony systems is mapped. {'🎉'}
+                  {summary.unmapped.counts.total > 0 && ` (${summary.unmapped.counts.total} unmapped elsewhere — Show all)`}
+                </p>
+              );
+            }
+            const shown = rows.slice(0, 100);
+            return (
+              <div className="overflow-x-auto rounded-lg border border-border">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/30 text-xs uppercase tracking-wider text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2 text-left">System</th>
+                      <th className="px-3 py-2 text-left">Ring</th>
+                      <th className="px-3 py-2 text-left">Type</th>
+                      <th className="px-3 py-2 text-left">Reserve</th>
+                      <th className="px-3 py-2 text-right">Ls deep</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shown.map((u) => (
+                      <tr key={u.name} className="border-t border-border/60">
+                        <td className="px-3 py-2">{u.system || '—'}</td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {u.system && u.name.startsWith(u.system) ? u.name.slice(u.system.length).trim() : u.name}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">{u.ringClass ? ringClassText(u.ringClass) : '—'}</td>
+                        <td className={`px-3 py-2 ${RESERVE_TONE[u.reserve ?? ''] ?? 'text-muted-foreground'}`}>{u.reserve || '—'}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{u.depthLs != null ? u.depthLs.toLocaleString() : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {rows.length > shown.length && (
+                  <div className="px-3 py-2 text-xs text-muted-foreground border-t border-border/60">
+                    +{rows.length - shown.length} more not shown
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+          <p className="text-xs text-muted-foreground/70">
+            Rings you've seen in a scan but never DSS-mapped — no hotspot data exists for them, so the
+            ring finder and value baselines can't account for them. Belts are excluded (they can't be
+            mapped). Only covers systems where you actually scanned the parent body.
+          </p>
+        </section>
+        </details>
+      )}
+
     </div>
   );
 }

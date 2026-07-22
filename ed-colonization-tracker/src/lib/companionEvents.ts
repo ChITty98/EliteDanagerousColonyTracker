@@ -32,6 +32,8 @@ export function eventIcon(type: string): string {
     case 'mining_ring': return '💠';      // diamond shape
     case 'mining_record': return '🏆';    // trophy
     case 'mining_rock_done': return '✔️'; // check
+    case 'mining_catch': return '🎣';     // fishing pole — the trophy shot
+    case 'mining_unmapped': return '🔭';  // telescope — DSS scan needed
     case 'fsd_jump': return '\u{1F680}'; // rocket
     case 'docked': return '⚓'; // anchor
     case 'scan_highlight': return '\u{1F52D}'; // telescope
@@ -64,6 +66,8 @@ export function eventColor(type: string): string {
     case 'mining_ring': return 'text-violet-400';
     case 'mining_record': return 'text-amber-300';
     case 'mining_rock_done': return 'text-green-400';
+    case 'mining_catch': return 'text-amber-300';
+    case 'mining_unmapped': return 'text-violet-400';
     case 'fsd_jump': return 'text-sky-400';
     case 'docked': return 'text-green-400';
     case 'scan_highlight': return 'text-yellow-400';
@@ -111,6 +115,10 @@ export function eventSummary(ev: CompanionEvent): string {
         : `#${ev.rank} best rock ever — ${miningCr(Number(ev.credits) || 0)} Cr from ${ev.tonnes}t`;
     case 'mining_rock_done':
       return `Rock done — ${ev.tonnes}t · ${miningCr(Number(ev.credits) || 0)} Cr`;
+    case 'mining_catch':
+      return `${ev.tierLabel} — ${ev.tonnes}t · ${miningCr(Number(ev.credits) || 0)} Cr`;
+    case 'mining_unmapped':
+      return `${ev.count} ring${Number(ev.count) === 1 ? '' : 's'} in ${ev.system} need a DSS scan — ${Array.isArray(ev.rings) ? (ev.rings as string[]).slice(0, 4).join(', ') : ''}`;
     case 'fsd_jump':
       return `Jumped to ${ev.system}${ev.population ? ` (pop: ${ev.population.toLocaleString()})` : ''}`;
     case 'docked':

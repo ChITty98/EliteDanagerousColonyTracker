@@ -57,16 +57,17 @@ import {
 import { pollCompanionFiles } from './server/journal/processors.js';
 import {
   initMiningLog, readRocks, getRateHistory, measuredRateFor, flushNow as flushMiningLog,
-  backfillFromJournals, getLocationTotals,
+  backfillFromJournals, getLocationTotals, getCatchStats,
 } from './server/journal/miningLog.js';
 import {
   initRingIndex, buildRingIndex, findRingsForTargets, ringIndexStats, getMaterialCatalog, rankRings,
-  getRingInfo,
+  getRingInfo, getUnmappedRings,
 } from './server/journal/miningIndex.js';
 import {
-  scanMiningMissions, getLiveMiningMissions, commodityKey,
+  scanMiningMissions, getLiveMiningMissions, commodityKey, missionRateFor,
 } from './server/journal/miningMissions.js';
-import { getMiningSnapshot, commodityValueNow, rockValueNow } from './server/journal/mining.js';
+import { getMiningSnapshot, commodityValueNow, rockValueNow, colonySystemsOf } from './server/journal/mining.js';
+import { initTrophies, computeAggregates, evaluateBadges, badgeStates, getStreak } from './server/journal/miningTrophies.js';
 import { searchRingsBySignals } from './server/journal/spansh.js';
 
 // SEA detection: when bundled via build-exe.mjs and injected as a single executable,
@@ -1297,6 +1298,10 @@ const server = http.createServer((req, res) => {
       const existing = readStateFile();
       const journalDir = resolveJournalDir((existing.settings || {}).journalDirOverride);
       scanMiningMissions(journalDir);
+      buildRingIndex(journalDir); // cheap when fresh (10-min gate); needed for the DSS-gap list
+      const mineSet = colonySystemsOf(existing);
+      const unmappedMine = getUnmappedRings(mineSet);
+      const unmappedTotal = getUnmappedRings().length;
       const missions = getLiveMiningMissions();
 
       // Completion estimate is deliberately worst-case: CargoDepot does not fire for Mission_Mining,
@@ -1323,9 +1328,51 @@ const server = http.createServer((req, res) => {
         snapshot: getMiningSnapshot(),
         rateHistory: getRateHistory().slice(0, 60),
         locations: getLocationTotals((k) => commodityValueNow(k, existing), (rec) => rockValueNow(rec, existing)),
-        materials: getMaterialCatalog(),
+        unmapped: { mine: unmappedMine, counts: { mine: unmappedMine.length, total: unmappedTotal } },
+        // Distribution board data — same stats the catch card ranks against, served standing.
+        catchStats: (() => {
+          const st = getCatchStats((rec) => rockValueNow(rec, existing));
+          return { value: { hist: st.value.hist, best: st.value.best }, count: st.count };
+        })(),
+        trophies: (() => {
+          // Records price REFINED TONNAGE at today's rates — what actually came out of the rock.
+          // The prospect-estimate basis (rockValueNow) belongs to the distribution board, not the
+          // trophy shelf: it let a 2t-mined rock claim its full 3.9M estimate and inflated the
+          // best-session record past the known all-time day.
+          const gotValue = (rec) => Object.entries(rec.got || {})
+            .reduce((a, [k, t]) => a + commodityValueNow(k, existing) * t, 0);
+          const agg = computeAggregates(readRocks(), gotValue);
+          evaluateBadges(agg); // first pass marks history as legacy; steady-state is a cheap no-op
+          return { records: agg, badges: badgeStates(), streak: getStreak() };
+        })(),
+        // Each material carries its current Cr/t so the picker can answer "what would this even
+        // pay?" — mission rate while one is live, else the commander's own market average.
+        materials: getMaterialCatalog().map((m) => ({
+          ...m,
+          crPerTonne: commodityValueNow(m.key, existing) || null,
+          mission: !!missionRateFor(m.key),
+        })),
         index: ringIndexStats(),
       }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message || String(e) }));
+    }
+    return;
+  }
+
+  // Rings seen in a body Scan but never DSS-mapped. Default scope is the commander's colony
+  // systems; scope=all widens to everywhere they've scanned. Served separately from the summary
+  // so the 15s summary poll doesn't ship ~500 rows nobody is looking at.
+  if (pathname === '/api/mining/unmapped' && req.method === 'GET') {
+    try {
+      const existing = readStateFile();
+      const journalDir = resolveJournalDir((existing.settings || {}).journalDirOverride);
+      buildRingIndex(journalDir);
+      const scope = url.searchParams.get('scope') === 'all' ? 'all' : 'mine';
+      const rings = scope === 'all' ? getUnmappedRings() : getUnmappedRings(colonySystemsOf(existing));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ scope, count: rings.length, rings }));
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: e.message || String(e) }));
@@ -1959,6 +2006,7 @@ server.listen(PORT, '0.0.0.0', () => {
   try {
     initMiningLog(APP_DIR);
     initRingIndex(APP_DIR);
+    initTrophies(APP_DIR);
     const st = readStateFile();
     const jd = resolveJournalDir((st.settings || {}).journalDirOverride);
     // Deferred: the first ring-index build sweeps every journal, so keep it off the boot path.
@@ -1967,7 +2015,8 @@ server.listen(PORT, '0.0.0.0', () => {
         buildRingIndex(jd);
         scanMiningMissions(jd);
         const s = ringIndexStats();
-        console.log(`[Mining] Ring index ready: ${s.rings} mapped ring(s), ${s.systems} system(s)`);
+        const gapMine = getUnmappedRings(colonySystemsOf(st)).length;
+        console.log(`[Mining] Ring index ready: ${s.rings} mapped, ${s.ringsSeen - s.rings} seen-unmapped (${gapMine} in your systems)`);
         const bf = backfillFromJournals(jd, listJournalFiles, getRingInfo);
         if (bf.backfilled) console.log(`[Mining] Backfilled ${bf.backfilled} historical rock(s) — yield table seeded`);
       } catch (e) { console.error('[Mining] index build failed:', e && e.message); }

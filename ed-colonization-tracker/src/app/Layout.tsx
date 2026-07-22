@@ -6,6 +6,7 @@ import { getJournalFolderHandle } from '@/services/journalReader';
 import { TargetPopup } from '@/components/TargetPopup';
 import { MiningTicker } from '@/components/MiningTicker';
 import { CatchCard } from '@/components/CatchCard';
+import { CopilotPopup } from '@/components/CopilotPopup';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '\u25C6' },
@@ -95,6 +96,7 @@ export function Layout() {
       <TargetPopup />
       <MiningTicker />
       <CatchCard />
+      <CopilotPopup />
     </div>
   );
 }

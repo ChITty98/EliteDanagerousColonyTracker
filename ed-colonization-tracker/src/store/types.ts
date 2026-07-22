@@ -154,6 +154,7 @@ export interface AppSettings {
   fcModulesCapacity: number; // Tons of capacity consumed by installed services/modules (user-entered from Carrier Management)
   overlayEnabled: boolean;
   targetPopupEnabled?: boolean; // Show the global target-info pop-up (corner card) on any tab — default on
+  copilotPopupEnabled?: boolean; // Co-pilot portrait+line pop-up on any tab (for when the Cockpit page isn't visible) — default on
 
   // AI co-pilot — companion cockpit comms. Requires the local `claude` CLI +
   // Max subscription on the PC running the exe; silent otherwise. Opt-in.

@@ -42,7 +42,7 @@ interface TargetEvent {
 const HEADLINE_TYPES = [
   'first_footfall', 'score_update', 'npc_threat', 'station_dock_summary',
   'mining_target', 'mining_prospect', 'mining_milestone',
-  'mining_stall', 'mining_cargo', 'mining_cold', 'mining_ring',
+  'mining_stall', 'mining_cargo', 'mining_cold', 'mining_ring', 'mining_unmapped',
 ] as const;
 
 // Single discriminated pop-up state: the rich target card, or a compact
@@ -54,6 +54,9 @@ type PopupState =
 
 // Auto-dismiss after this long with no new event.
 const AUTO_DISMISS_MS = 20000;
+// Per-type holds. A target-rock hit is the "commit to this rock" signal and needs to survive the
+// commander being heads-down flying the prospector run — 20s proved too short.
+const DISMISS_OVERRIDES: Record<string, number> = { mining_target: 45000 };
 
 /**
  * Global headline-event pop-up. Subscribes to the SSE bus and renders a
@@ -86,7 +89,10 @@ export function TargetPopup() {
       // Replace whatever is showing, reset the auto-dismiss.
       setPopup(next);
       clearTimer();
-      dismissTimerRef.current = setTimeout(() => setPopup(null), AUTO_DISMISS_MS);
+      const hold = next.kind === 'event'
+        ? (DISMISS_OVERRIDES[next.ev.type] ?? AUTO_DISMISS_MS)
+        : AUTO_DISMISS_MS;
+      dismissTimerRef.current = setTimeout(() => setPopup(null), hold);
     };
 
     unsubs.push(sseSubscribe('target_selected', (ev) => {

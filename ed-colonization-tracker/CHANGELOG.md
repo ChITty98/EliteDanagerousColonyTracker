@@ -2,6 +2,45 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.24.2] — 2026-07-22
+
+### Changed
+- **Asteroid feed trimmed to the last 5.** The prospected-rocks section (renamed **Asteroids**) shows the five most recent by default — the live loop, not a wall of history — with a one-click "Show all N" expander.
+
+## [1.24.1] — 2026-07-22
+
+### Changed
+- **Rock log takes the prime slot.** The running prospected-rocks feed now sits directly under the rock board — hero, board, feed, in that order. The "Needs a DSS scan" list (good info, wrong prime real estate) folds into a collapsed expander at the bottom of the page with its count on the summary line; the arrival alert is unchanged.
+
+## [1.24.0] — 2026-07-22
+
+### Added
+- **Mining HUD.** The Mining page got a cockpit identity: a chamfered hero band that glows while mining is live, with an animated pouring session-credits counter, a pace bar showing live t/hr against *your own best in this ring* (best-anywhere when the ring's unmeasured), the current ring with class icon, and the 🔥 streak counter. Idle, it goes quiet.
+- **The rock board, standing.** The catch card's measuring-board histogram promoted to a permanent instrument: your whole logged rock-value distribution with **every prospect pinged onto it the moment you scan it** — cyan for target-bearing, green for above this ring's worth-it bar, grey for junk — so a rock is read against the population *before* lasers commit, not after.
+- **🎙️ Co-pilot in the ring.** Big catches (top 5%+), personal-best rocks, streak milestones, 5M session steps, stalls and Pristine ring arrivals are now character beats: Wash whoops like a fishing buddy, TARS goes proud-teacher, K2 concedes under protest. ~150 hand-written lines across six beats and all three personas — canned-only (no generation latency mid-mining), paced by the same arbiter as everything else, and the stall lines obey the no-invented-causes law.
+- **Co-pilot pop-up.** Since the Cockpit page is never the one on screen while mining, every co-pilot line now pops bottom-left on *any* tab: mood-matched portrait (TARS goes hyped for catches, proud for records — the art packs already installed) + speech bubble. Own Settings toggle, default on, suppressed on the Cockpit page itself.
+- **🏆 Trophy wall.** Records priced on refined tonnage at today's rates — biggest rock (3.81M · 28t), best session, best rate, longest streak, lifetime tonnes, rings worked — plus 19 badges with static thresholds. Nine unlock from your history (First Whopper through Overdrive), marked quietly with no boot-spam; ten are genuinely ahead of you. New unlocks pop the card + overlay.
+- **🔥 Target streak.** Target-bearing rocks (≥3%) you mine extend it; one you skip breaks it; junk rocks never touch it. Survives across sessions (it measures discipline, not uptime), shows on the hero and the ticker from 3 up, celebrates 5/10/25/50 and new bests, feeds the co-pilot, and its record lives on the wall.
+- **Ring-finder podium.** Top 3 results as scored cards (#1 · BEST BET); the full table folds behind an expander.
+- **Charts over tables.** Value-per-ring and t/hr-per-ring render as direct-labeled bars; the raw tables stay one click away.
+
+### Fixed
+- **Trophy records were briefly priced on prospect estimates**, letting a 2-tonne rock claim its full 3.9M estimate and inflating the best-session record. Records now price refined tonnage only — the estimate basis belongs to the board, the got basis to the shelf.
+
+## [1.23.0] — 2026-07-22
+
+### Added
+- **Prices on the target picker.** Every material chip on the Mining page now shows its current Cr/t — mission rate while one is live (flagged ⚑, tinted), otherwise the average across your own visited markets — so "what would Void Opals even pay?" is answered where you pick targets (~166k, for the record). Tooltip states the basis; picker sorts laser-proven first, then by value, so the rich stuff surfaces. Materials with no observed price say so rather than showing a number from nowhere.
+
+## [1.22.0] — 2026-07-22
+
+### Added
+- **🔭 DSS-gap tracking — "there are scans you should do."** The ring index now keeps every planetary ring you've *seen* in a body scan, not just the ones you've DSS-mapped, which makes seen-but-never-deep-scanned computable. Measured at ship time: 111 mapped vs ~480 seen-unmapped, **63 of them in your own colony systems** — almost all Pristine, including 5 in the active build system.
+  - **Arrival alert:** entering one of your systems that has unmapped rings pops the overlay and the in-app card — `🔭 6 rings here need a DSS scan — A 2 A, A 2 B…`. Once per system per run, arrival only, and scoped to *your* systems deliberately: 480 unmapped rings galaxy-wide would fire on every jump and train you to ignore it.
+  - **"Needs a DSS scan" panel** on the Mining page: your colony gaps with ring type, reserve and depth, plus a toggle to widen to everywhere you've scanned.
+  - Honest limits stated in the UI: belts are excluded (they can't be DSS-mapped — none of your 111 maps is a belt), and a system whose bodies you never scanned can hide rings the journal simply doesn't know about.
+- **Ring-class icons.** Everywhere a ring type appears — rock log, ring finder, credits-by-location, extraction-rate table, current-ring banner, DSS panel — it now reads ❄️ Icy / ⛰️ Rocky / 🧲 Metal Rich / ⚙️ Metallic instead of bare text. (The real rock emoji is deliberately avoided: Windows 10 never got Emoji 13, so it renders as a box.)
+
 ## [1.21.0] — 2026-07-22
 
 ### Added

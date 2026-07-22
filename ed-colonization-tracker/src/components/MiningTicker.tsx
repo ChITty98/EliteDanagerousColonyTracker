@@ -49,6 +49,7 @@ export function MiningTicker() {
   const [session, setSession] = useState(0);
   const [tonnes, setTonnes] = useState(0);
   const [rock, setRock] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [floaters, setFloaters] = useState<Floater[]>([]);
   // Displayed total lags the real one and catches up each frame, so the number rolls rather than snaps.
   const [shown, setShown] = useState(0);
@@ -74,6 +75,7 @@ export function MiningTicker() {
       setSession(sess);
       setTonnes(Number(ev.sessionTonnes) || 0);
       setRock(Number(ev.rockCredits) || 0);
+      setStreak(Number((ev as Record<string, unknown>).streak) || 0);
       setVisible(true);
       armHide();
 
@@ -140,7 +142,10 @@ export function MiningTicker() {
       </div>
 
       <div className="rounded-lg border border-border bg-card/95 px-4 py-2.5 shadow-lg backdrop-blur">
-        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">This session</div>
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">This session</span>
+          {streak >= 3 && <span className="text-xs font-bold text-orange-400" title="Target streak">{'🔥'} {streak}</span>}
+        </div>
         <div className="text-2xl font-bold tabular-nums text-emerald-400">{cr(shown)}<span className="text-sm ml-1 font-normal text-muted-foreground">Cr</span></div>
         <div className="text-xs text-muted-foreground tabular-nums">
           {tonnes}t refined{rock > 0 && <> · {cr(rock)} this rock</>}

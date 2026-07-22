@@ -7,6 +7,7 @@
 
 import CANNED from './copilotCannedData.js';
 import PROMOTED from './copilotPromotedData.js';
+import MINING from './copilotMiningLines.js';
 import { CANNED_SCENARIOS } from './copilotScenarios.js';
 
 const SCENARIO_KEYS = new Set(CANNED_SCENARIOS.map((s) => s.key));
@@ -50,7 +51,11 @@ function poolFor(personality, key) {
   // The interrupt damage tiers share the hand-written 'damage' panic pool; promoted lines stay
   // keyed per-tier so the offline flywheel can still differentiate them later.
   const handKey = DAMAGE_CANNED_TIERS.has(key) ? 'damage' : key;
-  const hand = Array.isArray(byPers[handKey]) ? byPers[handKey] : [];
+  let hand = Array.isArray(byPers[handKey]) ? byPers[handKey] : [];
+  // Mining beats live in their own hand-written module (the regen tool rewrites CannedData
+  // wholesale — an island there would eventually be clobbered).
+  const mine = (MINING[personality] || {})[handKey];
+  if (Array.isArray(mine) && mine.length) hand = hand.concat(mine);
   // Promoted lines (grown offline from rated LIVE captures) join the SAME pool +
   // anti-repeat — so a live beat's best lines become free, cycled like hand-canned.
   const pro = (PROMOTED[personality] || {})[key];

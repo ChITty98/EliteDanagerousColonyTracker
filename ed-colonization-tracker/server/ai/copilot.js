@@ -11,6 +11,7 @@ import { COPILOT_RULES, buildPersonalityPreamble, matchBeat, IDLE_INTENTS } from
 import { buildSnapshot, eventDetail, decorateScan, detectCompletion, detectBuildComplete, detectInferredDamage, detectAutopilot, detectDockComplete, detectDockInfo, detectNpcThreat, detectAtmo, detectCrew, detectPilotBanter, detectSessionStart, detectGrudge, detectSystemChange, detectQuestion, detectDockFlavor, detectArrival, detectCargoBayGripe, detectDamageSeverity, detectPaceNudge, detectCarrierFuel, getCrewNames, ingestWorld } from './copilotContext.js';
 import { isCannedScenario, pickCanned } from './copilotCanned.js';
 import { detectTarsLore } from './copilotTars.js';
+import { detectMiningBeat } from './copilotMining.js';
 import { fetchGalNet, getLatestNews } from './copilotNews.js';
 import { arbitrate, recordSpoken } from './copilotArbiter.js';
 import { detectAffinityBeat } from './copilotAffinity.js';
@@ -91,6 +92,8 @@ export async function runCopilot(parsed, state, deps) {
   if (dockInfo) candidates.push({ beat: dockInfo, ev: null, synthetic: true, place: placeFor(state, null) });
   const quirk = detectQuirk(parsed, state, persona);
   if (quirk) candidates.push({ beat: quirk, ev: null, synthetic: true, place: placeFor(state, null) });
+  const miningBeat = detectMiningBeat(); // catches, records, streaks — pushed by the mining assist
+  if (miningBeat) candidates.push({ beat: miningBeat, ev: null, synthetic: true, place: placeFor(state, null) });
   const atmo = detectAtmo(parsed);
   if (atmo) candidates.push({ beat: atmo, ev: null, synthetic: true, place: placeFor(state, null) });
   const crew = detectCrew(parsed, state);
@@ -194,7 +197,7 @@ export async function runCopilot(parsed, state, deps) {
   // as-is, instant and free. No canned pool, no live generation.
   if (beat.line) { emitLiteral(settings, deps, beat); return; }
   if (isCannedScenario(beat.key)) {
-    emitCanned(settings, deps, beat, buildCannedContext(state, winner.ev));
+    emitCanned(settings, deps, beat, Object.assign(buildCannedContext(state, winner.ev), beat.inputs || {}));
   } else {
     const detail = winner.synthetic ? beat.detail : eventDetail(winner.ev);
     const inputs = winner.synthetic ? (beat.inputs || null) : captureInputsForEvent(winner.ev);

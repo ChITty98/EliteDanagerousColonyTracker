@@ -598,6 +598,18 @@ function OverlaySection({
           <span className="text-sm text-foreground">Event pop-ups (target, first-footfall, jump score, threats, dock milestones)</span>
         </label>
 
+        {/* Co-pilot pop-up — portrait + line anywhere in the app, since the Cockpit page
+            usually isn't the one on screen while flying/mining */}
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={settings.copilotPopupEnabled !== false}
+            onChange={(e) => updateSettings({ copilotPopupEnabled: e.target.checked })}
+            className="w-4 h-4 accent-primary"
+          />
+          <span className="text-sm text-foreground">Co-pilot pop-up (portrait + line on any tab when they speak)</span>
+        </label>
+
         {/* Connection status */}
         {settings.overlayEnabled !== false && (
           <div className="bg-muted/50 border border-border rounded-lg p-3">

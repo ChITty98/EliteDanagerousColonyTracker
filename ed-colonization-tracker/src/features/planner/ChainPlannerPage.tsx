@@ -31,6 +31,7 @@ export function ChainPlannerPage() {
   const [startSystemId, setStartSystemId] = useState<string>('auto');
   const [customStartName, setCustomStartName] = useState('');
   const [maxHops, setMaxHops] = useState(3);
+  const [previewReached, setPreviewReached] = useState(true);
 
   // Resolved target for distance preview
   const [resolvedTarget, setResolvedTarget] = useState<{
@@ -408,9 +409,12 @@ export function ChainPlannerPage() {
 
       let current = startSys;
       const visitedNames = new Set<string>([startSys.name.toLowerCase()]);
-      const limit = maxHops + 2; // safety cap
+      // The old loop ran maxHops+2 then silently STOPPED — and the renderer crowned
+      // whatever the last row was with the target's "T" ("doesn't get me to my target!").
+      // Now: run exactly maxHops claim-hops, and reachedness is explicit state.
+      let reached = false;
 
-      for (let hop = 0; hop < limit; hop++) {
+      for (let hop = 0; hop < maxHops && !reached; hop++) {
         const distToTarget = distance3d(current, target);
 
         // If target is within 15ly, we're done
@@ -422,6 +426,7 @@ export function ChainPlannerPage() {
             distance: distToTarget,
             population: 0,
           });
+          reached = true;
           break;
         }
 
@@ -435,19 +440,15 @@ export function ChainPlannerPage() {
             const d = distance3d(s, target);
             return d < distToTarget; // must get closer
           })
-          // Rank by: balance of progress toward target + body count
           .map((s) => ({
             ...s,
             distToTarget: distance3d(s, target),
             progress: distToTarget - distance3d(s, target),
           }))
-          // Prioritize systems that make good progress AND have decent bodies
-          .sort((a, b) => {
-            // Score: progress * (1 + log(body_count))
-            const scoreA = a.progress * (1 + Math.log2(Math.max(1, a.body_count)));
-            const scoreB = b.progress * (1 + Math.log2(Math.max(1, b.body_count)));
-            return scoreB - scoreA;
-          });
+          // Hop efficiency FIRST — every claim is a full port build, so a 14.9 ly stride
+          // beats a body-rich 4.3 ly shuffle (the old progress×log2(bodies) ranking took
+          // short hops and burned claims). Bodies only break ties.
+          .sort((a, b) => b.progress - a.progress || b.body_count - a.body_count);
 
         if (candidates.length === 0) {
           setError(`Preview stalled at ${current.name} — no systems within 15ly make progress toward target.`);
@@ -467,6 +468,19 @@ export function ChainPlannerPage() {
         current = best;
       }
 
+      // Out of hops with the target in final-hop range still counts as arrived.
+      if (!reached) {
+        const rem = distance3d(current, target);
+        if (rem <= 15) {
+          steps.push({ name: target.name, x: target.x, y: target.y, z: target.z, bodyCount: 0, distance: rem, population: 0 });
+          reached = true;
+        } else {
+          const needed = Math.ceil(distance3d(startSys, target) / 15);
+          setError(`Ran out of hops (Max Hops: ${maxHops}) — stopped ${rem.toFixed(1)} ly short of ${target.name}. This target needs roughly ${needed} hops; raise the slider.`);
+        }
+      }
+
+      setPreviewReached(reached);
       setPreviewSteps(steps);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Preview failed');
@@ -673,6 +687,7 @@ export function ChainPlannerPage() {
         <div className="bg-card border border-sky-500/30 rounded-lg p-4 mb-6">
           <h3 className="text-sm font-semibold text-sky-400 mb-3">
             {'\u{1F441}\u{FE0F}'} Route Preview — {previewSteps.length - 1} hop{previewSteps.length - 1 !== 1 ? 's' : ''} (greedy, unscored)
+            {!previewReached && <span className="ml-2 text-red-400 font-bold">— DID NOT REACH TARGET</span>}
           </h3>
 
           {/* Chain visualization */}
@@ -687,7 +702,7 @@ export function ChainPlannerPage() {
                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
                   i === 0
                     ? 'bg-blue-500/20 text-blue-400'
-                    : i === previewSteps.length - 1
+                    : i === previewSteps.length - 1 && previewReached
                     ? 'bg-green-500/20 text-green-400'
                     : 'bg-secondary/20 text-secondary'
                 }`}>
@@ -717,10 +732,10 @@ export function ChainPlannerPage() {
                   const distToTarget = resolvedTarget ? distance3d(step, resolvedTarget) : 0;
                   return (
                     <tr key={i} className={`border-b border-border/30 ${
-                      i === 0 ? 'text-blue-400' : i === previewSteps.length - 1 ? 'text-green-400' : 'text-foreground'
+                      i === 0 ? 'text-blue-400' : i === previewSteps.length - 1 && previewReached ? 'text-green-400' : 'text-foreground'
                     }`}>
                       <td className="py-1 pr-3 text-muted-foreground">
-                        {i === 0 ? 'S' : i === previewSteps.length - 1 ? 'T' : i}
+                        {i === 0 ? 'S' : i === previewSteps.length - 1 ? (previewReached ? 'T' : i + ' ⚠') : i}
                       </td>
                       <td className="py-1 pr-3 font-medium">{step.name}</td>
                       <td className="py-1 pr-3 text-right text-muted-foreground">

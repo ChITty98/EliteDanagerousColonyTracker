@@ -24,6 +24,7 @@ import {
 } from './paths.js';
 import { processNewEvents, pollCompanionFiles } from './processors.js';
 import { pollStatus } from '../ai/copilotStatus.js';
+import { setInGame } from '../ai/copilot.js';
 import { checkMiningStall } from './mining.js';
 import { fetchLatestPositionFromJournal } from './extractor.js';
 import { seedFcRegistryFromKnownStations } from './util.js';
@@ -139,16 +140,26 @@ function initWatcher() {
   wstate.activeFile = latest;
   wstate.byteOffset = latest.size; // Skip historical events — Sync All handles those
 
-  // Seed currentShip — find most recent Loadout or ShipyardSwap in the active file
+  // Seed currentShip — find most recent Loadout or ShipyardSwap in the active file.
+  // Also seeds co-pilot presence: the most recent of LoadGame vs Shutdown/MainMenu decides
+  // whether a commander is actually in the game right now (idle chatter stays muted otherwise).
   try {
     const text = fs.readFileSync(latest.fullPath, 'utf-8');
     const lines = text.split('\n');
+    let presenceSeeded = false;
+    let shipSeeded = false;
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i].trim();
       if (!line) continue;
       let ev;
       try { ev = JSON.parse(line); } catch { continue; }
-      if (ev.event === 'Loadout' && ev.ShipID != null) {
+      if (!presenceSeeded) {
+        if (ev.event === 'LoadGame') { setInGame(true, 'seed'); presenceSeeded = true; }
+        else if (ev.event === 'Shutdown' || (ev.event === 'Music' && ev.MusicTrack === 'MainMenu')) { setInGame(false, 'seed'); presenceSeeded = true; }
+      }
+      // Loadout usually postdates LoadGame, so a plain `break` here would end the backward scan
+      // before presence ever seeded — both seeds must finish before the loop may stop.
+      if (!shipSeeded && ev.event === 'Loadout' && ev.ShipID != null) {
         wstate.deps.applyStatePatch({
           currentShip: {
             shipId: ev.ShipID,
@@ -158,14 +169,17 @@ function initWatcher() {
             cargoCapacity: ev.CargoCapacity,
           },
         });
-        break;
+        if (presenceSeeded) break;
+        shipSeeded = true;
       }
-      if (ev.event === 'ShipyardSwap' && ev.ShipID != null) {
+      if (!shipSeeded && ev.event === 'ShipyardSwap' && ev.ShipID != null) {
         wstate.deps.applyStatePatch({
           currentShip: { shipId: ev.ShipID, type: ev.ShipType || '' },
         });
-        break;
+        if (presenceSeeded) break;
+        shipSeeded = true;
       }
+      if (shipSeeded && presenceSeeded) break;
     }
   } catch { /* best-effort */ }
 

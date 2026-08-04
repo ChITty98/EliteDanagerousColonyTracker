@@ -382,7 +382,14 @@ function countProximityClusters(qualBodies) {
 // (journalBodiesToSpanshFormat) converts its metres to match.
 const AU_KM = 149597870.7;
 const SUN_R_KM = 696340;
-const RING_EDGE_MIN_DEG = 40; // a moon "skims" rings only if they span >= this much of its sky
+// Thresholds calibrated 2026-08-04 against the commander's benchmark sights (HIP 47126
+// ABCD 1 a/b twins 24.7°; AX-J d9-52 2 a ring ratio 1.01; HIP 52629 2 a INSIDE its rings,
+// ratio 0.35). The original bars (parent 20°, ring span 40°) flagged essentially every
+// close moon of every ringed giant — "it's saying like all of them have epic views."
+const BIG_SKY_MIN_DEG = 45;     // parent overhead — only the true monsters (47–50° exist, 21–37° is routine)
+const RING_EDGE_MAX_RATIO = 1.05; // moon sma / ring outer radius — a real edge-skimmer (or inside the rings)
+const RING_EDGE_MIN_DEG = 30;   // ...and the rings must still span a big chunk of sky
+const TWIN_PAIR_MIN_DEG = 20;   // sibling worlds looming in each other's sky (benchmarks 24.7°/28.6°; routine pairs ≤14°)
 function isBrownDwarfStar(b) {
   return b.type === 'Star' && /brown dwarf/i.test(b.subType || '');
 }
@@ -472,7 +479,7 @@ export function detectEpicView(bodies) {
     reasons.push(`tight binary ${tightestAu.toFixed(3)} AU${pair}`);
   }
 
-  // 2. Big-sky parent — landable moon whose parent subtends >= 20 deg overhead.
+  // 2. Big-sky parent — landable moon whose parent subtends >= BIG_SKY_MIN_DEG overhead.
   // Parent may be a planet OR a star/brown dwarf (radius from solarRadius then).
   let biggestDeg = 0;
   let biggestBody = null;
@@ -487,23 +494,55 @@ export function detectEpicView(bodies) {
     const deg = apparentDeg(parentRadiusKm, sepKm);
     if (deg > biggestDeg) { biggestDeg = deg; biggestBody = b; }
   }
-  if (biggestDeg >= 20) reasons.push(`${short(biggestBody)} — parent fills ${Math.round(biggestDeg)}° of sky`);
+  if (biggestDeg >= BIG_SKY_MIN_DEG) reasons.push(`${short(biggestBody)} — parent fills ${Math.round(biggestDeg)}° of sky`);
 
-  // 3. Ring-edge moon — a landable moon orbiting close enough to a RINGED parent
-  // that the rings fill a big chunk of its sky (apparent span >= RING_EDGE_MIN_DEG).
-  // A far moon of a ringed planet just sees the rings as a distant thread — not epic
-  // (e.g. Col 173 AX-J d9-107 "3c" orbits ~4.6 Ls out, rings span ~16°). Needs the
-  // ring outer radius (metres) and the moon's orbital distance.
+  // 3. Ring-edge moon — a landable moon orbiting AT the ring edge (or inside the rings):
+  // sma within RING_EDGE_MAX_RATIO of the ring outer radius, with the rings still spanning
+  // >= RING_EDGE_MIN_DEG of sky. Span alone is not enough — every close moon of a ringed
+  // giant sees a 70–90° ring band (15 such bodies in the commander's own shortlist); the
+  // benchmark skimmer (d9-52 2 a) orbits at 1.01× the ring edge.
   for (const b of bodies) {
     if (!b.isLandable || typeof b.semiMajorAxis !== 'number' || b.semiMajorAxis <= 0) continue;
     const parent = immediateParent(b, byId);
     if (!parent || !Array.isArray(parent.rings) || parent.rings.length === 0) continue;
     const ringOuterKm = parent.rings.reduce((m, r) => Math.max(m, typeof r.outerRadius === 'number' ? r.outerRadius / 1000 : 0), 0);
     if (!(ringOuterKm > 0)) continue; // no radius data — can't confirm proximity; don't false-positive
-    if (apparentDeg(ringOuterKm, b.semiMajorAxis * AU_KM) >= RING_EDGE_MIN_DEG) {
-      reasons.push(`${short(b)} — skims rings of ${short(parent)}`);
+    const smaKm = b.semiMajorAxis * AU_KM;
+    if (smaKm / ringOuterKm <= RING_EDGE_MAX_RATIO && apparentDeg(ringOuterKm, smaKm) >= RING_EDGE_MIN_DEG) {
+      reasons.push(`${short(b)} — ${smaKm < ringOuterKm ? 'orbits INSIDE the rings of' : 'skims the ring edge of'} ${short(parent)}`);
       break;
     }
+  }
+
+  // 4. Twin pair — sibling worlds so close they loom huge in each other's sky. The
+  // criterion the benchmarks actually were: HIP 47126 ABCD 1 a/b (24.7° mutual, co-orbiting
+  // 4,194 km apart), HIP 52629 (28.6°). Ordinary adjacent moons sit <= ~14°, so the bar
+  // has a natural gap under it. Metric matches the 2026-08-04 calibration exactly:
+  // planets grouped by identical immediate parent, adjacent orbits closest = |sma diff|,
+  // co-orbiting barycentre pairs = sma sum, angle from the larger body's radius.
+  let twinDeg = 0;
+  let twinPair = null;
+  const sibs = new Map();
+  for (const b of bodies) {
+    if (b.type !== 'Planet' || !(radiusKmOf(b) > 0) || typeof b.semiMajorAxis !== 'number' || b.semiMajorAxis <= 0) continue;
+    const p0 = b.parents && b.parents[0];
+    if (!p0) continue;
+    const k = JSON.stringify(p0);
+    (sibs.get(k) || sibs.set(k, []).get(k)).push(b);
+  }
+  for (const g of sibs.values()) {
+    if (g.length < 2) continue;
+    g.sort((a, b) => a.semiMajorAxis - b.semiMajorAxis);
+    for (let i = 0; i + 1 < g.length; i++) {
+      const A = g[i], B = g[i + 1];
+      const coOrbit = 'Null' in (A.parents[0] || {});
+      const sepKm = (coOrbit ? A.semiMajorAxis + B.semiMajorAxis : B.semiMajorAxis - A.semiMajorAxis) * AU_KM;
+      const d = Math.max(apparentDeg(radiusKmOf(A), sepKm), apparentDeg(radiusKmOf(B), sepKm));
+      if (d > twinDeg) { twinDeg = d; twinPair = [A, B]; }
+    }
+  }
+  if (twinDeg >= TWIN_PAIR_MIN_DEG && twinPair) {
+    reasons.push(`${short(twinPair[0])} & ${short(twinPair[1])} — twin worlds, ${Math.round(twinDeg)}° in each other's sky`);
   }
 
   return { isEpic: reasons.length > 0, reasons };

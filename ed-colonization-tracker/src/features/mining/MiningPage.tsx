@@ -19,7 +19,7 @@ import {
   type Hist, type ScanPing, type BadgeInfo, type TrophyRecords,
 } from './MiningHud';
 
-interface MaterialInfo { key: string; label: string; from: string[]; laserProven: boolean; crPerTonne?: number | null; mission?: boolean }
+interface MaterialInfo { key: string; label: string; from: string[]; laserProven: boolean; crPerTonne?: number | null; mission?: boolean; basis?: string; liveStation?: string | null }
 interface MissionInfo { label: string; tonnes: number; reward: number; crPerTonne: number; count: number; expiry: string; wing: boolean }
 interface PacingInfo {
   key: string; label: string; tonnes: number; crPerTonne: number; expiry: string; wing: boolean;
@@ -28,12 +28,14 @@ interface PacingInfo {
 interface RateRow {
   ring: string; sys: string; ringClass: string; reserve: string; day: string;
   tonnes: number; rocks: number; hours: number; tonnesPerHour: number | null;
+  hotspotPct?: number;
 }
 interface RockMat { k: string; n: string; p: number; est: number; price: number | null }
 interface Rock {
   id: string; t: string; sys: string; ring: string; ringClass: string; reserve: string;
   content: string; remaining: number; motherlode: string | null;
   mats: RockMat[]; estValue: number; got: Record<string, number>; gotTotal: number; gotValue: number; prospects: number;
+  hotspot?: boolean;
 }
 interface LocRow {
   name: string; sys?: string; ringClass?: string; reserve?: string;
@@ -60,8 +62,9 @@ interface Summary {
     sessionCredits: number; sessionTonnes: number; rockCredits: number;
     sessionStartedAt?: number | null;
     streak?: { current: number; best: number };
+    inHotspot?: boolean;
   };
-  catchStats?: { value: { hist: Hist; best: number }; count: number };
+  catchStats?: { value: { hist: Hist; best: number }; count: number; classApplied?: string; classRequested?: string | null };
   trophies?: { records: TrophyRecords; badges: BadgeInfo[]; streak: { current: number; best: number } };
   rateHistory: RateRow[];
   locations: { rings: LocRow[]; systems: LocRow[] };
@@ -200,6 +203,20 @@ export function MiningPage() {
 
   const snap = summary?.snapshot;
 
+  const toggleHotspotLive = useCallback(() => {
+    fetch(q('/api/mining/hotspot'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ live: !(snap?.inHotspot) }),
+    }).then(() => loadSummary()).catch(() => {});
+  }, [snap, loadSummary]);
+
+  const markSessionHotspot = useCallback((ring: string, day: string, on: boolean) => {
+    fetch(q('/api/mining/hotspot'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ring, day, hotspot: on }),
+    }).then(() => { loadSummary(); loadRocks(); }).catch(() => {});
+  }, [loadSummary, loadRocks]);
+
   // The log only writes a rock once the NEXT prospect supersedes it, so the rock currently under
   // the lasers would otherwise not appear until you moved on — and then only at the next 15s poll.
   // Prepend the in-flight rock from the snapshot so what you just shot at is visible immediately.
@@ -243,6 +260,8 @@ export function MiningPage() {
         bestTph={bestTphHere.tph}
         bestTphScope={bestTphHere.scope}
         indexLine={summary?.index ? `${summary.index.rings} mapped rings · ${summary.index.materials} materials` : ''}
+        inHotspot={!!snap?.inHotspot}
+        onHotspotToggle={toggleHotspotLive}
       />
 
       {error && <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</div>}
@@ -252,6 +271,9 @@ export function MiningPage() {
         best={summary?.catchStats?.value.best ?? 0}
         count={summary?.catchStats?.count ?? 0}
         scans={scans}
+        classLabel={summary?.catchStats?.classApplied && summary.catchStats.classApplied !== 'all'
+          ? summary.catchStats.classApplied.toLowerCase()
+          : undefined}
       />
 
       {/* ---- Rock log ---- */}
@@ -290,7 +312,7 @@ export function MiningPage() {
                       {r.prospects > 1 && <span className="ml-1" title="re-prospected">×{r.prospects}</span>}
                     </td>
                     <td className="px-3 py-2 text-xs">
-                      <div>{r.ring || r.sys || '—'}</div>
+                      <div>{r.hotspot && <span className="mr-1 text-amber-400" title="mined in a hotspot">{'◉'}</span>}{r.ring || r.sys || '—'}</div>
                       <div className="text-muted-foreground">{[ringClassText(r.ringClass), r.reserve, r.content].filter(Boolean).join(' · ')}</div>
                     </td>
                     <td className="px-3 py-2">
@@ -399,7 +421,7 @@ export function MiningPage() {
               <button
                 key={m.key}
                 onClick={() => toggleMiningTarget(m.key)}
-                title={`${fromMission ? 'Required by an active mission · ' : ''}${m.crPerTonne != null ? `${m.crPerTonne.toLocaleString()} Cr/t (${m.mission ? 'mission rate' : 'avg of your markets'}) · ` : 'no price seen · '}${m.from.join(', ')}`}
+                title={`${fromMission ? 'Required by an active mission · ' : ''}${m.crPerTonne != null ? `${m.crPerTonne.toLocaleString()} Cr/t (${m.basis === 'mission' ? 'mission rate' : m.basis === 'live' ? `best non-FC sell in carrier range (500 ly)${m.liveStation ? ` — ${m.liveStation}` : ''}` : 'avg of your markets'}) · ` : 'no price seen · '}${m.from.join(', ')}`}
                 className={`rounded border px-2 py-1 text-xs transition-colors ${
                   on ? 'border-cyan-400/60 bg-cyan-500/15 text-cyan-300'
                      : 'border-border bg-muted/20 text-muted-foreground hover:text-foreground'
@@ -648,6 +670,7 @@ export function MiningPage() {
                   <th className="px-3 py-2 text-right">Rocks</th>
                   <th className="px-3 py-2 text-right">Tonnes</th>
                   <th className="px-3 py-2 text-right">t/hr</th>
+                  <th className="px-3 py-2 text-center" title="Mark this session as hotspot-mined">Hotspot</th>
                 </tr>
               </thead>
               <tbody>
@@ -662,6 +685,15 @@ export function MiningPage() {
                     <td className="px-3 py-2 text-right tabular-nums">{h.tonnes}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-emerald-400">
                       {h.tonnesPerHour != null ? h.tonnesPerHour.toFixed(1) : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <button
+                        onClick={() => markSessionHotspot(h.ring, h.day, !((h.hotspotPct ?? 0) >= 50))}
+                        title={(h.hotspotPct ?? 0) >= 50 ? 'Marked hotspot — click to unmark' : 'Mark all rocks in this session as hotspot-mined'}
+                        className={`text-sm ${(h.hotspotPct ?? 0) >= 50 ? 'text-amber-400' : 'text-muted-foreground/50 hover:text-foreground'}`}
+                      >
+                        {(h.hotspotPct ?? 0) >= 50 ? '◉' : '○'}
+                      </button>
                     </td>
                   </tr>
                 ))}

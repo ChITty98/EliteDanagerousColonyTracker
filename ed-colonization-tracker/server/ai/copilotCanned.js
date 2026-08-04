@@ -8,6 +8,7 @@
 import CANNED from './copilotCannedData.js';
 import PROMOTED from './copilotPromotedData.js';
 import MINING from './copilotMiningLines.js';
+import RADAR from './copilotRadarLines.js';
 import { CANNED_SCENARIOS } from './copilotScenarios.js';
 
 const SCENARIO_KEYS = new Set(CANNED_SCENARIOS.map((s) => s.key));
@@ -56,6 +57,8 @@ function poolFor(personality, key) {
   // wholesale — an island there would eventually be clobbered).
   const mine = (MINING[personality] || {})[handKey];
   if (Array.isArray(mine) && mine.length) hand = hand.concat(mine);
+  const rad = (RADAR[personality] || {})[handKey];
+  if (Array.isArray(rad) && rad.length) hand = hand.concat(rad);
   // Promoted lines (grown offline from rated LIVE captures) join the SAME pool +
   // anti-repeat — so a live beat's best lines become free, cycled like hand-canned.
   const pro = (PROMOTED[personality] || {})[key];

@@ -170,6 +170,39 @@ export function CompanionPage() {
     });
   }, [overlayEnabled]);
 
+  // 🚦 Traffic — async: reads centerTraffic from the radar snapshot (EDSM passages +
+  // our unique-uploader count for the CURRENT system) and queues it to the overlay.
+  const handleTraffic = useCallback(() => {
+    const tk = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
+    fetch(tk ? `/api/radar/state?token=${tk}` : '/api/radar/state')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const ct = d?.centerTraffic;
+        const lines: { text: string; color: string }[] = [];
+        if (!ct || !ct.sys) {
+          lines.push({ text: '🚦 Traffic — no position yet', color: '#94a3b8' });
+        } else {
+          lines.push({ text: `🚦 Traffic — ${ct.sys}`, color: '#e2e8f0' });
+          lines.push({
+            text: ct.edsm
+              ? `EDSM: ~${ct.edsm.day} arrivals today · ${ct.edsm.week} this week`
+              : 'EDSM: no traffic data for this system',
+            color: '#94a3b8',
+          });
+          lines.push({ text: `${ct.liveVisitors} unique heard here ≤${ct.windowH} h — that I've heard of`, color: '#94a3b8' });
+        }
+        const content = { lines };
+        setActionResult(content);
+        setActionLabel('Traffic');
+        if (overlayEnabled) sendContentToOverlay(content);
+        postCompanionEvent({ type: 'companion_action', action: 'Traffic', lines: content.lines });
+      })
+      .catch(() => {
+        setActionResult({ lines: [{ text: '🚦 Traffic — server unreachable', color: '#ef4444' }] });
+        setActionLabel('Traffic');
+      });
+  }, [overlayEnabled]);
+
   // Colonization outlook for the current target — from the system NAME (mass
   // code) + the FSDTarget primary class. Works even for systems not in Spansh.
   const targetOutlook = lastTarget
@@ -567,6 +600,15 @@ export function CompanionPage() {
           <div className="text-2xl mb-1">{'\u{1F4CA}'}</div>
           <div className="text-sm font-medium text-green-400">Show Status</div>
           <div className="text-[10px] text-muted-foreground mt-0.5">Project overview</div>
+        </button>
+
+        <button
+          onClick={handleTraffic}
+          className="bg-card border border-orange-500/30 rounded-lg px-4 py-4 text-center hover:bg-orange-500/10 transition-colors"
+        >
+          <div className="text-2xl mb-1">{'\u{1F6A6}'}</div>
+          <div className="text-sm font-medium text-orange-400">Traffic</div>
+          <div className="text-[10px] text-muted-foreground mt-0.5">Local traffic to overlay</div>
         </button>
       </div>
 

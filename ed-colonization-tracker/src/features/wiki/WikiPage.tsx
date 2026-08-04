@@ -6,7 +6,11 @@
  *
  * All figures below are static snapshots of the 2026-04-20 scan. Re-run
  * tools/spansh-index.mjs + tools/sky-drama.mjs if the dump refreshes.
+ *
+ * The "Where to hunt" section renders LIVE from COLONIZATION_BY_CODE (the same
+ * dataset behind the target alerts) — no hardcoded copy to drift.
  */
+import { COLONIZATION_BY_CODE } from '@/data/massCodeColonization';
 
 type AtmoRow = {
   atmo: string;
@@ -254,6 +258,14 @@ export function WikiPage() {
           systems). The Dramatic-skies and Notable-systems sections below are still the original
           Col 173 700 ly scan.
         </p>
+        <p className="text-xs text-amber-300/90">
+          Scope (updated Aug 2026): everything on this page is the <strong>Inner Orion Spur</strong> home
+          survey. The <strong>Colonia / Inner Scutum-Centaurus Arm</strong> survey is in progress via the
+          Expansion scout — its almanac can be regenerated here once that region&rsquo;s scoring settles.
+          The Dramatic-skies tables below are also the calibration ancestry of the <strong>✨ epic-view
+          flag</strong> (current bars: twin worlds ≥20° mutual, ring-edge ratio ≤1.05, parent ≥45° of sky,
+          stellar binary ≤0.1 AU).
+        </p>
         <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-sm">
           <div className="flex justify-between border-b border-border/50 py-1">
             <dt className="text-muted-foreground">Scan center</dt>
@@ -305,6 +317,116 @@ export function WikiPage() {
       </section>
 
       {/* ============ Atmosphere rarity ============ */}
+      <section className="bg-card border border-border rounded-lg p-5 space-y-3">
+        <h2 className="text-lg font-semibold text-foreground">Where to hunt — mass codes</h2>
+        <p className="text-sm text-foreground/90">
+          The letter in a procedural name (<code className="bg-muted/50 px-1 rounded">d9-52</code> → code{' '}
+          <strong>d</strong>) predicts what a boxel holds. From the {(1_368_676).toLocaleString()}-system
+          mass-code dataset (the same one behind the target alerts):
+        </p>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-xs text-muted-foreground border-b border-border">
+              <th className="text-left py-1">Code</th>
+              <th className="text-right">Systems</th>
+              <th className="text-right">Avg bodies</th>
+              <th className="text-right">Interesting-atmo odds</th>
+              <th className="text-right">Avg score</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(['a', 'b', 'c', 'd', 'e', 'f'] as const).map((code) => {
+              const s = COLONIZATION_BY_CODE[code];
+              if (!s) return null;
+              const hot = code === 'c' || code === 'd';
+              return (
+                <tr key={code} className={`border-b border-border/40 ${hot ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
+                  <td className="py-1 font-mono">{code}{hot ? ' ★' : ''}</td>
+                  <td className="text-right font-mono">{s.n.toLocaleString()}</td>
+                  <td className="text-right font-mono">{s.bodies.toFixed(1)}</td>
+                  <td className="text-right font-mono">{s.pInteresting.toFixed(1)}%</td>
+                  <td className="text-right font-mono">{s.score.toFixed(0)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <p className="text-xs text-muted-foreground">
+          ★ The sweet spot: <strong className="text-foreground">d-boxels (11.5% interesting-atmo odds, avg
+          score 13) and c-boxels (8.2%, 9)</strong> — roughly 6× the yield of the a/b/e codes. Odds improve
+          further inside c/d when the primary star is F/G/K/A. Point the boxel scout at d and c boxels when
+          hunting claims; blank e-boxels are still worth FSSing when the mission is filling the map.
+        </p>
+      </section>
+
+      {/* ── Colonia almanac — generated 2026-08-04 from G:/Spansh/region-colonia-500-fresh.jsonl
+             (July-2026 galaxy dump, 500 ly around Colonia). Tools: sky-drama.mjs + the
+             atmosphere tally (scratchpad/colonia-atmo-tally.mjs → G:/Spansh/atmo-rarity-colonia.json). */}
+      <section className="bg-card border border-violet-500/30 rounded-lg p-5 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-foreground">Colonia almanac — Inner Scutum-Centaurus Arm</h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            500 ly around Colonia · July 2026 dump · 1,041,191 systems · <strong className="text-foreground">72 populated
+            (0.007% — home bubble is 0.51%)</strong> · 5,254,352 bodies · 91,891 non-icy landable-atmo bodies,
+            <strong className="text-foreground"> 87,371 of them with bio signals</strong>.
+          </p>
+        </div>
+        <div>
+          <h3 className="text-sm font-semibold text-foreground mb-1">Atmosphere rarity (non-icy landables)</h3>
+          <table className="w-full text-sm">
+            <thead><tr className="text-xs text-muted-foreground border-b border-border"><th className="text-left py-1">Atmosphere</th><th className="text-right">Non-icy</th><th className="text-right">All landable</th></tr></thead>
+            <tbody>
+              {[
+                ['Hot Silicate Vapour', 4, 4], ['Hot Carbon Dioxide', 97, 97], ['Oxygen', 181, 622],
+                ['Hot Sulphur Dioxide', 332, 332], ['Argon', 418, 27763], ['Water', 537, 590],
+                ['Methane', 695, 13954], ['Neon', 780, 49595], ['Helium', 1231, 1850],
+                ['Nitrogen', 1763, 4100], ['Ammonia', 14966, 14982], ['Sulphur Dioxide', 22712, 23207],
+                ['Carbon Dioxide', 48175, 48224],
+              ].map(([atmo, ni, all]) => (
+                <tr key={atmo as string} className={`border-b border-border/40 ${(ni as number) < 700 ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
+                  <td className="py-0.5">{atmo}</td>
+                  <td className="text-right font-mono">{(ni as number).toLocaleString()}</td>
+                  <td className="text-right font-mono">{(all as number).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="text-xs text-muted-foreground mt-1">
+            The regional flip vs home: <strong className="text-foreground">ammonia is COMMON out here</strong> (14,966 —
+            a trophy back home), while <strong className="text-foreground">Oxygen (181)</strong>,{' '}
+            <strong className="text-foreground">Hot Silicate Vapour (4)</strong> and Hot CO₂/SO₂ are the crown jewels.
+            Water worlds with landable atmo: 537.
+          </p>
+        </div>
+        <div>
+          <h3 className="text-sm font-semibold text-foreground mb-1">Dramatic skies — 17,136 bodies in 9,166 systems</h3>
+          <p className="text-xs text-muted-foreground mb-2">
+            Twin-atmo siblings <strong className="text-foreground">11,031</strong> · close moon looms 5,825 · giant
+            dominates sky 1,563 · ring-edge 108 · <strong className="text-foreground">orbiting INSIDE rings 66</strong> ·
+            ring-gap 9 · exotic star 3 · <strong className="text-violet-300">TRIPLE (in-rings + twins) 22</strong>.
+          </p>
+          <table className="w-full text-xs">
+            <thead><tr className="text-muted-foreground border-b border-border"><th className="text-left py-1">System · body</th><th className="text-left">Atmo</th><th className="text-left">Why it's epic</th></tr></thead>
+            <tbody>
+              {[
+                ['Spoihaae XP-V d3-426 · 4 a + 4 b', 'CO₂ twins', 'BOTH orbit inside a Class I giant\\u2019s rings — twin worlds sharing the ring plane'],
+                ['Eol Prou RO-Q d5-2747 · 4 d + 4 e', 'CO₂ twins', 'Inside-rings twins, 4 bio signals each — walk under the rings'],
+                ['Eol Prou XU-O d6-555 · 8 g + 8 h', 'Ammonia twins', 'Twin worlds in a RING GAP (Δsma 0.1), 6 bio signals'],
+                ['Eol Prou JH-L d8-905 · 6 c + 6 d', 'CO₂ twins', 'Inside-rings twins with bio, giant ring span 0.32–12.47 Ls'],
+                ['Eol Prou ZR-I b11-16 · 1 a', 'Methane', 'Skims a Class I giant\\u2019s ring edge (132%) with a methane twin, 5 bio'],
+                ['Eol Prou IW-W e1-2280 · 1', 'Hot Silicate Vapour', 'B-class blue-white star at 32 Ls — one of only 4 silicate-vapour landables in the region'],
+              ].map(([sys, atmo, why]) => (
+                <tr key={sys as string} className="border-b border-border/40">
+                  <td className="py-1 font-mono text-foreground/90">{sys}</td>
+                  <td className="text-violet-300">{atmo}</td>
+                  <td className="text-muted-foreground">{why}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <section className="bg-card border border-border rounded-lg p-5 space-y-4">
         <div>
           <h2 className="text-lg font-semibold text-foreground">Atmosphere rarity</h2>

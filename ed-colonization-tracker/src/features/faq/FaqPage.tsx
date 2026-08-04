@@ -111,7 +111,13 @@ const faqItems: FaqItem[] = [
           </li>
           <li>
             <strong>EDSM &amp; INARA</strong> &mdash; engineer blueprint references,
-            station / station-type lookups, faction data.
+            station / station-type lookups, faction data. EDSM also supplies the
+            arrival traffic report (one request per jump, 10-minute cache).
+          </li>
+          <li>
+            <strong>EDDN firehose</strong> &mdash; the Proximity Radar subscribes to the
+            public EDDN relay (one persistent socket, a few KB/s) for live anonymized
+            activity. Nothing is ever uploaded by this app — listen-only.
           </li>
           <li>
             <strong>EDMC (Elite Dangerous Market Connector)</strong> &mdash;
@@ -244,14 +250,149 @@ const faqItems: FaqItem[] = [
         </ul>
         <p className="mt-2">
           It also includes a <strong>system search</strong> so you can look up any system
-          and see how many times you visited it and when. The scan processes all files
-          from scratch each time (data is not persisted between sessions yet).
+          and see how many times you visited it and when.
+        </p>
+        <p className="mt-2">
+          Since v1.28.9 the scan runs <strong>on the server with a persistent, incremental
+          cache</strong> (journal-stats.json): the page loads instantly from cache, only{' '}
+          <em>new</em> journal data is ever read (the active file resumes from its exact byte
+          offset), and it auto-catches-up in the background when new files exist. The first
+          scan is the only long one — and the page works from network devices like iPads.
+        </p>
+      </>
+    ),
+  },
+
+  // --- Proximity Radar ---
+  {
+    category: 'Proximity Radar',
+    question: 'What is the Proximity Radar?',
+    answer: (
+      <>
+        <p>
+          The 🛰️ Radar page is a live sensor console: <strong>commander activity within
+          200 ly of your position</strong>, from the public EDDN firehose blended with a
+          7-day Spansh lookback, re-centering on every jump. Layers: colonization/build
+          activity (the headline), high-score sites from your own scouted data, atmosphere
+          leads, conflicts, power/faction, and anonymous traffic.
+        </p>
+        <ul className="list-disc ml-5 mt-2 space-y-1">
+          <li><strong>Zoom</strong> — 25/50/100/200 ly buttons; an "N ON SCOPE · +M BEYOND" counter tracks what the zoom hides.</li>
+          <li><strong>2D/3D</strong> — 3D tilts the disc; drag to orbit. The vertical stems are height above/below the galactic plane.</li>
+          <li><strong>✦ SAG A*</strong> rides the rim as the orientation anchor — a compass N means little this close to the core.</li>
+          <li><strong>Tap any blip</strong> to identify it (works on iPad — nothing depends on hover). ⛶ FULL covers the whole screen.</li>
+          <li><strong>Populated systems can never be prospects</strong> — anything with confirmed population is not colonizable, so it only counts as traffic.</li>
+        </ul>
+        <p className="mt-2">
+          Honesty rules are load-bearing: EDDN is anonymized (activity, never identities),
+          counts are hedged &ldquo;that I&rsquo;ve heard of,&rdquo; and an empty scope means
+          <em> quiet</em>, not empty space. If the badge reads LINK DOWN, the app&rsquo;s server
+          (the exe) stopped answering — not EDDN.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Proximity Radar',
+    question: 'Are the radar counts unique players?',
+    answer: (
+      <>
+        <p>
+          The <strong>ACTIVE NEARBY</strong> stat is unique-ish people: every EDDN message
+          carries an anonymized-but-stable uploader ID, and the stat counts distinct IDs
+          within your selected zoom range over 15 minutes. One commander jumping through
+          ten systems counts once. (Caveat: the ID is per tool install, so one player
+          running two upload tools counts twice.)
+        </p>
+        <p className="mt-2">
+          The <strong>blips</strong> are messages, not people — one busy commander scanning
+          a system pings repeatedly. And everything shares one blind spot: only players
+          running an upload tool (EDMC etc.) are audible at all. Every number is a floor.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Proximity Radar',
+    question: 'What is the arrival traffic report (🚦)?',
+    answer: (
+      <>
+        <p>
+          On every hyperspace arrival the overlay shows local traffic from two sources:
+          <strong> EDSM&rsquo;s passage log</strong> (&ldquo;~466 today · 1,735 this wk&rdquo; —
+          logged <em>visits</em> by EDSM-feeding players, not unique people) and{' '}
+          <strong>our own unique count</strong> — distinct anonymized uploaders heard in that
+          system over 24 h (true unique, but only what this exe personally heard while running).
+        </p>
+        <p className="mt-2">
+          The EDSM fetch fires at StartJump — during the FSD charge — so the number is cached
+          before you land. Exactly one EDSM request per jump, 10-minute cache, no polling.
+          The Companion page&rsquo;s 🚦 button pushes the same report to the overlay on demand,
+          and the radar readout shows it as CENTER TRAFFIC.
         </p>
       </>
     ),
   },
 
   // --- Expansion Scouting & Scoring ---
+  {
+    category: 'Expansion Scouting',
+    question: 'What is the ✨ epic view flag?',
+    answer: (
+      <>
+        <p>
+          A geometry flag (no score points) marking systems with a genuinely spectacular
+          sight, calibrated against real benchmarks. It fires on any of:
+        </p>
+        <ul className="list-disc ml-5 mt-2 space-y-1">
+          <li><strong>Twin worlds</strong> — sibling bodies ≥20° in each other&rsquo;s sky (HIP 47126 ABCD 1 a/b: 24.7°, co-orbiting 4,194 km apart).</li>
+          <li><strong>Ring-edge moon</strong> — a landable orbiting within 5% of its parent&rsquo;s ring edge (d9-52 2 a: 1.01×), or <em>inside</em> the rings (HIP 52629 2 a: 0.35×).</li>
+          <li><strong>Big-sky parent</strong> — a landable moon whose parent fills ≥45° of sky.</li>
+          <li><strong>Tight stellar binary</strong> — two stars within 0.1 AU.</li>
+        </ul>
+        <p className="mt-2">
+          It renders as a small ✨ chip on the row (hover for a summary) with full reasons
+          in the expanded panel — deliberately not a banner. Systems scored before a
+          threshold change keep their old flag until rescored (Rescore All fixes the lot).
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Expansion Scouting',
+    question: 'Which Bodies filter bucket should I scan?',
+    answer: (
+      <>
+        <p>
+          The buckets mirror the measured yield across the commander&rsquo;s own scored
+          systems (Aug 2026): <strong>41+ bodies → ~53% score ≥60</strong>; 21&ndash;40 →
+          ~26%; 10&ndash;20 → ~7%; 1&ndash;9 → ~0.4% (skip it). Body count alone means
+          little — the score only counts <em>qualifying</em> bodies (landable, non-icy
+          unless atmospheric, &lt;2.5 Earth masses) and caps that at 15 points; the rest is
+          composition. But compact gems exist: d9-52 (126) and HIP 47126 (94) both live in
+          the 10&ndash;20 bucket. Scan 21+ first for yield, sweep 10&ndash;20 for the gems.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Expansion Scouting',
+    question: 'Why is Top Expansion Candidates filtered by region?',
+    answer: (
+      <>
+        <p>
+          Once your scouting spans multiple regions (Bubble turf + Colonia), a global
+          top-10-by-score stops meaning anything — Colonia elites bury Bubble candidates
+          that are actually reachable from your colonies. Scouted systems cluster
+          automatically by coordinates (2,000 ly link distance), labeled by nearest
+          landmark (Bubble / Colonia / Sag A*), and the candidates panel defaults to the
+          region <em>you are currently standing in</em>. Switch regions (or All) with the
+          dropdown. System links on the Expansion page open in a <strong>new tab</strong> so
+          clicking one never throws away your search results.
+        </p>
+      </>
+    ),
+  },
   {
     category: 'Expansion Scouting',
     question: 'How does the colonization scoring system work?',
@@ -1165,6 +1306,30 @@ const faqItems: FaqItem[] = [
           <li>A flashing red banner at the top of the Companion page (auto-dismiss after 15s)</li>
           <li>A feed entry with 🚨 icon</li>
         </ul>
+      </>
+    ),
+  },
+
+  // --- Co-pilot ---
+  {
+    category: 'Co-pilot',
+    question: 'Why is my co-pilot (TARS/Wash/K2) quiet, or only using canned lines?',
+    answer: (
+      <>
+        <p>
+          Co-pilot lines come from two paths: a <strong>curated canned pool</strong> (instant,
+          free, always available) and <strong>live generation</strong> via the local{' '}
+          <code>claude</code> CLI on the host PC, which requires a logged-in Claude
+          subscription there. If live generation fails for any reason — CLI missing, login
+          expired, timeout — the canned pool speaks instead, so a moment is never dead air.
+        </p>
+        <p className="mt-2">
+          If lines feel canned-only, check the exe&rsquo;s terminal: it logs which path each
+          line took (&ldquo;live failed — canned fallback spoke&rdquo; means live is down).
+          An auth failure is fixed by opening <code>claude</code> in a terminal on the host
+          and logging back in. Network devices (iPads) hear whatever the host produces —
+          the co-pilot runs server-side, so there is no per-device setup.
+        </p>
       </>
     ),
   },

@@ -1,5 +1,34 @@
 // Spansh API client with rate limiting (max 1 request/sec)
 
+// --- Background-tab-proof sleep -------------------------------------------------------------
+// Window timers get clamped when the tab is hidden (Chrome intensive throttling: chained
+// timers fire ~once a MINUTE after ~5 min in the background) — which froze mid-run scouting
+// the moment the commander switched to the popped-out map ("scoring seems to pause after a
+// few"). Dedicated-worker timers are exempt from that clamping, so the rate limiter's waits
+// run through a tiny inline worker. Falls back to setTimeout where workers are unavailable.
+let sleepWorker: Worker | null = null;
+let sleepSeq = 0;
+const sleepResolvers = new Map<number, () => void>();
+function bgSleep(ms: number): Promise<void> {
+  try {
+    if (!sleepWorker) {
+      const src = 'onmessage=(e)=>{setTimeout(()=>postMessage(e.data.id),e.data.ms)}';
+      sleepWorker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+      sleepWorker.onmessage = (e) => {
+        const r = sleepResolvers.get(e.data as number);
+        if (r) { sleepResolvers.delete(e.data as number); r(); }
+      };
+    }
+    return new Promise((resolve) => {
+      const id = ++sleepSeq;
+      sleepResolvers.set(id, resolve);
+      sleepWorker!.postMessage({ id, ms });
+    });
+  } catch {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+}
+
 // --- Rate limiter: 1 request per second, queued ---
 let lastRequestTime = 0;
 const MIN_INTERVAL = 1100; // 1.1s between requests
@@ -7,7 +36,7 @@ const MIN_INTERVAL = 1100; // 1.1s between requests
 async function rateLimitedFetch(url: string, init?: RequestInit): Promise<Response> {
   const now = Date.now();
   const wait = Math.max(0, MIN_INTERVAL - (now - lastRequestTime));
-  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  if (wait > 0) await bgSleep(wait);
   lastRequestTime = Date.now();
   return fetch(url, init);
 }
@@ -48,6 +77,7 @@ export interface SpanshSearchSystem {
   primary_economy: string;
   secondary_economy: string;
   is_colonised?: boolean;
+  region?: string; // official galactic region (Codex), e.g. 'Inner Orion Spur'
 }
 
 interface SpanshSearchResponse {

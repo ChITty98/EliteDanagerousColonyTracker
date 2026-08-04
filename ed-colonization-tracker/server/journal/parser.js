@@ -21,6 +21,7 @@ export function parseJournalLines(lines) {
   const cargoEvents = [];
   const cargoTransferEvents = [];
   const fsdJumpEvents = [];
+  const startJumpEvents = [];
   const fssSignalEvents = [];
   const supercruiseEntryEvents = [];
   const supercruiseDestDropEvents = [];
@@ -109,6 +110,7 @@ export function parseJournalLines(lines) {
       case 'Cargo': cargoEvents.push(event); break;
       case 'CargoTransfer': cargoTransferEvents.push(event); break;
       case 'FSDJump': fsdJumpEvents.push(event); break;
+      case 'StartJump': startJumpEvents.push(event); break;
       case 'FSSSignalDiscovered': fssSignalEvents.push(event); break;
       case 'FSSDiscoveryScan': fssDiscoveryScanEvents.push(event); break;
       case 'FSSBodySignals': fssBodySignalsEvents.push(event); break;
@@ -166,6 +168,7 @@ export function parseJournalLines(lines) {
     cargoEvents,
     cargoTransferEvents,
     fsdJumpEvents,
+    startJumpEvents,
     fssSignalEvents,
     supercruiseEntryEvents,
     supercruiseDestDropEvents,

@@ -29,6 +29,7 @@ import {
   journalBodiesToSpanshFormat,
 } from '@/services/journalReader';
 import { formatRelativeTime, freshnessColor } from '@/lib/utils';
+import { ScoutMap, SCOUT_MAP_SNAPSHOT_KEY, type MapPoint, type ScoutMapSnapshot } from './ScoutMap';
 
 /** Per-body detail shown in expanded view */
 interface BodyDetail {
@@ -188,6 +189,17 @@ function BrainTreeSitesPanel() {
   );
 }
 
+// Open system pages in a NEW TAB - an in-tab navigation throws away the current
+// Spansh search results ('if I accidentally click a system I lose all of that').
+// The auth token rides along because sessionStorage is per-tab; the app bootstraps
+// it from the URL on first load.
+function sysHref(path: string): string {
+  try {
+    const t = sessionStorage.getItem('colony-token');
+    return t ? `${path}${path.includes('?') ? '&' : '?'}token=${t}` : path;
+  } catch { return path; }
+}
+
 export function ScoutingPage() {
   const settings = useAppStore((s) => s.settings);
   const projects = useAppStore((s) => s.projects);
@@ -237,9 +249,28 @@ export function ScoutingPage() {
   const [searchWarning, setSearchWarning] = useState('');
   const [totalCount, setTotalCount] = useState(0);
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [showScoutMap, setShowScoutMap] = useState(false);
   const [scoutAllProgress, setScoutAllProgress] = useState<{ done: number; total: number } | null>(null);
   const [sortMode, setSortMode] = useState<'score' | 'distance' | 'bodies'>('score');
   const [refCoords, setRefCoords] = useState<{ x: number; y: number; z: number } | null>(null);
+  const scoutRunning = scoutAllProgress != null;
+  // "Previously scouted" = scouted before this page opened, re-captured when a run starts —
+  // the map's ◈ toggle hides these so freshly scored finds stand alone.
+  const preRunScouted = useRef<Set<number>>(new Set());
+  const preRunInit = useRef(false);
+  useEffect(() => {
+    if (!preRunInit.current && Object.keys(scoutedSystems).length > 0) {
+      preRunScouted.current = new Set(Object.keys(scoutedSystems).map(Number));
+      preRunInit.current = true;
+    }
+  }, [scoutedSystems]);
+  useEffect(() => {
+    // Watching the sweep fill in is the whole point — open the map when a run starts.
+    if (scoutRunning) {
+      setShowScoutMap(true);
+      preRunScouted.current = new Set(Object.keys(useAppStore.getState().scoutedSystems).map(Number));
+    }
+  }, [scoutRunning]);
   const abortRef = useRef(false);
   const [journalScanProgress, setJournalScanProgress] = useState<string | null>(null);
   // Boxel sequence-gap scout (name-based; independent of the LY range)
@@ -319,7 +350,9 @@ export function ScoutingPage() {
   // --- Filter state ---
   const [hideColonized, setHideColonized] = useState(true);
   const [partialOnly, setPartialOnly] = useState(false);
-  const [bodyCountFilter, setBodyCountFilter] = useState<'all' | 'gt20' | '10to20' | '5to10' | 'lt5'>('all');
+  // Buckets mirror the measured yield in the commander's scored data (Aug 2026):
+  // 41+ ≈53% score ≥60 · 21–40 ≈26% · 10–20 ≈7% · 1–9 ≈0.4% ("skip entirely").
+  const [bodyCountFilter, setBodyCountFilter] = useState<'all' | 'ge41' | 'b21to40' | 'gt20' | 'b10to20' | 'b1to9'>('all');
   // Source filter: which data sources to show (combinable)
   type SourceFilter = 'journal' | 'journal_complete' | 'spansh' | 'both' | 'none';
   const [sourceFilters, setSourceFilters] = useState<Set<SourceFilter>>(new Set());
@@ -580,6 +613,7 @@ export function ScoutingPage() {
         bodyString,
         coordinates: coords,
         isColonised,
+        region: searchEntry?.search?.region ?? existingScouted?.region,
         isFavorite: existingScouted?.isFavorite,
         notes: existingScouted?.notes,
         fromJournal,
@@ -732,10 +766,11 @@ export function ScoutingPage() {
             ? (saved.journalBodyCount || saved.spanshBodyCount || sys.search.body_count || 0)
             : (saved.spanshBodyCount || sys.search.body_count || saved.journalBodyCount || 0))
         : (cached?.bodyCount || sys.search.body_count || 0);
+      if (bodyCountFilter === 'ge41' && bc < 41) return false;
+      if (bodyCountFilter === 'b21to40' && (bc < 21 || bc > 40)) return false;
       if (bodyCountFilter === 'gt20' && bc <= 20) return false;
-      if (bodyCountFilter === '10to20' && (bc < 10 || bc > 20)) return false;
-      if (bodyCountFilter === '5to10' && (bc < 5 || bc > 10)) return false;
-      if (bodyCountFilter === 'lt5' && (bc >= 5 || bc === 0)) return false;
+      if (bodyCountFilter === 'b10to20' && (bc < 10 || bc > 20)) return false;
+      if (bodyCountFilter === 'b1to9' && (bc < 1 || bc > 9)) return false;
 
       // Source filter — if any source filters are active, system must match at least one
       if (sourceFilters.size > 0) {
@@ -789,12 +824,23 @@ export function ScoutingPage() {
     () => filteredSystems.filter((s) => {
       const saved = scoutedSystems[s.search.id64];
       const cached = journalExplorationCache[s.search.id64];
-      // Exact complement of systemsWithBodies — bodies[] length is the reliable signal.
+      // Exact complement of systemsWithBodies below — bodies[] length is the reliable signal.
       return !(s.search.bodies?.length || s.search.body_count || saved?.journalBodyCount || cached?.bodyCount);
     }),
     [filteredSystems, scoutedSystems, journalExplorationCache],
   );
   const [showNoBodies, setShowNoBodies] = useState(false);
+
+  // Adapter for the ScoutMap component (also feeds the pop-out snapshot)
+  const mapPoints = useMemo<MapPoint[]>(() => systemsWithBodies.map((s) => ({
+    id64: s.search.id64,
+    name: s.search.name,
+    x: s.search.x ?? 0, y: s.search.y ?? 0, z: s.search.z ?? 0,
+    scored: s.scouted && !!s.score,
+    loading: s.loading,
+    score: s.score?.total,
+    epic: !!s.score?.epicView?.isEpic,
+  })), [systemsWithBodies]);
 
   // Collapsible section state
   const [showFavorites, setShowFavorites] = useState(true);
@@ -852,17 +898,90 @@ export function ScoutingPage() {
     return arrow + plane;
   }
 
+  // --- Region clustering for expansion candidates ---
+  // Global top-10-by-score stopped meaning anything once scouting spanned two galaxies'
+  // worth of turf: Colonia elites bury Col 173 candidates and vice versa. Greedy cluster
+  // (2 kly link distance) partitions the scouted set into geographic regions; labels come
+  // from the nearest landmark. Default region = wherever the commander is standing.
+  const regionData = useMemo(() => {
+    // Label priority: OFFICIAL galactic region (Codex names via Spansh, stored on entries
+    // at scoring time — the commander pointed at the canonical list after "Bubble" got
+    // slapped on the Col 173 frontier) → dominant procedural sector for entries scored
+    // before regions were stored → "~N kly out" as last resort.
+    const sectorOf = (name: string): string | null => {
+      const m = /^(.*?)\s+[A-Z]{2}-[A-Z]\s+[a-h]\d+(?:-\d+)?(?:\s|$)/i.exec(name || '');
+      return m ? m[1].replace(/\s+Sector$/i, '') : null;
+    };
+    const clusters: { cx: number; cy: number; cz: number; n: number; sectors: Map<string, number>; regions: Map<string, number> }[] = [];
+    const assign = new Map<number, number>(); // id64 -> cluster index (-1 = no coords)
+    for (const sd of Object.values(scoutedSystems)) {
+      const c = sd.coordinates;
+      if (!c || typeof c.x !== 'number') { assign.set(sd.id64, -1); continue; }
+      let best = -1, bestD = Infinity;
+      for (let i = 0; i < clusters.length; i++) {
+        const cl = clusters[i];
+        const d = Math.hypot(c.x - cl.cx / cl.n, c.y - cl.cy / cl.n, c.z - cl.cz / cl.n);
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      let idx: number;
+      if (best >= 0 && bestD <= 2000) {
+        const cl = clusters[best];
+        cl.cx += c.x; cl.cy += c.y; cl.cz += c.z; cl.n += 1;
+        idx = best;
+      } else {
+        clusters.push({ cx: c.x, cy: c.y, cz: c.z, n: 1, sectors: new Map(), regions: new Map() });
+        idx = clusters.length - 1;
+      }
+      assign.set(sd.id64, idx);
+      if (sd.region) clusters[idx].regions.set(sd.region, (clusters[idx].regions.get(sd.region) || 0) + 1);
+      const sec = sectorOf(sd.name);
+      if (sec) clusters[idx].sectors.set(sec, (clusters[idx].sectors.get(sec) || 0) + 1);
+    }
+    const topOf = (m: Map<string, number>) => {
+      let top = '', topN = 0;
+      for (const [k, n] of m) if (n > topN) { top = k; topN = n; }
+      return top;
+    };
+    const labelSeen = new Map<string, number>();
+    const list = clusters.map((cl, i) => {
+      const center: [number, number, number] = [cl.cx / cl.n, cl.cy / cl.n, cl.cz / cl.n];
+      let label = topOf(cl.regions) || topOf(cl.sectors)
+        || `~${(Math.hypot(center[0], center[1], center[2]) / 1000).toFixed(1)} kly out`;
+      const n = (labelSeen.get(label) || 0) + 1;
+      labelSeen.set(label, n);
+      if (n > 1) label = `${label} ${n}`;
+      return { id: i, label, center, count: cl.n };
+    }).sort((a, b) => b.count - a.count);
+    return { clusters: list, assign };
+  }, [scoutedSystems]);
+
+  const [candidateRegion, setCandidateRegion] = useState<number | 'all'>('all');
+  const regionDefaulted = useRef(false);
+  useEffect(() => {
+    // One-time default: the region you're standing in — you expand where you are.
+    if (regionDefaulted.current || regionData.clusters.length < 2) return;
+    const cp = commanderPosition?.coordinates;
+    if (!cp) return;
+    let best: number | null = null, bestD = Infinity;
+    for (const c of regionData.clusters) {
+      const d = Math.hypot(cp.x - c.center[0], cp.y - c.center[1], cp.z - c.center[2]);
+      if (d < bestD) { bestD = d; best = c.id; }
+    }
+    if (best != null && bestD <= 2000) { setCandidateRegion(best); regionDefaulted.current = true; }
+  }, [regionData, commanderPosition]);
+
   // --- Top scouted overall (uncolonised systems only — these are expansion candidates) ---
   const topScoutedAll = useMemo(() => {
     return Object.values(scoutedSystems)
       .filter((sd) =>
         sd.score.total > 0 &&
         !sd.isColonised &&
+        (candidateRegion === 'all' || regionData.assign.get(sd.id64) === candidateRegion) &&
         !colonizedSystems.some((c) => c.toLowerCase() === sd.name.toLowerCase()),
       )
       .sort((a, b) => b.score.total - a.score.total)
       .slice(0, 10);
-  }, [scoutedSystems, colonizedSystems]);
+  }, [scoutedSystems, colonizedSystems, candidateRegion, regionData]);
 
   // --- Favorite systems ---
   const favoriteSystems = useMemo(() => {
@@ -943,13 +1062,13 @@ export function ScoutingPage() {
                     return (
                       <th key={id64} className="text-center px-3 py-2 min-w-[160px]">
                         <Link
-                          to={`/systems/${encodeURIComponent(sd?.name || '')}`}
+                          target="_blank" rel="noreferrer" to={sysHref(`/systems/${encodeURIComponent(sd?.name || '')}`)}
                           className="text-sm font-medium text-foreground hover:text-primary transition-colors"
                         >
                           {sd?.name || 'Unknown'}
                         </Link>
                         <Link
-                          to={`/system-view?system=${encodeURIComponent(sd?.name || '')}`}
+                          target="_blank" rel="noreferrer" to={sysHref(`/system-view?system=${encodeURIComponent(sd?.name || '')}`)}
                           className="text-[10px] text-cyan-400 hover:text-cyan-300 ml-1"
                           title="System View"
                         >{'\u2604\uFE0F'}</Link>
@@ -1123,14 +1242,14 @@ export function ScoutingPage() {
                       </td>
                       <td className="px-2 py-1.5">
                         <Link
-                          to={`/systems/${encodeURIComponent(sd.name)}`}
+                          target="_blank" rel="noreferrer" to={sysHref(`/systems/${encodeURIComponent(sd.name)}`)}
                           className="text-sm font-medium text-foreground hover:text-primary transition-colors"
                           title="View system details"
                         >
                           {sd.name}
                         </Link>
                         <Link
-                          to={`/system-view?system=${encodeURIComponent(sd.name)}`}
+                          target="_blank" rel="noreferrer" to={sysHref(`/system-view?system=${encodeURIComponent(sd.name)}`)}
                           className="text-[10px] text-cyan-400 hover:text-cyan-300 ml-1"
                           title="System View"
                         >{'\u2604\uFE0F'}</Link>
@@ -1250,11 +1369,26 @@ export function ScoutingPage() {
           </button>
           {showLeaderboards && (
             <div className="border-t border-border px-4 py-3">
-              {topScoutedAll.length > 0 && (
+              {(topScoutedAll.length > 0 || candidateRegion !== 'all') && (
                 <>
-                  <h3 className="text-xs font-semibold text-muted-foreground mb-2">
-                    Top Expansion Candidates
-                  </h3>
+                  <div className="flex items-center gap-3 mb-2">
+                    <h3 className="text-xs font-semibold text-muted-foreground">
+                      Top Expansion Candidates
+                    </h3>
+                    {regionData.clusters.length > 1 && (
+                      <select
+                        value={String(candidateRegion)}
+                        onChange={(e) => setCandidateRegion(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                        className="bg-muted border border-border rounded px-2 py-0.5 text-xs text-foreground focus:outline-none focus:border-primary"
+                        title="Candidates are grouped by where they are — a Colonia elite is not a Bubble expansion option"
+                      >
+                        {regionData.clusters.map((c) => (
+                          <option key={c.id} value={String(c.id)}>Region: {c.label} ({c.count})</option>
+                        ))}
+                        <option value="all">Region: All</option>
+                      </select>
+                    )}
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     {topScoutedAll.map((sd, i) => (
                       <div
@@ -1280,14 +1414,14 @@ export function ScoutingPage() {
                           />
                         </div>
                         <Link
-                          to={`/systems/${encodeURIComponent(sd.name)}`}
+                          target="_blank" rel="noreferrer" to={sysHref(`/systems/${encodeURIComponent(sd.name)}`)}
                           className="text-sm font-medium text-foreground hover:text-primary transition-colors"
                           title="View system details"
                         >
                           {sd.name}
                         </Link>
                         <Link
-                          to={`/system-view?system=${encodeURIComponent(sd.name)}`}
+                          target="_blank" rel="noreferrer" to={sysHref(`/system-view?system=${encodeURIComponent(sd.name)}`)}
                           className="text-[10px] text-cyan-400 hover:text-cyan-300 ml-1"
                           title="System View"
                         >{'\u2604\uFE0F'}</Link>
@@ -1459,11 +1593,20 @@ export function ScoutingPage() {
                   const unclassified: typeof boxelInfo.enum.gaps = [];
                   const visited: typeof boxelInfo.enum.gaps = [];
                   const mapped: Array<{ index: number; id64: string; name: string; bodyCount: number }> = [];
+                  const knownSameName: Array<{ index: number; id64: string; name: string; bodyCount: number }> = [];
                   for (const g of boxelInfo.enum.gaps) {
                     if (g.id64 !== null && visitedKeys.has(g.id64)) { visited.push(g); continue; }
                     const resolved = g.id64 !== null ? boxelNameLookups[g.id64] : undefined;
                     if (g.id64 !== null && resolved) {
-                      mapped.push({ index: g.index, id64: g.id64, name: resolved.name, bodyCount: resolved.bodyCount });
+                      // "Other name" means a RENAME. When Spansh returns the same procedural
+                      // name, the system was simply missed by the boxel name-search (result
+                      // caps in dense core boxels) — calling "e1-0 → e1-0" a rename was wrong.
+                      const expected = `${boxelInfo.enum.prefix}${g.index}`;
+                      if (resolved.name.toLowerCase() === expected.toLowerCase()) {
+                        knownSameName.push({ index: g.index, id64: g.id64, name: resolved.name, bodyCount: resolved.bodyCount });
+                      } else {
+                        mapped.push({ index: g.index, id64: g.id64, name: resolved.name, bodyCount: resolved.bodyCount });
+                      }
                     } else {
                       // null id64 (no model), resolved-to-null (no data), or not-yet-resolved → real target.
                       unclassified.push(g);
@@ -1499,6 +1642,22 @@ export function ScoutingPage() {
                             {visited.map((g) => (
                               <span key={g.index} className="text-[11px] font-mono bg-sky-500/10 text-sky-200/70 border border-sky-500/20 rounded px-1.5 py-0.5 select-all">
                                 {boxelInfo.enum.prefix}{g.index}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {/* ⚫ Known to Spansh under this exact name — the boxel name-search
+                          missed them (dense-boxel result caps). Not targets, not renames. */}
+                      {knownSameName.length > 0 && (
+                        <div>
+                          <div className="text-xs text-muted-foreground font-medium mb-1">
+                            {'⚫'} {knownSameName.length} in Spansh (missed by the name search &mdash; not targets):
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {knownSameName.map((m) => (
+                              <span key={m.index} className="text-[11px] font-mono bg-muted/30 text-muted-foreground/80 border border-border/50 rounded px-1.5 py-0.5">
+                                {m.name} ({m.bodyCount} bodies)
                               </span>
                             ))}
                           </div>
@@ -1551,6 +1710,29 @@ export function ScoutingPage() {
           {/* Summary bar + filters */}
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <p className="text-sm text-muted-foreground">
+              <button
+                onClick={() => setShowScoutMap((v) => !v)}
+                className={`mr-1 px-2 py-0.5 rounded border text-xs align-middle transition-colors ${showScoutMap ? 'border-amber-500/60 text-amber-300' : 'border-border text-muted-foreground hover:text-foreground'}`}
+                title="Live scout map — results plotted at their real positions; blips light up as they're scored"
+              >{'\u{1F5FA}\u{FE0F}'} Map</button>
+              <button
+                onClick={() => {
+                  if (!refCoords) return;
+                  const snap: ScoutMapSnapshot = {
+                    ref: { name: refSystem, coords: refCoords },
+                    systems: systemsWithBodies.map((s) => ({
+                      id64: s.search.id64, name: s.search.name,
+                      x: s.search.x ?? 0, y: s.search.y ?? 0, z: s.search.z ?? 0,
+                    })),
+                    savedAt: new Date().toISOString(),
+                    prescoutedIds: [...preRunScouted.current],
+                  };
+                  try { localStorage.setItem(SCOUT_MAP_SNAPSHOT_KEY, JSON.stringify(snap)); } catch { /* private mode */ }
+                  window.open(sysHref('/scout-map'), '_blank', 'noreferrer');
+                }}
+                className="mr-2 px-2 py-0.5 rounded border border-border text-xs align-middle text-muted-foreground hover:text-foreground transition-colors"
+                title="Pop the map out into its own tab — scores keep streaming in live"
+              >{'↗'}</button>
               {systemsWithBodies.length} systems with bodies within {searchRadius} ly of {refSystem}
               {systemsNoBodies.length > 0 && (
                 <span className="opacity-60"> + {systemsNoBodies.length} with no data</span>
@@ -1589,10 +1771,11 @@ export function ScoutingPage() {
                 className="bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:outline-none focus:border-primary"
               >
                 <option value="all">Bodies: All</option>
+                <option value="ge41">Bodies: 41+</option>
+                <option value="b21to40">Bodies: 21-40</option>
                 <option value="gt20">Bodies: &gt; 20</option>
-                <option value="10to20">Bodies: 10-20</option>
-                <option value="5to10">Bodies: 5-10</option>
-                <option value="lt5">Bodies: &lt; 5</option>
+                <option value="b10to20">Bodies: 10-20</option>
+                <option value="b1to9">Bodies: 1-9</option>
               </select>
               {/* Source filter toggles */}
               <div className="flex items-center gap-1 text-xs">
@@ -1664,6 +1847,19 @@ export function ScoutingPage() {
             </div>
           </div>
 
+          {/* Live scout map — auto-opens while a scout run is active */}
+          {showScoutMap && (
+            <ScoutMap
+              points={mapPoints}
+              refCoords={refCoords}
+              prescoutedIds={preRunScouted.current}
+              onPick={(id64) => {
+                setExpandedId(id64);
+                setTimeout(() => document.getElementById(`sys-row-${id64}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+              }}
+            />
+          )}
+
           {/* Systems with bodies */}
           <div className="space-y-1">
             {systemsWithBodies.map((sys) => {
@@ -1681,6 +1877,7 @@ export function ScoutingPage() {
               return (
                 <div
                   key={sys.search.id64}
+                  id={`sys-row-${sys.search.id64}`}
                   className={`bg-card border rounded-lg overflow-hidden transition-colors ${
                     isFav
                       ? 'border-yellow-500/40'
@@ -1701,12 +1898,9 @@ export function ScoutingPage() {
                       {'⚠'} Partial scan: {scan.records} of {scan.total} bodies &mdash; score provisional, {scan.total - scan.records} unscanned
                     </div>
                   )}
-                  {/* Epic-view callout — spectacular surface geometry (flag, not points) */}
-                  {sys.score?.epicView?.isEpic && (
-                    <div className="px-4 py-1 bg-violet-500/10 text-violet-300 text-xs font-medium">
-                      {'✨'} Epic view {'—'} {sys.score?.epicView?.reasons?.join('  ·  ')}
-                    </div>
-                  )}
+                  {/* Epic view is deliberately NOT a banner ("too prominent — my screen is
+                      filled with purple"): a small ✨ chip on the row, full reasons in the
+                      expanded details. The violet border tint stays as the quiet hint. */}
                   {/* Oxygen atmosphere callout */}
                   {sys.score?.hasOxygenAtmosphere && (
                     <div className="px-4 py-1 bg-green-500/10 text-green-300 text-xs font-medium">
@@ -1816,7 +2010,7 @@ export function ScoutingPage() {
                     <div className="min-w-[180px] shrink-0">
                       <span className="font-medium text-foreground">{sys.search.name}</span>
                       <Link
-                        to={`/system-view?system=${encodeURIComponent(sys.search.name)}`}
+                        target="_blank" rel="noreferrer" to={sysHref(`/system-view?system=${encodeURIComponent(sys.search.name)}`)}
                         className="text-[10px] text-cyan-400 hover:text-cyan-300 ml-1"
                         title="System View"
                         onClick={(e) => e.stopPropagation()}
@@ -1825,6 +2019,11 @@ export function ScoutingPage() {
                       {isColonised && (
                         <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded bg-progress-complete/15 text-progress-complete">
                           colonised
+                        </span>
+                      )}
+                      {sys.score?.epicView?.isEpic && (
+                        <span className="ml-1.5 text-xs" title={`Epic view — ${sys.score.epicView.reasons?.join(' · ')} (expand for details)`}>
+                          {'✨'}
                         </span>
                       )}
                     </div>
@@ -1904,6 +2103,12 @@ export function ScoutingPage() {
                   {/* Expanded: score breakdown */}
                   {isExpanded && sys.scouted && sys.score && (
                     <div className="border-t border-border/50 px-4 py-3 bg-muted/10">
+                      {/* Epic view details — full reasons live here, not in a banner */}
+                      {sys.score.epicView?.isEpic && (
+                        <div className="mb-2 text-sm text-violet-300">
+                          {'✨'} Epic view {'—'} {sys.score.epicView.reasons?.join('  ·  ')}
+                        </div>
+                      )}
                       <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-sm max-w-lg">
                         {sys.score.starPoints > 0 && (
                           <div className="col-span-2">
@@ -2225,7 +2430,7 @@ export function ScoutingPage() {
                           <div className="min-w-[180px] shrink-0">
                             <span className="font-medium text-muted-foreground">{sys.search.name}</span>
                             <Link
-                              to={`/system-view?system=${encodeURIComponent(sys.search.name)}`}
+                              target="_blank" rel="noreferrer" to={sysHref(`/system-view?system=${encodeURIComponent(sys.search.name)}`)}
                               className="text-[10px] text-cyan-400 hover:text-cyan-300 ml-1"
                               title="System View"
                             >{'\u2604\uFE0F'}</Link>

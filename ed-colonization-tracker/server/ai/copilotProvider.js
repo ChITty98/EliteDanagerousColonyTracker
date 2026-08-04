@@ -1,5 +1,8 @@
 // server/ai/copilotProvider.js
 import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 /**
  * Co-pilot generation backend — runs `claude -p` as a subprocess against the
@@ -56,9 +59,23 @@ export async function copilotComplete(opts) {
   return runClaude(model, system, opts.userMessage || '', opts.timeoutMs ?? 60000);
 }
 
+// System prompt travels via FILE, not argv (2026-08-04). With shell:true on Windows the args
+// are concatenated raw onto a cmd.exe command line — a multi-KB persona preamble full of
+// newlines mangles the invocation (cmd treats the first newline as end-of-command), the CLI
+// hangs on the malformed call, the 60 s timeout SIGTERMs it, and every generation dies with
+// "exited null". The user prompt already went via stdin for the same reason; this closes the
+// remaining hole. One file per process, overwritten per call — nothing to clean up.
+const SYSTEM_PROMPT_FILE = join(tmpdir(), `edcolony-copilot-system-${process.pid}.txt`);
+
 function runClaude(model, system, prompt, timeoutMs) {
   return new Promise((resolve, reject) => {
-    const args = ['-p', '--model', model, '--system-prompt', system, '--no-session-persistence', '--output-format', 'json'];
+    try {
+      writeFileSync(SYSTEM_PROMPT_FILE, system, 'utf8');
+    } catch (err) {
+      reject(new Error(`Failed to write system prompt file: ${err.message}`));
+      return;
+    }
+    const args = ['-p', '--model', model, '--system-prompt-file', `"${SYSTEM_PROMPT_FILE}"`, '--no-session-persistence', '--output-format', 'json'];
     // Subscription-only: strip any ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN so the CLI can NEVER
     // bill credits — the co-pilot runs purely on the local `claude` login (Max subscription).
     // Lets the app be shared without a friend's stray key burning your or their credits.
@@ -87,6 +104,7 @@ function runClaude(model, system, prompt, timeoutMs) {
 
     child.on('error', (err) => reject(new Error(`Failed to spawn Claude CLI: ${err.message}`)));
     child.on('close', (code) => {
+      if (code === null) { reject(new Error(`Claude CLI killed after ${timeoutMs}ms (timeout/signal): ${stderr.slice(0, 300)}`)); return; }
       if (code !== 0) { reject(new Error(`Claude CLI exited ${code}: ${stderr.slice(0, 300)}`)); return; }
       resolve(parseResult(stdout, prompt));
     });
@@ -102,8 +120,14 @@ function runClaude(model, system, prompt, timeoutMs) {
 }
 
 function parseResult(stdout, prompt) {
-  try {
-    const j = JSON.parse(stdout);
+  let j = null;
+  try { j = JSON.parse(stdout); } catch { /* not JSON — raw-text path below */ }
+  if (j) {
+    // The CLI reports failures (401 auth, overloaded, …) as a success-SHAPED payload with
+    // is_error:true and the error text in `result`. Without this guard the co-pilot would
+    // SPEAK the error message as dialogue ("Failed to authenticate. API Error: 401…").
+    // NOTE: thrown OUTSIDE any local try/catch so it reaches the caller (speak → canned fallback).
+    if (j.is_error) throw new Error(`Claude CLI error result: ${String(j.result || '').slice(0, 200)}`);
     const u = j.usage || {};
     const inTok = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
     return {
@@ -113,9 +137,8 @@ function parseResult(stdout, prompt) {
       costUsd: j.total_cost_usd || 0,
       durationMs: j.duration_ms || 0,
     };
-  } catch {
-    // Output wasn't JSON — treat as raw text and estimate at ~4 chars/token.
-    const text = stdout.trim();
-    return { text, inTokens: Math.ceil(prompt.length / 4), outTokens: Math.ceil(text.length / 4), costUsd: 0, durationMs: 0 };
   }
+  // Output wasn't JSON — treat as raw text and estimate at ~4 chars/token.
+  const text = stdout.trim();
+  return { text, inTokens: Math.ceil(prompt.length / 4), outTokens: Math.ceil(text.length / 4), costUsd: 0, durationMs: 0 };
 }

@@ -2,6 +2,132 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.28.11] — 2026-08-04
+
+### Fixed
+- **Chain Planner preview no longer fakes arrival.** The greedy preview ran Max Hops + 2 and then just stopped — labeling whatever system it died at with the target's green "T" row ("doesn't get me to my target!"). It now runs exactly Max Hops, states "DID NOT REACH TARGET" with the shortfall and the roughly-needed hop count, and marks the stall row ⚠. Ranking also flipped to hop-efficiency-first (a 14.9 ly stride beats a body-rich 4.3 ly shuffle — every claim is a full port build); body count only breaks ties.
+- **Scouting no longer stalls when you watch the pop-out map.** The scout runner's rate-limit waits used Window timers, which Chrome clamps to ~one fire per MINUTE once the Expansion tab has been hidden ~5 minutes — so scoring "paused after a few" the moment attention moved to the popped-out map. The waits now run through a tiny dedicated-worker timer, which background throttling exempts; hidden-tab runs proceed at full pace.
+
+### Added
+- **Colonia almanac in the Wiki** — generated from the July-2026 dump's 500 ly Colonia region (G:/Spansh/region-colonia-500-fresh.jsonl): 1,041,191 systems with just **72 populated (0.007%)**, atmosphere rarity with the regional flip (**ammonia is common out there — 14,966**; the jewels are Oxygen 181, Hot Silicate Vapour 4), and a dramatic-skies census — 17,136 bodies in 9,166 systems, incl. **66 orbiting INSIDE rings and 22 TRIPLEs** (in-ring CO₂/ammonia twin worlds with bio signals), with a top-finds table.
+- **Scout map filters** — the legend is now clickable: toggle any score tier, an **✨ epic-only** mode, and **◈ hide pre-scouted** (spotlight only what this run found). "Scoring now" pulses always show. **Low tiers (<60) start hidden by default** — "low scoring is not exciting." Works in the inline map and the pop-out (the pop-out snapshot carries the pre-run set).
+- Wiki also gains the mass-code "Where to hunt" table (rendered live from the dataset) and the scope/epic-calibration note.
+
+## [1.28.10] — 2026-08-04
+
+### Fixed
+- **Boxel scout stops calling same-name systems "renames."** In dense core boxels the name-search hits result caps, so the id64 double-check finds systems Spansh knows under their exact expected name — they were landing in "already mapped (other name)" as absurd self-renames ("e1-0 → e1-0"). They now get their own honest bucket: "in Spansh (missed by the name search — not targets)." True renames keep the other-name bucket.
+
+### Changed
+- **Region labels use the official galactic regions** (Codex names, stored per system from Spansh at scoring time): the home turf is correctly **Inner Orion Spur** — not "Bubble," which is ~250 ly across while Col 173 sits 960 ly out — and Colonia is **Inner Scutum-Centaurus Arm**. Entries scored before regions were stored fall back to their dominant procedural sector (Wregoe / Eol Prou) until rescored.
+- **Scout map pops out** — ↗ next to the 🗺 Map toggle opens the map in its own tab (/scout-map) for a second monitor: the search snapshot rides localStorage, and scores stream in LIVE through the synced store, so blips keep lighting up in the popped-out window as any device lands them. Clicking a blip there opens its System View. A legend now explains every dot ("what does the coloring mean?" — answered on the map itself).
+- **Scout map enlarged** (~72vh) and gained a **side elevation panel**: same horizontal axis, vertical = ly above/below the reference plane, auto-scaled with gridlines — instantly shows whether a find sits above or below your target. Same tier colors, pulses, ✨ halos, and click-to-row.
+
+## [1.28.9] — 2026-08-04
+
+### Fixed
+- **Journal Stats no longer demands a rescan per visit.** The page was fully client-side: Chrome folder picker, full re-read of all 555 log files, results held only in component state — lost the moment you navigated away. The scan now lives on the SERVER with a persistent incremental cache (journal-stats.json): the page renders instantly from cache, only NEW journal bytes are ever read (the active file resumes from its exact byte offset), and it auto-catches-up in the background when new files exist. First scan is the only long one. Works from the iPads now too.
+- **Bodies filter reflects the measured yield buckets** — 41+ / 21–40 / >20 / 10–20 / 1–9, matching the score distribution in the commander's own 4,090 scored systems (41+ ≈53% score ≥60; 21–40 ≈26%; 10–20 ≈7% but holds d9-52 and HIP 47126; 1–9 ≈0.4%).
+- **Expansion results survive clicking a system.** System links (name → dossier, ☄️ → System View) now open in a NEW TAB with the auth token riding along — an accidental click no longer throws away an entire Spansh search ("i have to hit spansh again - so bad").
+
+## [1.28.8] — 2026-08-04
+
+### Changed
+- **The radar's compass anchor is now ✦ SAG A*** — the direction to Sagittarius A* on the rim, in both 2D and 3D (it orbits correctly when you drag). The old "N" marker is gone: a compass letter is Sol-neighborhood convention, and this close to the core it means nothing — the core itself is the landmark.
+
+## [1.28.7] — 2026-08-04
+
+### Fixed
+- **System View actually loads again.** Root cause: the page's whole data pipeline — including the Spansh fallback — was gated behind the *client-side* journal folder handle, which has been permanently null since the server-side watcher cutover. It now pulls the server's exploration data (`/api/exploration`) plus an unconditional Spansh fetch on every system change, so it works parked, from links, after restarts, and on iPads. The dead "Select Journal Folder & Start Watcher" prompts are gone.
+- **TARS speaks again.** Live co-pilot generation was dying with "Claude CLI exited null" — the multi-kilobyte persona system prompt was being concatenated raw onto a cmd.exe command line (newlines end a cmd command), the mangled invocation hung, and the 60 s timeout killed it. The system prompt now travels via `--system-prompt-file` (the user prompt already went via stdin for the same reason). And if live generation still fails for any reason, the canned pool now speaks as a last resort instead of dead air. Bonus guard found while probing: the CLI reports auth failures as a success-shaped JSON payload — without a new is_error check, TARS would have eventually spoken "Failed to authenticate. API Error: 401…" out loud as dialogue.
+- **Layer-count width is reserved** on the radar toggles, so the screen no longer jumps when a count crosses into two digits.
+
+### Added
+- **📡 Radar 3D view** — a 2D/3D toggle beside the range control (persisted). 3D tilts the disc 62°: rings become ellipses, the vertical axis becomes *real* height (blips float on stems above/below the plane with shadows on the disc), and you **drag to orbit** — the N marker rides the rim so bearings stay honest. All layers, labels, tap-cards, zoom, and counts work identically. Pure SVG math, no dependencies.
+- **🚦 Traffic button on the Companion page** — tap from the iPad to push the current system's traffic report (EDSM arrivals + unique-heard count) to the in-game overlay on demand.
+
+## [1.28.6] — 2026-07-24
+
+### Fixed
+- **✨ Epic view actually means something again.** The old bars (parent ≥20° of sky, ring span ≥40°) flagged essentially every close moon of every ringed giant — an entire Expansion results page wearing the badge. Recalibrated against the commander's own benchmark sights: parent-overhead now needs **45°**, and "skims rings" now requires orbiting **within 5% of the ring edge** (the d9-52 2 a benchmark sits at 1.01×; moons orbiting *inside* rings — HIP 52629 2 a, ratio 0.35 — get called out as such). New **twin worlds** criterion for the sight the detector couldn't even see: sibling bodies ≥20° in each other's sky (HIP 47126 ABCD 1 a/b: 24.7°, co-orbiting 4,194 km apart). Validation on the scouted shortlist: 17/29 flagged → **6/29**, with both benchmark systems keeping the badge *for the right reason*. Rescore All re-flags existing entries.
+- **ACTIVE NEARBY no longer resets on every jump** — recentering cleared the whole uploader map; with positions stored per uploader (v1.28.4) the count re-filters spatially, so the clear only zeroed your density stat mid-flight.
+- **High-score layer honesty** — score-0 partial captures (drive-by scans with no star data) are unscoreable, not zero-rated, and never enter the layer at any threshold. When the layer is empty because your scouted turf is far away, it now says so: "nearest scouted system is ~22.1 kly away — score this region via Expansion."
+
+## [1.28.5] — 2026-07-24
+
+### Added
+- **Arrival traffic report** — "how many people have been in the system I'm jumping into recently," from both honest sources: EDSM's passage log (visits by EDSM-feeding players — ~466 arrivals today into Einheriar at time of writing) and our own count of distinct anonymized uploaders heard in that system over 24 h (true unique people, but only what this exe personally heard while running). Surfaces as an in-game overlay line on every hyperspace arrival (🚦, below the distance row) and a CENTER TRAFFIC panel on the radar readout.
+- The EDSM cache is warmed at StartJump — the fetch happens during the FSD charge, so the arrival overlay reads it synchronously. Exactly one EDSM request per jump (10-min per-system cache, failures cached, 6 s timeout, no polling). Zero new Spansh calls.
+
+## [1.28.4] — 2026-07-24
+
+### Changed
+- **ACTIVE NEARBY follows the zoom.** The server now keeps an anonymous last-known position per uploader (positions only — IDs never leave the server) and the stat counts commanders within the selected range: zoom to 25 ly and it reads "~4 cmdrs ≤25 ly" instead of the fixed 200 ly figure. The "that I've heard of" hedge stays.
+
+### Fixed
+- **Score box can actually be edited now.** The threshold input force-parsed an empty field to 0 and wrote it straight back, so the 0 could never be deleted (worst on iPad). It now tolerates a blank field while typing, commits valid numbers live, and restores the last committed value on blur. Numeric keypad on iPad via inputMode.
+- Stale uploader entries are purged from the density map, so it no longer grows unbounded across a long session.
+
+## [1.28.3] — 2026-07-24
+
+### Added
+- **Radar zoom** — 25/50/100/200 ly range buttons in the topbar (persisted). Ring labels, blip scatter, and vertical-stem exaggeration all rescale, so the clump at the center of the 200 ly view spreads across the full scope. Nothing hides silently: an "N ON SCOPE · +M BEYOND range" counter tracks what the zoom excludes.
+- **Touch-first identification — hover doesn't exist on the iPad.** Signal blips (builds, atmo leads, high-score sites, conflicts) carry always-on name labels; traffic and power get labels too at ≤50 ly zoom. Tapping ANY blip — including anonymous traffic pings, which previously had no identification at all — pins an info card: system, body, atmosphere, score, distance, elevation, age, NEW-TO-YOU. Tap elsewhere to dismiss.
+- **Per-layer counts** on every layer toggle ("TRAFFIC 14"), and the atmosphere feed cap raised to 12 so every blip on scope also appears in the readout list.
+- **Fullscreen toggle** (⛶ FULL) — overlays the radar over the whole viewport above the app nav, with a best-effort Fullscreen API request so iPad Safari can hide its own chrome. Esc or ✕ exits.
+
+### Fixed
+- **Header no longer clips on iPad** — the topbar row is auto-height, so controls wrap into visible rows instead of being cut mid-character by the fixed 48 px row.
+- **LINK DOWN honesty** — when the server (the exe) stops answering polls for ~20 s, the status badge flips to LINK DOWN instead of continuing to claim EDDN LIVE with stale data.
+
+## [1.28.2] — 2026-07-24
+
+### Fixed
+- **Radar is now actually in the left nav** (🛰️, under Expansion). The 1.28.0 build registered the `/radar` route but the menu entry never landed — the only 📡 in the nav was Companion, so the radar was reachable only by typing the URL.
+
+## [1.28.1] — 2026-07-24
+
+### Changed
+- **Radar prospects are now colonization-only.** Systems with confirmed population can never surface as NEW TO YOU leads, atmosphere pings, or high-score prospects — "anything with population already would not be colonizable." Population knowledge is fed from live EDDN jump traffic, the 7-day Spansh lookback, your known-systems data, and your own colonised-system flags; populated systems still count toward traffic and commander density, they just stop pretending to be claims. (First casualty: Luchtaine — pop 318,022, three stations — which the radar had proudly tagged NEW TO YOU.) Unknown population stays eligible: a frontier scan can't prove a negative, so only *confirmed* population excludes.
+
+## [1.28.0] — 2026-07-24
+
+### Added
+- **📡 Proximity Activity Radar** — a starship sensor console at `/radar`: commander activity within **200 ly of your position**, live from the **EDDN firehose** blended with a **7-day lookback**, re-centering on every jump. Amber-phosphor scope, 50/100/150/200 ly rings, radar sweep, and the **required vertical axis**: blips float above/below a plane-shadow dot on leader-line stems (stem length = ly off the galactic plane, exact offset in every tooltip).
+  - **Live prospecting — the core value.** When any commander within 200 ly charts a body matching your rating criteria, it pings **as it happens** — tagged **NEW TO YOU** when it's not in your scouted/known data. First light showed the point: sulphur-dioxide and ammonia bodies surfacing **12–21 seconds** after being scanned by strangers. Layer 3a (composite score ≥ adjustable threshold, default 70 — live slider) and layer 3b (interesting atmospheres regardless of score) both evaluate through the **canonical scorer** — the radar and the Spansh search rate systems identically, with your 2,895 scouted systems populating the lookback layer instantly.
+  - **Colonization activity is the headline** — rival builds/claims within range render as ember-orange pinging blips and a dedicated feed.
+  - **Conflicts, power & population** — live faction-state arrays plus 7-day Spansh context; separately toggleable like every layer.
+  - **🔭 Boxel watch** — the existing gap-check run against your current boxel as a **text notice** ("N expected systems undiscovered — d5-13, d5-14"); never blips, since undiscovered systems have no coordinates by definition.
+  - **Honesty, load-bearing:** EDDN is anonymized — activity and counts only, never identities; density is uploaderID-deduped and phrased "~N that I've heard of" (only tool-running commanders are audible); your own EDMC uploads are fingerprint-filtered out so the radar doesn't detect you; empty scope reads "quiet", never invents.
+  - **Engineering note:** EDDN speaks ZeroMQ, and neither native bindings (can't embed in the single-exe build) nor the pure-JS alternative (WebSocket-only) could ride along — so the app now carries a **minimal hand-rolled ZMTP 3.0 client** over a raw TCP socket, spike-proven against the live firehose before a line of the feature was built. Zero new dependencies.
+  - **Co-pilot on the scope** — rival builds, fresh site leads and frontier quiet as arbiter-paced character beats across all three personas, every line keeping the "…that I've heard of" hedge.
+
+## [1.27.0] — 2026-07-23
+
+### Fixed
+- **Earned credits now line up with the asteroid they came from.** Prospecting the next rock while collectors finish the current one used to hand accounting over instantly, so the trailing refines landed on the wrong rock (and fast prospector runs produced phantom 1-tonne rocks). The literal fix — wait until Remaining ticks off 100% — is unobservable (the journal only writes Remaining on a re-prospect), so the closest observable rule ships instead: the newly-prospected rock **waits in a pending slot** while refines keep crediting the rock they came from, and takes over at the first 30-second refine gap (pipeline drained; median inter-tonne cadence is 11s) or a 120s hard cap when two streams genuinely overlap. Catch cards now fire at the drain with the rock's full total; a third prospect before the drain forces the boundary immediately.
+
+## [1.26.1] — 2026-07-23
+
+### Changed
+- **Live pricing anchored to carrier range.** The live basis is now the best non-FC sell **within 500 ly of your position** — one carrier jump, matching how the ore actually travels — instead of galaxy-wide (which surfaced a 5,496 ly LTD buyer nobody was hauling to). Anchored to your current system, re-anchors as you move. Demand floor is 10,000 — under that, a top price is treated as illegitimate (small listings collapse after a few loads, and the buyer must absorb carrier-scale tonnage).
+- **Nearest-at-best tie-break.** Price caps make exact top-price ties common, so at equal pay the closest station wins. Immediate effect from HIP 52629: Bromellite's 116,750 found at **123 ly** and LTD's 384,562 at **151 ly** — both closer than hand-picked Inara references, and the Painite pick (266,412 @ 238 ly) beats a 235k/321 ly reference on both axes. Picker tooltips name the paying station.
+
+## [1.26.0] — 2026-07-23
+
+### Changed
+- **Market pricing now means "the highest non-FC payout, wherever it is."** The value ladder becomes mission rate → **live galaxy best sell** (Ardent/EDDN, Fleet Carriers excluded, demand ≥ 500) → visited-market average as the offline fallback. The old visited-average basis answered "what would a random station I frequent pay" — but the commander hauls to the best buyer, and the mismatch was ~3×: Bromellite 36k visited-avg vs **116,750** galaxy best, LTD 143k vs **384,562** (both verified to the credit against Inara). Prices cache hourly per commodity, warm automatically from prospects and the picker, and the picker tooltip names the paying station.
+
+## [1.25.0] — 2026-07-23
+
+### Added
+- **◉ Hotspot ground truth.** The journal records no position inside a ring, so the commander now supplies it: an **IN HOTSPOT** toggle on the hero stamps every rock logged while it's on (auto-clears on ring change or jump — hotspot is positional), and any past session can be marked from the rate table's new ◉ column. Marks live in a sidecar (`mining-annotations.json`) so the append-only log is never rewritten, pre-seeded with the two known labels: Col 285 DG-S sessions = Bromellite hotspot, HIP 52629 A 9 B = not. Flagged rocks show ◉ in the Asteroids list; sessions report their hotspot share. First measured payoff already in: hotspots raise target density **23% → 79%** while extraction efficiency stays identical — density, not richness.
+- **Rock board goes apples-to-apples.** The backdrop now filters to the current ring's **class** when known — icy asteroids measure ~2× the content of metallic ones in this log, so pooled comparison made every icy prospect look far-right regardless of merit. The header names the population ("vs your 117 icy rocks"); classes with under 12 rocks fall back to pooled, labeled. Historical rows get their class resolved from the ring index at read time.
+- **Ring context survives login.** Logging in already inside a ring writes no `SupercruiseExit`, so whole sessions logged ring-less (and hotspot marks had nothing to key on) — the `Location` event carries the body and now seeds ring context the same way.
+
+### Fixed
+- **Co-pilot no longer chatters outside the game.** The launcher/main menu still writes journal lines, and each one ticked the idle-beat machinery — invisible until the portrait pop-up surfaced every line everywhere. A commander-presence gate (`LoadGame` → present; `Shutdown` or main-menu music → absent; seeded from the journal tail at boot) now mutes all beats when nobody is in the cockpit. The Cockpit Ask/News buttons bypass it deliberately — pressing a button is presence.
+
 ## [1.24.2] — 2026-07-22
 
 ### Changed

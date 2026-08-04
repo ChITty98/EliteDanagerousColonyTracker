@@ -12,6 +12,7 @@ import { buildSnapshot, eventDetail, decorateScan, detectCompletion, detectBuild
 import { isCannedScenario, pickCanned } from './copilotCanned.js';
 import { detectTarsLore } from './copilotTars.js';
 import { detectMiningBeat } from './copilotMining.js';
+import { detectRadarBeat } from './copilotRadar.js';
 import { fetchGalNet, getLatestNews } from './copilotNews.js';
 import { arbitrate, recordSpoken } from './copilotArbiter.js';
 import { detectAffinityBeat } from './copilotAffinity.js';
@@ -32,6 +33,20 @@ let idleStreak = 0; // consecutive ambient lines since the last real beat
 let inFlight = false; // one line at a time — never stack `claude -p` subprocesses
 let _enabledLogged = false; // log enable-state changes once (terminal diagnostics)
 let _idleQuietLogged = false; // log the "paused ambient" message once per quiet stretch
+// Commander-presence gate. The launcher/main menu still writes journal lines (Fileheader,
+// Music: MainMenu) and game exit writes trailing events — each one ticks runCopilot, and idle
+// beats happily fired into an empty cockpit (invisible until the global pop-up made every line
+// visible). True between LoadGame and Shutdown/MainMenu; seeded from the journal tail at boot.
+// The Cockpit buttons (runOnDemand/runNews) bypass this deliberately — pressing a button IS presence.
+let inGame = false;
+let _inGameLogged = null;
+export function setInGame(v, why) {
+  inGame = !!v;
+  if (_inGameLogged !== inGame) {
+    console.log('[Copilot] commander ' + (inGame ? 'in-game' : 'not in-game') + (why ? ' (' + why + ')' : ''));
+    _inGameLogged = inGame;
+  }
+}
 
 /**
  * React to this tick's events (or fill the quiet) in character. Fire-and-forget.
@@ -56,6 +71,16 @@ export async function runCopilot(parsed, state, deps) {
   ingestWorld(parsed); // keep world awareness (security / body / atmosphere / hull) current
   onSessionAndPresence(parsed, state); // track own-presence + kick the session-start colony-watch snapshot
   onDock(parsed, state);               // kick the post-dock area ping (both write results read by their detectors)
+
+  // Presence transitions ride the same events we just ingested.
+  for (const e of events) {
+    if (!e) continue;
+    if (e.event === 'LoadGame') setInGame(true, 'LoadGame');
+    else if (e.event === 'Shutdown') setInGame(false, 'Shutdown');
+    else if (e.event === 'Music' && e.MusicTrack === 'MainMenu') setInGame(false, 'main menu');
+  }
+  // No commander in the seat → no beats of any kind. Awareness above stays current regardless.
+  if (!inGame) return;
 
   if (inFlight) return;
 
@@ -94,6 +119,8 @@ export async function runCopilot(parsed, state, deps) {
   if (quirk) candidates.push({ beat: quirk, ev: null, synthetic: true, place: placeFor(state, null) });
   const miningBeat = detectMiningBeat(); // catches, records, streaks — pushed by the mining assist
   if (miningBeat) candidates.push({ beat: miningBeat, ev: null, synthetic: true, place: placeFor(state, null) });
+  const radarBeat = detectRadarBeat(); // rival builds / fresh site leads / frontier quiet
+  if (radarBeat) candidates.push({ beat: radarBeat, ev: null, synthetic: true, place: placeFor(state, null) });
   const atmo = detectAtmo(parsed);
   if (atmo) candidates.push({ beat: atmo, ev: null, synthetic: true, place: placeFor(state, null) });
   const crew = detectCrew(parsed, state);
@@ -208,6 +235,7 @@ export async function runCopilot(parsed, state, deps) {
     if (emitCanned(settings, deps, beat, promotedCtx, 'promoted')) return;
     await speak(state, settings, deps, {
       key: beat.key, intent: beat.intent, model: beat.model, mood: beat.mood, detail, inputs,
+      fallback: () => emitCanned(settings, deps, beat, promotedCtx, 'canned'),
     });
   }
 }
@@ -416,7 +444,7 @@ function captureInputsForEvent(ev) {
   return null;
 }
 
-async function speak(state, settings, deps, { key, intent, model, mood, detail, inputs }) {
+async function speak(state, settings, deps, { key, intent, model, mood, detail, inputs, fallback }) {
   inFlight = true;
   // Default sonnet for voice quality — haiku reads flat for character work. settings.copilotModel
   // still overrides (per-beat `model` is intentionally bypassed: the commander wants sonnet everywhere).
@@ -455,6 +483,14 @@ async function speak(state, settings, deps, { key, intent, model, mood, detail, 
   } catch (err) {
     // No claude CLI on this host, or a model error — surfaced so it's not silent.
     console.error('[Copilot] generation FAILED:', err && err.message);
+    // Last resort: the canned pool speaks so a CLI failure never means dead air
+    // ("I enabled TARS and he's not saying anything"). False when the pool has
+    // nothing for this beat — then quiet is honest.
+    if (fallback) {
+      try {
+        if (fallback()) console.log('[Copilot] live failed — canned fallback spoke');
+      } catch { /* fallback is best-effort */ }
+    }
   } finally {
     inFlight = false;
   }

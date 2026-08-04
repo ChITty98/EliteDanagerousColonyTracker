@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/store';
 import { classifyStar, classifyAtmo, classifyPlanet, atmoStyle } from '@/features/domain/domainHelpers';
-import { startJournalWatcher, isWatcherRunning } from '@/services/journalWatcher';
 import { selectJournalFolder, getJournalFolderHandle, extractExplorationData, fetchLatestPositionFromJournal } from '@/services/journalReader';
 import type { JournalScannedBody } from '@/services/journalReader';
 import type { KnownStation } from '@/store/types';
@@ -834,7 +833,6 @@ export function SystemViewPage() {
   const [scanPop, setScanPop] = useState<string | null>(null);
   const prevSystem = useRef<string | null>(null);
   const [, forceUpdate] = useState(0);
-  const [watcherStatus, setWatcherStatus] = useState(isWatcherRunning() ? 'running' : 'stopped');
   const [dataSource, setDataSource] = useState<'journal' | 'spansh' | 'auto'>('auto');
   const [spanshBodies, setSpanshBodies] = useState<JournalScannedBody[] | null>(null);
   const [spanshLoading, setSpanshLoading] = useState(false);
@@ -897,15 +895,6 @@ export function SystemViewPage() {
       setSpanshLoading(false);
     }
   }, [systemName]);
-
-  const handleStartWatcher = useCallback(async () => {
-    if (!getJournalFolderHandle()) {
-      const handle = await selectJournalFolder();
-      if (!handle) return;
-    }
-    startJournalWatcher();
-    setWatcherStatus('running');
-  }, []);
 
   // Manual "Check journal now" — read the latest position event from journal
   // and update systemName + commanderPosition. Used when the live watcher
@@ -984,19 +973,6 @@ export function SystemViewPage() {
     }
   }, []);
 
-  // Auto-start watcher if not running and journal folder available
-  useEffect(() => {
-    if (!isWatcherRunning() && getJournalFolderHandle()) {
-      console.log('[SystemView] Auto-starting journal watcher');
-      startJournalWatcher();
-      setWatcherStatus('running');
-    }
-    const t = setInterval(() => {
-      setWatcherStatus(isWatcherRunning() ? 'running' : 'stopped');
-    }, 3000);
-    return () => clearInterval(t);
-  }, []);
-
   // Follow commanderPosition — unless the URL has pinned a specific system
   // (e.g. user navigated from a link with ?system=X). Pinning respects the URL;
   // otherwise the page tracks the commander wherever they are.
@@ -1025,26 +1001,52 @@ export function SystemViewPage() {
     return () => clearInterval(t);
   }, [systemName]);
 
-  // Load complete body data from journal files when system changes
+  // Load body data when the system changes. Post-Phase-B the SERVER owns journal reading —
+  // /api/exploration/:addr is the journal-derived source of truth. The local folder-handle
+  // path survives only as a legacy extra for browser sessions that picked a folder. Spansh
+  // always fetches as the completeness fallback. (The old version gated ALL of this —
+  // including the Spansh fetch — behind the client folder handle, which is null in the
+  // exe since the watcher cutover: the page starved and stuck at "honk the system".)
   const journalLoadDone = useRef<string | null>(null);
   useEffect(() => {
     if (!systemName || journalLoadDone.current === systemName) return;
-    const handle = getJournalFolderHandle();
-    if (!handle) return;
     journalLoadDone.current = systemName;
-    extractExplorationData(handle).then((data) => {
-      const store = useAppStore.getState();
-      const cache = { ...store.journalExplorationCache };
-      let changed = false;
-      for (const [addr, sys] of data) {
-        if (!cache[addr] || sys.scannedBodies.length > (cache[addr].scannedBodies?.length || 0)) {
-          cache[addr] = sys;
-          changed = true;
+
+    // Server exploration data — one shot per system, merged if richer than what we hold
+    const store = useAppStore.getState();
+    const addr = store.knownSystems[systemName.toLowerCase()]?.systemAddress;
+    if (addr) {
+      const existingCount = store.journalExplorationCache[addr]?.scannedBodies?.length || 0;
+      const tk = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
+      fetch(tk ? `/api/exploration/${addr}?token=${tk}` : `/api/exploration/${addr}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((sys) => {
+          if (sys && Array.isArray(sys.scannedBodies) && sys.scannedBodies.length > existingCount) {
+            const st = useAppStore.getState();
+            st.setJournalExplorationCache({ ...st.journalExplorationCache, [addr]: sys });
+          }
+        })
+        .catch(() => { /* server unreachable — Spansh below still covers us */ });
+    }
+
+    // Legacy direct journal read — only for browser sessions with a picked folder
+    const handle = getJournalFolderHandle();
+    if (handle) {
+      extractExplorationData(handle).then((data) => {
+        const st = useAppStore.getState();
+        const cache = { ...st.journalExplorationCache };
+        let changed = false;
+        for (const [a, sys] of data) {
+          if (!cache[a] || sys.scannedBodies.length > (cache[a].scannedBodies?.length || 0)) {
+            cache[a] = sys;
+            changed = true;
+          }
         }
-      }
-      if (changed) store.setJournalExplorationCache(cache);
-    }).catch(() => { /* journal unavailable */ });
-    // Also auto-fetch Spansh for best-data comparison
+        if (changed) st.setJournalExplorationCache(cache);
+      }).catch(() => { /* journal unavailable */ });
+    }
+
+    // Spansh — always, as best-data comparison (auto mode picks the richer set)
     if (!spanshBodies) fetchSpansh();
   }, [systemName]);
 
@@ -1334,7 +1336,7 @@ export function SystemViewPage() {
         <div className="text-center max-w-md px-4">
           <div className="text-4xl mb-4">&#x1F52D;</div>
           <div className="text-lg">Waiting for FSD Jump...</div>
-          <div className="text-sm mt-2">Start the journal watcher and jump to a system</div>
+          <div className="text-sm mt-2">The tracker reads your journals automatically — jump to a system and it appears here</div>
           <div className="mt-4 flex flex-col items-center gap-2">
             <button
               onClick={handleCheckPosition}
@@ -1345,14 +1347,6 @@ export function SystemViewPage() {
             </button>
             {checkError && (
               <div className="text-xs text-red-400 mt-1">{checkError}</div>
-            )}
-            {watcherStatus === 'stopped' && (
-              <>
-                <button onClick={handleStartWatcher} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium mt-2">
-                  Select Journal Folder &amp; Start Watcher
-                </button>
-                <div className="text-xs text-slate-500 mt-1">Or scan from another device — data syncs automatically</div>
-              </>
             )}
           </div>
         </div>
@@ -1379,14 +1373,6 @@ export function SystemViewPage() {
           <div className="text-2xl font-bold text-foreground mb-2">{systemName}</div>
           <div className="text-sm">{hint}</div>
           <div className="text-xs text-muted-foreground/60 mt-2">{sub}</div>
-          {watcherStatus === 'stopped' && (
-            <div className="mt-3">
-              <button onClick={handleStartWatcher} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium">
-                Select Journal Folder & Start Watcher
-              </button>
-              <div className="text-xs text-slate-500 mt-1">Or scan from another device — data syncs automatically</div>
-            </div>
-          )}
         </div>
       </div>
     );

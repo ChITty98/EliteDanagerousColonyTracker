@@ -57,7 +57,7 @@ import {
 import { pollCompanionFiles } from './server/journal/processors.js';
 import {
   initMiningLog, readRocks, getRateHistory, measuredRateFor, flushNow as flushMiningLog,
-  backfillFromJournals, getLocationTotals, getCatchStats,
+  backfillFromJournals, getLocationTotals, getCatchStats, markHotspot, getAnnotations,
 } from './server/journal/miningLog.js';
 import {
   initRingIndex, buildRingIndex, findRingsForTargets, ringIndexStats, getMaterialCatalog, rankRings,
@@ -66,8 +66,14 @@ import {
 import {
   scanMiningMissions, getLiveMiningMissions, commodityKey, missionRateFor,
 } from './server/journal/miningMissions.js';
-import { getMiningSnapshot, commodityValueNow, rockValueNow, colonySystemsOf } from './server/journal/mining.js';
+import { getMiningSnapshot, commodityValueNow, rockValueNow, colonySystemsOf, setInHotspot } from './server/journal/mining.js';
 import { initTrophies, computeAggregates, evaluateBadges, badgeStates, getStreak } from './server/journal/miningTrophies.js';
+import { refreshLivePrices, getLivePrice } from './server/journal/livePrices.js';
+import { startEddnListener, recenterRadar } from './server/radar/eddnListener.js';
+import { snapshot as radarSnapshot, setCenterTraffic } from './server/radar/radarState.js';
+import { getEdsmTraffic } from './server/radar/traffic.js';
+import { getJournalStats, refreshJournalStats } from './server/journal/history.js';
+import { refreshLookback } from './server/radar/lookback.js';
 import { searchRingsBySignals } from './server/journal/spansh.js';
 
 // SEA detection: when bundled via build-exe.mjs and injected as a single executable,
@@ -117,6 +123,8 @@ function validateToken(req) {
 
 // --- Server-side JSON state storage ---
 const STATE_FILE = path.join(APP_DIR, 'colony-data.json');
+const JOURNAL_STATS_FILE = path.join(APP_DIR, 'journal-stats.json');
+let journalStatsScanInFlight = false;
 const GALLERY_DIR = path.join(APP_DIR, 'colony-images');
 const GALLERY_META = path.join(APP_DIR, 'colony-gallery.json');
 
@@ -165,6 +173,20 @@ let pendingState = null;
 const sseClients = [];
 
 function broadcastEvent(event) {
+  // Radar recenter rides the existing position broadcast — one hook, no new plumbing.
+  if (event && event.type === 'commander_position' && event.position) {
+    try {
+      const p = event.position;
+      const moved = recenterRadar(p.systemName, p.coordinates);
+      if (moved && p.coordinates) {
+        void refreshLookback(readStateFile(), p.systemName, [p.coordinates.x, p.coordinates.y, p.coordinates.z]);
+      }
+      if (moved) {
+        // one EDSM call per jump (10-min cache inside) — feeds the CENTER TRAFFIC readout
+        getEdsmTraffic(p.systemName).then((t) => setCenterTraffic(p.systemName, t)).catch(() => {});
+      }
+    } catch (e) { console.error('[Radar] recenter failed:', e && e.message); }
+  }
   const data = `data: ${JSON.stringify(event)}\n\n`;
   let delivered = 0;
   let dropped = 0;
@@ -749,6 +771,34 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Journal lifetime stats — cached + incremental (no more full rescans per visit).
+  // GET returns instantly from journal-stats.json; POST /refresh catches up on new
+  // files in the background with progress over SSE.
+  if (pathname === '/api/journal-stats' && req.method === 'GET') {
+    const st = readStateFile();
+    const dir = resolveJournalDir(st.settings && st.settings.journalDirOverride);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(getJournalStats(dir, JOURNAL_STATS_FILE)));
+    return;
+  }
+  if (pathname === '/api/journal-stats/refresh' && req.method === 'POST') {
+    const st = readStateFile();
+    const dir = resolveJournalDir(st.settings && st.settings.journalDirOverride);
+    const kicked = !journalStatsScanInFlight;
+    if (kicked) {
+      journalStatsScanInFlight = true;
+      refreshJournalStats(dir, JOURNAL_STATS_FILE, (pct, phase) => {
+        broadcastEvent({ type: 'journal_stats_progress', pct, phase, timestamp: new Date().toISOString() });
+      }).then((r) => {
+        if (r && r.started) console.log(`[JournalStats] refresh done — ${r.processed} file(s) caught up`);
+      }).catch((e) => console.error('[JournalStats] refresh failed:', e && e.message))
+        .finally(() => { journalStatsScanInFlight = false; });
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ started: kicked }));
+    return;
+  }
+
   // State API: PATCH /api/state — sparse diff merge (per-key strategy)
   if (pathname === '/api/state' && req.method === 'PATCH') {
     let body = '';
@@ -1330,9 +1380,15 @@ const server = http.createServer((req, res) => {
         locations: getLocationTotals((k) => commodityValueNow(k, existing), (rec) => rockValueNow(rec, existing)),
         unmapped: { mine: unmappedMine, counts: { mine: unmappedMine.length, total: unmappedTotal } },
         // Distribution board data — same stats the catch card ranks against, served standing.
+        // Filtered to the current ring's CLASS when known: icy asteroids measure ~2x metallic
+        // content in this log, so a pooled backdrop made every icy prospect look far-right.
         catchStats: (() => {
-          const st = getCatchStats((rec) => rockValueNow(rec, existing));
-          return { value: { hist: st.value.hist, best: st.value.best }, count: st.count };
+          const curClass = (getMiningSnapshot().ring || {}).ringClass || null;
+          const st = getCatchStats((rec) => rockValueNow(rec, existing), curClass);
+          return {
+            value: { hist: st.value.hist, best: st.value.best }, count: st.count,
+            classApplied: st.classApplied || 'all', classRequested: st.classRequested || null,
+          };
         })(),
         trophies: (() => {
           // Records price REFINED TONNAGE at today's rates — what actually came out of the rock.
@@ -1347,17 +1403,62 @@ const server = http.createServer((req, res) => {
         })(),
         // Each material carries its current Cr/t so the picker can answer "what would this even
         // pay?" — mission rate while one is live, else the commander's own market average.
-        materials: getMaterialCatalog().map((m) => ({
-          ...m,
-          crPerTonne: commodityValueNow(m.key, existing) || null,
-          mission: !!missionRateFor(m.key),
-        })),
+        materials: (() => {
+          const cat = getMaterialCatalog();
+          // Keep the live cache warm for everything the picker prices (hourly TTL inside).
+          try { refreshLivePrices(cat.map((m) => m.key), existing.commanderPosition && existing.commanderPosition.systemName); } catch { /* best-effort */ }
+          return cat.map((m) => {
+            const live = getLivePrice(m.key);
+            const mission = !!missionRateFor(m.key);
+            return {
+              ...m,
+              crPerTonne: commodityValueNow(m.key, existing) || null,
+              mission,
+              basis: mission ? 'mission' : (live ? 'live' : 'market'),
+              liveStation: !mission && live ? `${live.station} (${live.system})` : null,
+            };
+          });
+        })(),
         index: ringIndexStats(),
       }));
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: e.message || String(e) }));
     }
+    return;
+  }
+
+  // Proximity radar snapshot — every layer, aged and radius-filtered server-side.
+  if (pathname === '/api/radar/state' && req.method === 'GET') {
+    try {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(radarSnapshot()));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message || String(e) }));
+    }
+    return;
+  }
+
+  // Hotspot ground truth — the journal records no in-ring position, so the commander supplies it.
+  // {live:bool} toggles stamping for rocks logged from now on; {ring, day?, hotspot, material?}
+  // marks a ring/session bucket retroactively via the annotations sidecar.
+  if (pathname === '/api/mining/hotspot' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const input = body ? JSON.parse(body) : {};
+        let live = null;
+        if (typeof input.live === 'boolean') live = setInHotspot(input.live);
+        if (input.ring) markHotspot(String(input.ring), input.day ? String(input.day) : null, input.hotspot !== false, input.material ? String(input.material) : null);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ inHotspot: live, marks: getAnnotations() }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message || String(e) }));
+      }
+    });
     return;
   }
 
@@ -2024,6 +2125,18 @@ server.listen(PORT, '0.0.0.0', () => {
   } catch (e) {
     console.error('[Mining] init failed:', e && e.message);
   }
+
+  // Proximity radar — EDDN firehose listener (hand-rolled ZMTP; SEA-safe, zero deps).
+  try {
+    const st0 = readStateFile();
+    const p0 = st0.commanderPosition;
+    if (p0 && p0.coordinates) {
+      recenterRadar(p0.systemName, p0.coordinates);
+      getEdsmTraffic(p0.systemName).then((tr) => setCenterTraffic(p0.systemName, tr)).catch(() => {});
+      void refreshLookback(st0, p0.systemName, [p0.coordinates.x, p0.coordinates.y, p0.coordinates.z]);
+    }
+    startEddnListener({ broadcastEvent });
+  } catch (e) { console.error('[Radar] start failed:', e && e.message); }
 
   try {
     startServerWatcher({

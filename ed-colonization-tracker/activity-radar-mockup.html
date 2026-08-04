@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proximity Radar — COL 173 Prospector</title>
+<style>
+  /* ---- Design tokens ------------------------------------------------
+     Palette: deep-void charcoal, phosphor amber (the scope), signal
+     colours reserved for meaning (build = ember, prospect = viridian,
+     conflict = warning red, power = cyan). Type: Orbitron-ish geometric
+     via system fallback for display, monospace for the data readouts —
+     an instrument, not a website. */
+  :root{
+    --void:#0a0d0f;
+    --void-2:#0f1416;
+    --panel:#121a1d;
+    --panel-line:#1e2a2f;
+    --phosphor:#ffb347;      /* amber scope glow */
+    --phosphor-dim:#5a4322;
+    --ink:#e8e2d4;
+    --ink-dim:#7d8a8f;
+    --ink-faint:#4a565b;
+    --build:#ff6b3d;         /* colonization / construction — the headline */
+    --prospect:#37e0a0;      /* high-value atmo find (your criteria) */
+    --conflict:#ff4d5e;      /* system in conflict */
+    --power:#4fc8ff;         /* power / faction control */
+    --commander:#cfe8ef;     /* commander presence */
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:
+      radial-gradient(120% 80% at 50% -10%, #10181b 0%, var(--void) 60%);
+    color:var(--ink);
+    font-family:"SF Mono","JetBrains Mono",ui-monospace,Menlo,monospace;
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+  }
+  .frame{
+    height:100vh; display:grid;
+    grid-template-columns: 1fr 380px;
+    grid-template-rows: 52px 1fr;
+    gap:1px; background:var(--panel-line);
+  }
+  /* ---- Top status bar ---- */
+  .topbar{
+    grid-column:1 / -1; background:var(--void-2);
+    display:flex; align-items:center; gap:22px; padding:0 20px;
+    border-bottom:1px solid var(--panel-line);
+  }
+  .brand{
+    font-weight:700; letter-spacing:.28em; font-size:12px;
+    color:var(--phosphor); text-transform:uppercase;
+    display:flex; align-items:center; gap:10px;
+  }
+  .brand .dot{width:7px;height:7px;border-radius:50%;background:var(--phosphor);
+    box-shadow:0 0 10px var(--phosphor); animation:pulse 2.4s infinite;}
+  .loc{font-size:12px;color:var(--ink-dim);letter-spacing:.05em}
+  .loc b{color:var(--ink);font-weight:600}
+  .topbar .spacer{flex:1}
+  .range-tag{
+    font-size:11px; letter-spacing:.18em; color:var(--phosphor);
+    border:1px solid var(--phosphor-dim); border-radius:2px;
+    padding:5px 10px; text-transform:uppercase;
+  }
+  .live-tag{font-size:11px;letter-spacing:.16em;color:var(--prospect);display:flex;gap:7px;align-items:center}
+  .live-tag .dot{width:6px;height:6px;border-radius:50%;background:var(--prospect);box-shadow:0 0 8px var(--prospect);animation:pulse 1.3s infinite}
+
+  /* ---- Scope column ---- */
+  .scope-wrap{
+    background:
+      radial-gradient(80% 80% at 50% 45%, #0d1618 0%, var(--void) 78%);
+    position:relative; display:flex; align-items:center; justify-content:center;
+    overflow:hidden;
+  }
+  svg.scope{width:min(88vh,100%);height:min(88vh,100%);display:block}
+  .ring{fill:none;stroke:var(--phosphor);stroke-opacity:.13}
+  .ring.axis{stroke-opacity:.07}
+  .ring-label{fill:var(--phosphor);opacity:.4;font-size:9px;letter-spacing:.1em}
+  .sweep{transform-origin:500px 500px; animation:spin 7s linear infinite}
+  .center-mark{fill:var(--phosphor)}
+  .center-glow{fill:var(--phosphor);opacity:.14;filter:blur(6px)}
+
+  .blip{cursor:pointer}
+  .blip .core{transition:r .2s}
+  .blip:hover .core{r:9}
+  .blip-commander .core{fill:var(--commander);opacity:.55}
+  .blip-build .core{fill:var(--build)}
+  .blip-build .halo{fill:none;stroke:var(--build);stroke-opacity:.5}
+  .blip-prospect .core{fill:var(--prospect)}
+  .blip-prospect .halo{fill:none;stroke:var(--prospect);stroke-opacity:.55}
+  .blip-conflict .core{fill:var(--conflict)}
+  .blip-power .core{fill:var(--power);opacity:.8}
+
+  /* vertical (Y-axis) leader lines: blip floats above/below its plane-shadow */
+  .leader{stroke-width:1;stroke-opacity:.32}
+  .leader-commander{stroke:var(--commander)}
+  .leader-build{stroke:var(--build)}
+  .leader-prospect{stroke:var(--prospect)}
+  .leader-conflict{stroke:var(--conflict)}
+  .leader-power{stroke:var(--power)}
+  .shadow{fill-opacity:.28}
+  .shadow-commander{fill:var(--commander)}
+  .shadow-build{fill:var(--build)}
+  .shadow-prospect{fill:var(--prospect)}
+  .shadow-conflict{fill:var(--conflict)}
+  .shadow-power{fill:var(--power)}
+
+  /* pulsing "hot / live" markers */
+  @keyframes ping{0%{r:5;opacity:.9}70%{r:26;opacity:0}100%{opacity:0}}
+  .ping{animation:ping 2.6s ease-out infinite}
+  .ping.build{stroke:var(--build)}
+  .ping.prospect{stroke:var(--prospect)}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  .legend{
+    position:absolute; left:18px; bottom:16px;
+    display:flex; flex-direction:column; gap:7px;
+    font-size:10px; letter-spacing:.09em; color:var(--ink-dim);
+    background:rgba(10,13,15,.55); padding:12px 14px; border:1px solid var(--panel-line);
+    border-radius:3px; backdrop-filter:blur(3px);
+  }
+  .legend .row{display:flex;align-items:center;gap:9px}
+  .legend .sw{width:9px;height:9px;border-radius:50%}
+  .filters{position:absolute;right:18px;bottom:16px;display:flex;flex-direction:column;gap:6px}
+  .filters button{
+    font-family:inherit;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--ink-dim);background:rgba(10,13,15,.55);border:1px solid var(--panel-line);
+    border-radius:3px;padding:7px 11px;cursor:pointer;text-align:left;transition:.15s;
+  }
+  .filters button.on{color:var(--void);background:var(--phosphor);border-color:var(--phosphor)}
+  .filters button:hover{border-color:var(--phosphor)}
+
+  /* ---- Readout column ---- */
+  .readout{background:var(--void-2);overflow-y:auto;display:flex;flex-direction:column}
+  .readout::-webkit-scrollbar{width:8px}
+  .readout::-webkit-scrollbar-thumb{background:var(--panel-line);border-radius:4px}
+
+  .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--panel-line);border-bottom:1px solid var(--panel-line)}
+  .stat{background:var(--panel);padding:16px 16px 14px}
+  .stat .k{font-size:10px;letter-spacing:.16em;color:var(--ink-faint);text-transform:uppercase}
+  .stat .v{font-size:30px;font-weight:700;color:var(--ink);line-height:1.05;margin-top:6px;font-variant-numeric:tabular-nums}
+  .stat .v small{font-size:12px;color:var(--ink-dim);font-weight:400;letter-spacing:.04em}
+  .stat.hot .v{color:var(--prospect)}
+
+  .section{border-bottom:1px solid var(--panel-line)}
+  .section h3{
+    font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--phosphor);
+    padding:14px 16px 8px;display:flex;align-items:center;gap:8px;
+  }
+  .section h3 .tick{flex:1;height:1px;background:var(--panel-line)}
+  .feed-item{padding:9px 16px;display:flex;gap:11px;align-items:flex-start;border-top:1px solid rgba(30,42,47,.5);position:relative}
+  .feed-item:first-of-type{border-top:none}
+  .feed-item .pip{width:8px;height:8px;border-radius:50%;margin-top:4px;flex:none}
+  .pip-build{background:var(--build);box-shadow:0 0 7px var(--build)}
+  .pip-prospect{background:var(--prospect);box-shadow:0 0 7px var(--prospect)}
+  .pip-conflict{background:var(--conflict);box-shadow:0 0 7px var(--conflict)}
+  .pip-power{background:var(--power)}
+  .feed-item .body{flex:1;min-width:0}
+  .feed-item .sys{font-size:13px;color:var(--ink);font-weight:600;letter-spacing:.02em}
+  .feed-item .meta{font-size:10.5px;color:var(--ink-dim);margin-top:2px;letter-spacing:.03em}
+  .feed-item .dist{font-size:11px;color:var(--phosphor);opacity:.75;flex:none;font-variant-numeric:tabular-nums}
+  .tag-new{font-size:8.5px;letter-spacing:.14em;color:var(--void);background:var(--prospect);padding:2px 5px;border-radius:2px;margin-left:6px;vertical-align:1px;font-weight:700}
+  .tag-live{font-size:8.5px;letter-spacing:.14em;color:var(--void);background:var(--phosphor);padding:2px 5px;border-radius:2px;margin-left:6px;vertical-align:1px;font-weight:700}
+
+  .copilot{margin-top:auto;background:var(--panel);border-top:1px solid var(--panel-line);padding:14px 16px}
+  .copilot .who{font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--power);margin-bottom:5px}
+  .copilot .line{font-size:12.5px;color:var(--ink);line-height:1.45;font-style:italic}
+
+  .disclaimer{font-size:9px;color:var(--ink-faint);letter-spacing:.05em;padding:10px 16px;line-height:1.5}
+
+  @media (max-width:820px){
+    .frame{grid-template-columns:1fr;grid-template-rows:52px 52vh 1fr}
+    svg.scope{width:min(52vh,100%);height:min(52vh,100%)}
+  }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <!-- STATUS BAR -->
+  <div class="topbar">
+    <div class="brand"><span class="dot"></span>Proximity Radar</div>
+    <div class="loc">POS <b>Eol Prou RS-T d3-287</b> · Colonia region</div>
+    <div class="spacer"></div>
+    <div class="live-tag"><span class="dot"></span>LIVE · EDDN</div>
+    <div class="range-tag">Range 200 ly</div>
+  </div>
+
+  <!-- SCOPE -->
+  <div class="scope-wrap">
+    <svg class="scope" viewBox="0 0 1000 1000" id="scope">
+      <!-- range rings 50 / 100 / 150 / 200 -->
+      <circle class="ring" cx="500" cy="500" r="112"/>
+      <circle class="ring" cx="500" cy="500" r="224"/>
+      <circle class="ring" cx="500" cy="500" r="336"/>
+      <circle class="ring" cx="500" cy="500" r="448"/>
+      <line class="ring axis" x1="500" y1="52" x2="500" y2="948"/>
+      <line class="ring axis" x1="52" y1="500" x2="948" y2="500"/>
+      <!-- ring labels -->
+      <text class="ring-label" x="508" y="270">50 ly</text>
+      <text class="ring-label" x="508" y="158">100 ly</text>
+      <text class="ring-label" x="508" y="46" dy="9">200 ly</text>
+
+      <!-- sweep -->
+      <g class="sweep">
+        <defs>
+          <linearGradient id="sweepGrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#ffb347" stop-opacity="0"/>
+            <stop offset="100%" stop-color="#ffb347" stop-opacity="0.16"/>
+          </linearGradient>
+        </defs>
+        <path d="M500 500 L500 52 A448 448 0 0 1 830 220 Z" fill="url(#sweepGrad)"/>
+      </g>
+
+      <!-- center = you -->
+      <circle class="center-glow" cx="500" cy="500" r="20"/>
+      <circle class="center-mark" cx="500" cy="500" r="4.5"/>
+      <path class="center-mark" d="M500 486 l5 9 -10 0 z"/>
+
+      <g id="blips"></g>
+    </svg>
+
+    <div class="legend" id="legend">
+      <div class="row"><span class="sw" style="background:var(--build);box-shadow:0 0 7px var(--build)"></span>Colonization / build</div>
+      <div class="row"><span class="sw" style="background:var(--prospect);box-shadow:0 0 7px var(--prospect)"></span>Site match (your criteria)</div>
+      <div class="row"><span class="sw" style="background:var(--conflict);box-shadow:0 0 7px var(--conflict)"></span>System in conflict</div>
+      <div class="row"><span class="sw" style="background:var(--power)"></span>Power / faction control</div>
+      <div class="row"><span class="sw" style="background:var(--commander);opacity:.6"></span>Commander activity</div>
+      <div class="row" style="margin-top:5px;border-top:1px solid var(--panel-line);padding-top:7px"><span style="font-size:13px;line-height:1">✦</span>&nbsp;blip · <span style="opacity:.5">○</span>&nbsp;plane shadow — stem = height above/below you</div>
+    </div>
+
+    <div class="filters" id="filters">
+      <button class="on" data-f="build">Build</button>
+      <button class="on" data-f="prospect">Sites</button>
+      <button class="on" data-f="conflict">Conflict</button>
+      <button class="on" data-f="power">Power</button>
+      <button class="on" data-f="commander">Traffic</button>
+    </div>
+  </div>
+
+  <!-- READOUT -->
+  <div class="readout">
+    <div class="stat-grid">
+      <div class="stat">
+        <div class="k">Commanders nearby</div>
+        <div class="v">~34 <small>live</small></div>
+      </div>
+      <div class="stat">
+        <div class="k">Seen · last 7d</div>
+        <div class="v">~210</div>
+      </div>
+      <div class="stat hot">
+        <div class="k">Site matches · live</div>
+        <div class="v">2</div>
+      </div>
+      <div class="stat">
+        <div class="k">Builds in range</div>
+        <div class="v">5</div>
+      </div>
+    </div>
+
+    <!-- SITE MATCHES (the headline for a colonizer) -->
+    <div class="section">
+      <h3>Site matches — your criteria <span class="tick"></span></h3>
+      <div class="feed-item">
+        <span class="pip pip-prospect"></span>
+        <div class="body">
+          <div class="sys">Pyroifooe JP-I c12-4<span class="tag-new">NEW TO YOU</span><span class="tag-live">LIVE</span></div>
+          <div class="meta">Ammonia atmosphere · charted 2 min ago · unclaimed · +12 ly ▲</div>
+        </div>
+        <div class="dist">88 ly</div>
+      </div>
+      <div class="feed-item">
+        <span class="pip pip-prospect"></span>
+        <div class="body">
+          <div class="sys">Blua Hypue JR-Z b56-6<span class="tag-new">NEW TO YOU</span></div>
+          <div class="meta">Neon-rich body · charted 40 min ago · −64 ly ▼</div>
+        </div>
+        <div class="dist">142 ly</div>
+      </div>
+      <div class="feed-item">
+        <span class="pip pip-prospect"></span>
+        <div class="body">
+          <div class="sys">Plooe Eun XM-W d1-2</div>
+          <div class="meta">Argon atmosphere · seen 3 days ago · already in your data</div>
+        </div>
+        <div class="dist">61 ly</div>
+      </div>
+    </div>
+
+    <!-- COLONIZATION -->
+    <div class="section">
+      <h3>Colonization activity <span class="tick"></span></h3>
+      <div class="feed-item">
+        <span class="pip pip-build"></span>
+        <div class="body">
+          <div class="sys">Carcosa<span class="tag-live">LIVE</span></div>
+          <div class="meta">New construction — orbital · 20 min ago · −4 ly ▼</div>
+        </div>
+        <div class="dist">36 ly</div>
+      </div>
+      <div class="feed-item">
+        <span class="pip pip-build"></span>
+        <div class="body">
+          <div class="sys">Eol Prou II-I c10-363</div>
+          <div class="meta">Colony claim registered · 5 hr ago</div>
+        </div>
+        <div class="dist">54 ly</div>
+      </div>
+      <div class="feed-item">
+        <span class="pip pip-build"></span>
+        <div class="body">
+          <div class="sys">Kojeara</div>
+          <div class="meta">Construction progress · 2 days ago</div>
+        </div>
+        <div class="dist">118 ly</div>
+      </div>
+    </div>
+
+    <!-- CONFLICTS -->
+    <div class="section">
+      <h3>Conflicts <span class="tick"></span></h3>
+      <div class="feed-item">
+        <span class="pip pip-conflict"></span>
+        <div class="body">
+          <div class="sys">Coeus</div>
+          <div class="meta">Civil war · Colonia Council vs. Jaques Aegis</div>
+        </div>
+        <div class="dist">39 ly</div>
+      </div>
+      <div class="feed-item">
+        <span class="pip pip-conflict"></span>
+        <div class="body">
+          <div class="sys">Ratraii</div>
+          <div class="meta">Election · 2 factions</div>
+        </div>
+        <div class="dist">97 ly</div>
+      </div>
+    </div>
+
+    <!-- POWER / POPULATION -->
+    <div class="section">
+      <h3>Power &amp; population <span class="tick"></span></h3>
+      <div class="feed-item">
+        <span class="pip pip-power"></span>
+        <div class="body">
+          <div class="sys">Colonia</div>
+          <div class="meta">Independent · Colonia Council · pop 3.2 B</div>
+        </div>
+        <div class="dist">36 ly</div>
+      </div>
+      <div class="feed-item">
+        <span class="pip pip-power"></span>
+        <div class="body">
+          <div class="sys">Einheriar</div>
+          <div class="meta">Independent · Einheriar Council · pop 128 M</div>
+        </div>
+        <div class="dist">41 ly</div>
+      </div>
+      <div class="feed-item">
+        <span class="pip pip-power"></span>
+        <div class="body">
+          <div class="sys">Kojeara</div>
+          <div class="meta">Alliance · Colonia Agricultural Co · pop 890 M</div>
+        </div>
+        <div class="dist">118 ly</div>
+      </div>
+    </div>
+
+    <!-- CO-PILOT -->
+    <div class="copilot">
+      <div class="who">TARS</div>
+      <div class="line">"A body 88 light-years out matches your site criteria — ammonia atmosphere, and no one's logged it before us. That's a lead worth taking before someone else does. Flagging it."</div>
+    </div>
+
+    <div class="disclaimer">
+      Activity from EDDN — reflects commanders running data tools; counts are approximate and anonymized. "Quiet" means nothing heard, not necessarily empty space.
+    </div>
+  </div>
+</div>
+
+<script>
+  // ---- sample blips (bearing in deg, horizontal distance in ly, y = height ± plane) ----
+  // distance→radius: 448px = 200ly  →  px = ly * 2.24 ; height scaled so ±200ly = ±90px
+  const R = ly => ly * 2.24;
+  const H = ly => ly * 0.45;            // vertical exaggeration for on-screen stem
+  const pos = (deg, ly) => {
+    const a = (deg - 90) * Math.PI/180;
+    return [500 + Math.cos(a)*R(ly), 500 + Math.sin(a)*R(ly)];
+  };
+  const blips = [
+    // prospecting site matches   (y = ly above(+)/below(-) plane)
+    {type:'prospect', deg:22, ly:88, y:12, hot:true},
+    {type:'prospect', deg:305, ly:142, y:-64, hot:true},
+    {type:'prospect', deg:200, ly:61, y:8},
+    // colonization
+    {type:'build', deg:70, ly:36, y:-4, hot:true},
+    {type:'build', deg:130, ly:54, y:31},
+    {type:'build', deg:255, ly:118, y:-88},
+    {type:'build', deg:340, ly:150, y:44},
+    {type:'build', deg:95, ly:190, y:120},
+    // conflicts
+    {type:'conflict', deg:160, ly:39, y:6},
+    {type:'conflict', deg:285, ly:97, y:-40},
+    // power nodes
+    {type:'power', deg:72, ly:36, y:-4},
+    {type:'power', deg:45, ly:41, y:9},
+    {type:'power', deg:250, ly:118, y:-88},
+    {type:'power', deg:15, ly:170, y:52},
+    // commander traffic (many, dim)
+    ...Array.from({length:34}, () => ({
+      type:'commander',
+      deg: Math.random()*360,
+      ly: 15 + Math.random()*185,
+      y: (Math.random()*2-1)*150
+    }))
+  ];
+
+  const NS='http://www.w3.org/2000/svg';
+  const g=document.getElementById('blips');
+  const groups={};
+  function draw(){
+    g.innerHTML='';
+    blips.forEach(b=>{
+      if(groups[b.type]===false) return;
+      const [x,shadowY]=pos(b.deg,b.ly);       // shadow sits on the plane
+      const stem=H(b.y);                         // + = above (blip drawn higher / smaller screen-y)
+      const blipY=shadowY - stem;                // subtract: up-the-plane = up-the-screen
+      const el=document.createElementNS(NS,'g');
+      el.setAttribute('class',`blip blip-${b.type}`);
+
+      // plane shadow (hollow-ish small dot) + leader stem — skip for tiny commander dots when near-plane
+      const showVert = b.type!=='commander' || Math.abs(b.y)>30;
+      if(showVert){
+        const leader=document.createElementNS(NS,'line');
+        leader.setAttribute('x1',x);leader.setAttribute('y1',shadowY);
+        leader.setAttribute('x2',x);leader.setAttribute('y2',blipY);
+        leader.setAttribute('class',`leader leader-${b.type}`);
+        el.appendChild(leader);
+        const sh=document.createElementNS(NS,'circle');
+        sh.setAttribute('cx',x);sh.setAttribute('cy',shadowY);
+        sh.setAttribute('r', b.type==='commander'?1.6:2.4);
+        sh.setAttribute('class',`shadow shadow-${b.type}`);
+        el.appendChild(sh);
+      }
+
+      // hot markers get an animated ping ring at the blip
+      if(b.hot){
+        const ping=document.createElementNS(NS,'circle');
+        ping.setAttribute('cx',x);ping.setAttribute('cy',blipY);
+        ping.setAttribute('fill','none');ping.setAttribute('stroke-width','1.5');
+        ping.setAttribute('class',`ping ${b.type}`);
+        el.appendChild(ping);
+      }
+      if(b.type==='build'||b.type==='prospect'){
+        const halo=document.createElementNS(NS,'circle');
+        halo.setAttribute('cx',x);halo.setAttribute('cy',blipY);halo.setAttribute('r',9);
+        halo.setAttribute('stroke-width','1.2');halo.setAttribute('class','halo');
+        el.appendChild(halo);
+      }
+      const core=document.createElementNS(NS,'circle');
+      core.setAttribute('cx',x);core.setAttribute('cy',blipY);
+      core.setAttribute('r', b.type==='commander'?2.4: b.type==='power'?3: 5);
+      core.setAttribute('class','core');
+      el.appendChild(core);
+      g.appendChild(el);
+    });
+  }
+  draw();
+
+  // filter toggles
+  document.querySelectorAll('#filters button').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const f=btn.dataset.f;
+      const on=btn.classList.toggle('on');
+      groups[f]= on ? undefined : false;
+      draw();
+    });
+  });
+</script>
+</body>
+</html>

@@ -22,13 +22,27 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { getRingClassOf } from './miningIndex.js';
 
 const FLUSH_MS = 4000;
 
 let LOG_PATH = null;
+let ANNOT_PATH = null;
+// Hotspot annotations — GROUND TRUTH the journal cannot provide (no in-ring position exists), so
+// the commander supplies it: "this ring/session was mined in a hotspot". Kept in a sidecar so the
+// append-only log is never rewritten. Matchers: {ring, day?, hotspot, material?} — day null means
+// the whole ring's history. Applied at read time in readRocks().
+let annotations = { marks: [] };
 let pending = [];       // records queued for append
 let flushTimer = null;
 let current = null;     // rock being mined right now (not yet written)
+// The DEFERRED-SWITCH slot. The commander prospects the next rock while collectors still work the
+// current one, so an instant handoff at prospect time credited rock A's trailing refines to rock B
+// (the "earned isn't lined up with the rock" report, 2026-07-23). The literal fix they proposed —
+// wait until Remaining ticks off 100% — is unobservable (Remaining only writes on re-prospect), so
+// the next rock WAITS here while refines keep crediting the current one; mining.js promotes it when
+// the refine stream goes quiet (pipeline drained) or a hard cap expires.
+let nextRock = null;
 let readCache = null;   // { rows, mtimeMs }
 
 /** Point the log at the app data dir. Call once at boot. */
@@ -40,7 +54,57 @@ export function initMiningLog(appDir) {
     console.error('[MiningLog] init failed:', e && e.message);
     LOG_PATH = null;
   }
+  ANNOT_PATH = path.join(appDir, 'mining-annotations.json');
+  try {
+    if (fs.existsSync(ANNOT_PATH)) {
+      const j = JSON.parse(fs.readFileSync(ANNOT_PATH, 'utf8'));
+      if (j && Array.isArray(j.marks)) annotations = j;
+    } else {
+      // Seeded with the commander's stated ground truth (2026-07-22): the Col 285 DG-S sessions
+      // were parked in a Bromellite hotspot; the HIP 52629 A 9 B session explicitly was NOT.
+      annotations = { marks: [
+        { ring: 'Col 285 Sector DG-S b19-5 1 A Ring', day: null, hotspot: true, material: 'bromellite' },
+        { ring: 'HIP 52629 A 9 B Ring', day: null, hotspot: false },
+      ] };
+      saveAnnotations();
+    }
+  } catch { /* fresh */ }
   return LOG_PATH;
+}
+
+function saveAnnotations() {
+  if (!ANNOT_PATH) return;
+  try { fs.writeFileSync(ANNOT_PATH, JSON.stringify(annotations, null, 1), 'utf8'); } catch { /* non-fatal */ }
+}
+
+/** Mark (or unmark) a ring+day bucket as hotspot-mined. day null = the whole ring. */
+export function markHotspot(ring, day, hotspot, material) {
+  if (!ring) return annotations.marks;
+  annotations.marks = annotations.marks.filter((m) => !(m.ring === ring && (m.day || null) === (day || null)));
+  annotations.marks.push({ ring, day: day || null, hotspot: !!hotspot, material: material || null });
+  saveAnnotations();
+  readCache = null; // annotations join at read time — cached rows are stale now
+  return annotations.marks;
+}
+
+export function getAnnotations() { return annotations.marks.slice(); }
+
+/** Sidecar marks override; a rock's own live-toggle flag wins only where no mark matches. */
+function applyAnnotations(rows) {
+  for (const r of rows) {
+    // Older rows predate ring-class capture; the index knows every seen ring's class.
+    if (!r.ringClass && r.ring) r.ringClass = getRingClassOf(r.ring) || r.ringClass;
+  }
+  if (!annotations.marks.length) return rows;
+  for (const r of rows) {
+    for (const m of annotations.marks) {
+      if (r.ring !== m.ring) continue;
+      if (m.day && !String(r.t || '').startsWith(m.day)) continue;
+      r.hotspot = m.hotspot;
+      if (m.material) r.hotspotMaterial = m.material;
+    }
+  }
+  return rows;
 }
 
 export function miningLogPath() { return LOG_PATH; }
@@ -84,6 +148,35 @@ export function creditRefined(commodityKey, tonnes = 1, credits = 0) {
 }
 
 export function getCurrentRock() { return current; }
+
+export function hasPendingRock() { return !!nextRock; }
+export function getPendingRock() { return nextRock; }
+
+/** Park the next rock without switching accounting. Same-id re-prospect updates in place. */
+export function stageNextRock(rec) {
+  if (nextRock && nextRock.id === rec.id) {
+    nextRock.prospects += 1;
+    nextRock.lastT = rec.t;
+    if (rec.remaining != null) nextRock.remaining = rec.remaining;
+    return nextRock;
+  }
+  nextRock = Object.assign({ prospects: 1, got: {} }, rec);
+  return nextRock;
+}
+
+/** The drained handoff: the (already finalized) current slot is taken over by the pending rock. */
+export function promotePendingRock() {
+  if (!nextRock) return null;
+  current = nextRock;
+  nextRock = null;
+  return current;
+}
+
+/** Close current AND anything pending (ring exit / jump / session idle) — nothing left open. */
+export function finalizeAllRocks() {
+  finalizeRock();
+  if (nextRock) { current = nextRock; nextRock = null; finalizeRock(); }
+}
 
 /** Close the open rock and queue it for append. Safe to call when nothing is open. */
 export function finalizeRock() {
@@ -239,8 +332,8 @@ export function readRocks() {
       .map((l) => { try { return JSON.parse(l); } catch { return null; } })
       .filter(Boolean);
   } catch { return []; }
-  readCache = { rows, mtimeMs };
-  return rows;
+  readCache = { rows: applyAnnotations(rows), mtimeMs };
+  return readCache.rows;
 }
 
 /**
@@ -288,6 +381,7 @@ export function getRateHistory() {
     b.rocks += 1;
     b.value += r.estValue || 0;
     b.credits += r.gotValue || 0;
+    if (r.hotspot) b.hotspotRocks = (b.hotspotRocks || 0) + 1;
     if (r.t < b.first) b.first = r.t;
     if (r.t > b.last) b.last = r.t;
   }
@@ -296,6 +390,7 @@ export function getRateHistory() {
     return Object.assign(b, {
       hours: hrs,
       tonnesPerHour: hrs > 0.02 ? b.tonnes / hrs : null,
+      hotspotPct: b.rocks ? Math.round(100 * (b.hotspotRocks || 0) / b.rocks) : 0,
     });
   }).sort((a, b) => (a.day < b.day ? 1 : -1));
 }
@@ -397,16 +492,38 @@ const CATCH_TTL = 60_000;
 let catchCache = null;
 const HIST_BUCKETS = 24;
 
-export function getCatchStats(valueFn) {
-  if (catchCache && Date.now() - catchCache.at < CATCH_TTL) return catchCache.data;
+const normRingClass = (c) => {
+  const x = String(c || '').replace(/^eRingClass_/, '');
+  return x === 'Metalic' ? 'Metallic' : x;
+};
+
+/**
+ * Population stats, optionally restricted to one ring class ("Icy"/"Metallic"/...). The class
+ * filter exists because icy asteroids measure ~2x the content of metallic ones in this log — a
+ * pooled backdrop made every icy prospect look far-right regardless of merit. Falls back to the
+ * pooled population (flagged in the result) when the class has under 12 rocks.
+ */
+export function getCatchStats(valueFn, ringClass) {
+  const clsKey = ringClass ? normRingClass(ringClass) : 'all';
+  if (catchCache && Date.now() - catchCache.at < CATCH_TTL && catchCache.byClass[clsKey]) {
+    return catchCache.byClass[clsKey];
+  }
+  if (!catchCache || Date.now() - catchCache.at >= CATCH_TTL) catchCache = { at: Date.now(), byClass: {} };
 
   const values = [];
   const tonnes = [];
   for (const r of readRocks()) {
     if (!r.gotTotal) continue;
+    if (clsKey !== 'all' && normRingClass(r.ringClass) !== clsKey) continue;
     const v = valueFn(r);
     if (v > 0) values.push(v);
     tonnes.push(r.gotTotal);
+  }
+  if (clsKey !== 'all' && values.length < 12) {
+    const pooled = getCatchStats(valueFn); // fall back, but say so
+    const out = Object.assign({}, pooled, { classApplied: 'all', classRequested: clsKey });
+    catchCache.byClass[clsKey] = out;
+    return out;
   }
   values.sort((a, b) => a - b);
   tonnes.sort((a, b) => a - b);
@@ -435,10 +552,11 @@ export function getCatchStats(valueFn) {
 
   const data = {
     count: values.length,
+    classApplied: clsKey,
     value: { hist: hist(values), best: values[values.length - 1] || 0, pct: pctOf(values) },
     tonnes: { hist: hist(tonnes), best: tonnes[tonnes.length - 1] || 0, pct: pctOf(tonnes) },
   };
-  catchCache = { data, at: Date.now() };
+  catchCache.byClass[clsKey] = data;
   return data;
 }
 

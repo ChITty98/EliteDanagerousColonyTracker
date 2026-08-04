@@ -31,6 +31,8 @@ import {
 } from './scorer.js';
 import { mapStarType } from './extractor.js';
 import { pickJournalFact } from './journalFacts.js';
+import { peekEdsmTraffic } from '../radar/traffic.js';
+import { visitorsIn } from '../radar/radarState.js';
 
 // Module state: last target dedupe (so repeated FSDTarget for same system
 // doesn't re-broadcast every tick)
@@ -47,6 +49,9 @@ const Y_DISTANCE = 200;
 // never co-occur (distance shows on FSDJump; the fact only on a carrier dock,
 // minutes later) and it sits clear of the welcome stack (Y_DOCK = 240 upward).
 const Y_FACT = 200;
+// Arrival traffic report. Shares the welcome stack's row the same way Y_FACT shares
+// Y_DISTANCE: traffic shows on FSDJump, the welcome stack on Docked — never together.
+const Y_TRAFFIC = 240;
 
 const MAX_OVERLAY_ITEMS = 6;
 
@@ -271,6 +276,24 @@ export function handleFSDJumpOverlay(ev, existing, deps) {
       distances: parts,
       timestamp: new Date().toISOString(),
     });
+
+    // 3. Arrival traffic report — EDSM logged passages (cache warmed at StartJump) plus our
+    // own unique-uploader count. Nothing cached and nothing heard → no overlay (quiet, honest).
+    try {
+      const edsm = peekEdsmTraffic(ev.StarSystem);
+      const uniq = visitorsIn(ev.StarSystem);
+      const bits = [];
+      if (edsm) bits.push(`~${edsm.day} today · ${edsm.week} this wk (EDSM)`);
+      if (uniq > 0) bits.push(`${uniq} unique heard ≤24 h`);
+      if (bits.length) {
+        deps.sendOverlay({
+          id: 'edcolony_traffic',
+          text: `🚦 Traffic: ${bits.join(' | ')}`,
+          color: '#94a3b8',
+          x: X_LEFT, y: Y_TRAFFIC, ttl: 10,
+        });
+      }
+    } catch { /* traffic report is best-effort */ }
   }
 
   // 3. Active project — needs at any known station in this system
@@ -505,7 +528,7 @@ function emitFootfallOverlay(deps) {
  *
  * Key gotcha: journal surface gravity is m/s², scorer expects g. Divide by 9.81.
  */
-function journalBodiesToSpanshFormat(bodies, systemName) {
+export function journalBodiesToSpanshFormat(bodies, systemName) {
   void systemName; // kept for parity with browser signature
   return bodies.map((b) => ({
     bodyId: b.bodyId,

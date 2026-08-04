@@ -154,7 +154,10 @@ export interface AppSettings {
   fcModulesCapacity: number; // Tons of capacity consumed by installed services/modules (user-entered from Carrier Management)
   overlayEnabled: boolean;
   targetPopupEnabled?: boolean; // Show the global target-info pop-up (corner card) on any tab — default on
-  copilotPopupEnabled?: boolean; // Co-pilot portrait+line pop-up on any tab (for when the Cockpit page isn't visible) — default on
+  copilotPopupEnabled?: boolean;
+  radarThreshold?: number; // high-score radar layer threshold (composite rating) — default 70
+  radarRange?: number; // radar zoom range in ly (25/50/100/200) — default 200
+  radarView?: string; // radar projection: '2d' (top-down) or '3d' (oblique orbit) — default 2d // Co-pilot portrait+line pop-up on any tab (for when the Cockpit page isn't visible) — default on
 
   // AI co-pilot — companion cockpit comms. Requires the local `claude` CLI +
   // Max subscription on the PC running the exe; silent otherwise. Opt-in.
@@ -187,6 +190,7 @@ export interface ScoutedSystemData {
   bodyString: string;
   coordinates?: { x: number; y: number; z: number }; // galactic coordinates for distance calculations
   isColonised?: boolean; // true if system was colonised at time of scouting
+  region?: string; // official galactic region (Codex) from Spansh, e.g. 'Inner Orion Spur'
   isFavorite?: boolean; // user-flagged as interesting
   notes?: string; // user notes about the system
   fromJournal?: boolean; // true if scored from journal data (not in Spansh)

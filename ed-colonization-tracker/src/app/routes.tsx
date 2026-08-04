@@ -22,6 +22,8 @@ import { WarPeacePage } from '@/features/war-peace/WarPeacePage';
 import { MaterialsPage } from '@/features/materials/MaterialsPage';
 import { CopilotPage } from '@/features/copilot/CopilotPage';
 import { MiningPage } from '@/features/mining/MiningPage';
+import { RadarPage } from '@/features/radar/RadarPage';
+import { ScoutMapPage } from '@/features/scouting/ScoutMapPage';
 
 export const router = createBrowserRouter([
   {
@@ -41,11 +43,13 @@ export const router = createBrowserRouter([
       { path: 'domain', element: <ArchitectDomainPage /> },
       { path: 'map', element: <ColonyMapPage /> },
       { path: 'system-view', element: <SystemViewPage /> },
-      { path: 'companion', element: <CompanionPage /> },
-      { path: 'cockpit', element: <CopilotPage /> },
+      { path: 'second-screen', element: <CompanionPage /> },
+      { path: 'copilot', element: <CopilotPage /> },
       { path: 'war-peace', element: <WarPeacePage /> },
       { path: 'materials', element: <MaterialsPage /> },
       { path: 'mining', element: <MiningPage /> },
+      { path: 'radar', element: <RadarPage /> },
+      { path: 'scout-map', element: <ScoutMapPage /> },
       { path: 'journal-stats', element: <JournalStatsPage /> },
       { path: 'settings', element: <SettingsPage /> },
       { path: 'wiki', element: <WikiPage /> },

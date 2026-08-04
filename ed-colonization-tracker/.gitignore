@@ -49,6 +49,8 @@ colony-images/
 mining-log.jsonl
 mining-rings.json
 mining-trophies.json
+journal-stats.json
+mining-annotations.json
 colony-gallery.json
 backups/
 backups - Copy/

@@ -31,10 +31,12 @@ import { commodityKey, missionRateFor, missionTargetKeys, ingestMissionEvent } f
 import {
   beginRock, creditRefined, finalizeRock, fingerprint, getYieldTable, getCurrentRock, getRingValueStats,
   getRockRecords, invalidateRecords, getCatchStats, readRocks,
+  stageNextRock, hasPendingRock, promotePendingRock, finalizeAllRocks,
 } from './miningLog.js';
 import { ingestRingEvent, getRingInfo, getUnmappedRings, getMaterialCatalog } from './miningIndex.js';
 import { pushMiningBeat } from '../ai/copilotMining.js';
 import { recordStreakRock, getStreak, computeAggregates, evaluateBadges } from './miningTrophies.js';
+import { getLivePrice, refreshLivePrices } from './livePrices.js';
 
 const X_LEFT = 40;
 const Y_TARGET = 296;
@@ -75,6 +77,11 @@ const CARGO_COOLDOWN_MS = 60_000;
 const COLLECTOR_QUIET_MS = 90_000;
 const PRICE_CACHE_MS = 60_000;
 const MINING_WINDOW_MS = 120_000;
+// Deferred-switch timing: a 30s refine gap means the previous rock's pipeline is drained (median
+// inter-tonne gap 11s, p75 22s), so the pending rock takes over accounting there; the hard cap
+// forces the boundary when two rocks' streams genuinely overlap without a pause.
+const DRAIN_GAP_MS = 30_000;
+const PENDING_HARD_CAP_MS = 120_000;
 
 // Ephemeral session state.
 let lastMiningActivityAt = 0;
@@ -99,6 +106,13 @@ let recentRockValues = [];       // rolling window of prospected rock values, fo
 let lastColdAlertAt = 0;
 let lastRingNudgedFor = null;    // ring already nudged about missing hotspot data
 let unmappedNudgedSystems = new Set(); // colony systems already nudged about DSS gaps this run
+// Commander-declared "I'm parked in a hotspot" — journal has no in-ring position, so this is the
+// only source of truth. Stamped onto every rock logged while on; positional, so it clears on any
+// ring change or jump rather than silently mislabeling the next site.
+let inHotspot = false;
+let pendingStagedAt = 0;         // when the deferred-switch slot was filled
+
+export function setInHotspot(v) { inHotspot = !!v; return inHotspot; }
 
 const now = () => Date.now();
 const isRecent = (ts) => { const t = Date.parse(ts); return Number.isFinite(t) && now() - t < 120_000; };
@@ -153,10 +167,17 @@ function getPriceMap(state) {
   return map;
 }
 
-/** Mission rate wins over market whenever a mission for the commodity is live and unfulfilled. */
+/**
+ * Value ladder: mission rate → live galaxy best (non-FC, real demand, via Ardent) → the average of
+ * visited markets as the offline fallback. The live tier exists because the commander's selling
+ * rule is "highest non-FC payout, wherever it is" — visited-average Bromellite read 36k while the
+ * galaxy top-of-book sat at 116,750 (and LTD 144k vs 384,562), a 3x mispricing of every verdict.
+ */
 function valueOf(key, prices) {
   const mission = missionRateFor(key);
   if (mission) return { cr: mission.crPerTonne, source: 'mission', label: mission.label };
+  const live = getLivePrice(key);
+  if (live) return { cr: live.cr, source: 'live', station: live.station, system: live.system };
   const m = prices[key];
   return m ? { cr: m.p, source: 'market' } : null;
 }
@@ -218,16 +239,25 @@ export function processMiningEvents(parsed, state, deps) {
     if (ev.event === 'SupercruiseExit') {
       if (ev.BodyType === 'PlanetaryRing') {
         const info = getRingInfo(ev.Body);
+        if (!currentRing || currentRing.name !== ev.Body) inHotspot = false; // hotspot is positional
         currentRing = { name: ev.Body, ringClass: (info && info.ringClass) || '', reserve: (info && info.reserve) || '' };
         recentRockValues = [];   // new ring, new baseline — don't carry the last patch's window over
         ringEntryNudge(ev.Body, info, deps);
       } else {
-        finalizeRock();
+        finalizeAllRocks();
         currentRing = null;
+        inHotspot = false;
       }
     } else if (ev.event === 'FSDJump' || ev.event === 'Location') {
       currentSystem = ev.StarSystem || currentSystem;
-      if (ev.event === 'FSDJump') { finalizeRock(); currentRing = null; }
+      if (ev.event === 'FSDJump') { finalizeAllRocks(); currentRing = null; inHotspot = false; }
+      // Logging in INSIDE a ring writes no SupercruiseExit — but Location carries the body
+      // (verified: Body "HIP 52629 A 9 B Ring", BodyType "PlanetaryRing" at login). Without this,
+      // a whole session's rocks land ring-less and hotspot marks have nothing to key on.
+      if (ev.event === 'Location' && ev.BodyType === 'PlanetaryRing' && ev.Body) {
+        const info = getRingInfo(ev.Body);
+        currentRing = { name: ev.Body, ringClass: (info && info.ringClass) || '', reserve: (info && info.reserve) || '' };
+      }
       if (isRecent(ev.timestamp)) maybeNudgeUnmappedRings(state, deps);
     }
 
@@ -236,6 +266,14 @@ export function processMiningEvents(parsed, state, deps) {
     switch (ev.event) {
       case 'MiningRefined': {
         markActive();
+        // Deferred switch decides BEFORE the clock resets — measuring the quiet gap after
+        // lastRefineAt is overwritten always reads zero and the handoff never fires.
+        if (hasPendingRock()) {
+          const quiet = lastRefineAt ? now() - lastRefineAt : Infinity;
+          if (quiet >= DRAIN_GAP_MS || (pendingStagedAt && now() - pendingStagedAt >= PENDING_HARD_CAP_MS)) {
+            promoteWithFanfare(state, deps);
+          }
+        }
         lastRefineAt = now();
         refineTimes.push(now());
         if (refineTimes.length > 120) refineTimes = refineTimes.slice(-120);
@@ -376,6 +414,20 @@ function flavour(credits, n) {
   const tier = credits >= 150_000 ? 'huge' : credits >= 60_000 ? 'big' : credits >= 20_000 ? 'mid' : 'low';
   const line = TIER_LINES[tier][n % TIER_LINES[tier].length];
   return line ? ` — ${line}` : '';
+}
+
+/**
+ * The drained handoff. Rock A gets its catch card WITH its trailing tonnes included, then the
+ * pending rock takes over the accounting from zero.
+ */
+function promoteWithFanfare(state, deps) {
+  if (!hasPendingRock()) return;
+  closeRockWithFanfare(state, deps);   // finalizes A (streak, badges, catch card)
+  promotePendingRock();                // B becomes the earning rock
+  pendingStagedAt = 0;
+  rockCredits = 0;
+  refineTimes = [];
+  rockStartedAt = now();
 }
 
 /**
@@ -569,6 +621,10 @@ function refinedHelper(ev, state, deps) {
 
 /** Value verdict + target alert for a freshly prospected rock, and the log record for it. */
 function prospectHelper(ev, state, deps) {
+  try {
+    refreshLivePrices((Array.isArray(ev.Materials) ? ev.Materials : [])
+      .map((m) => commodityKey(m.Name_Localised || m.Name)).filter(Boolean), currentSystem);
+  } catch { /* pricing must never break the prospect path */ }
   const prices = getPriceMap(state);
   const table = getYieldTable();
   const ignored = ignoredSet(state);
@@ -603,9 +659,8 @@ function prospectHelper(ev, state, deps) {
   const counted = mats.filter((m) => !m.ignored && m.p >= WORTH_MIN_PROP);
   const total = counted.reduce((a, m) => a + m.value, 0);
 
-  // Log record. Fingerprint identity means a re-prospect updates this rock instead of forking it.
-  closeRockWithFanfare(state, deps);
-  beginRock({
+  // Log record. Fingerprint identity means a re-prospect updates the SAME rock (wherever it sits).
+  const rec = {
     id: fingerprint(raw),
     t: ev.timestamp,
     lastT: ev.timestamp,
@@ -613,15 +668,31 @@ function prospectHelper(ev, state, deps) {
     ring: currentRing ? currentRing.name : '',
     ringClass: currentRing ? currentRing.ringClass : '',
     reserve: currentRing ? currentRing.reserve : '',
+    hotspot: inHotspot || undefined,
     content: String(ev.Content_Localised || ev.Content || '').replace(/^.*Content_/, '').replace(/;$/, ''),
     remaining: ev.Remaining,
     motherlode,
     mats: mats.map((m) => ({ k: m.k, n: m.n, p: m.p, est: m.est, price: m.price })),
     estValue: total,
-  });
-  rockStartedAt = now();
-  refineTimes = [];
-  rockCredits = 0;
+  };
+  const cur = getCurrentRock();
+  if (cur && cur.id === rec.id) {
+    beginRock(rec); // re-prospect of the rock being mined — in-place update
+  } else if (cur && Object.keys(cur.got || {}).length > 0) {
+    // The commander prospects ahead while collectors finish the current rock — DEFER the switch so
+    // the trailing refines keep crediting the rock they came from. A third prospect before the
+    // drain forces the boundary now (best effort).
+    if (hasPendingRock()) promoteWithFanfare(state, deps);
+    stageNextRock(rec);
+    pendingStagedAt = now();
+  } else {
+    // Nothing earned on the current slot — instant switch, exactly the old behavior.
+    closeRockWithFanfare(state, deps);
+    beginRock(rec);
+    rockStartedAt = now();
+    refineTimes = [];
+    rockCredits = 0;
+  }
 
   // Target alert — fires on value-independent grounds, above the verdict so it can't be missed.
   // Still gated on WORTH_MIN_PROP: a 1.8% trace of a mission commodity is ~1t and alerting on it
@@ -701,12 +772,15 @@ export function checkMiningStall(journalDir, deps) {
   if (!miningRecently) {
     // Session ended — bank the open rock and reset the running totals so the next session's
     // popup doesn't read as a continuation of one that finished hours ago.
-    if (sessionTonnes > 0) { finalizeRock(); sessionCredits = 0; sessionTonnes = 0; lastMilestone = 0; rockCredits = 0; sessionStartedAt = 0; }
+    if (sessionTonnes > 0) { finalizeAllRocks(); sessionCredits = 0; sessionTonnes = 0; lastMilestone = 0; rockCredits = 0; sessionStartedAt = 0; }
     cargoWarnLevel = 0;
     return;
   }
 
   if (status && status.cargo != null) lastCargoTotal = status.cargo;
+  if (hasPendingRock() && lastRefineAt && now() - lastRefineAt >= DRAIN_GAP_MS) {
+    promoteWithFanfare(state, deps);
+  }
   const limpets = readLimpetCount(journalDir);
 
   // Only a rock that WAS delivering and then stopped is worth flagging. Requiring the open rock to
@@ -856,5 +930,6 @@ export function getMiningSnapshot() {
     rockCredits,
     sessionStartedAt: sessionStartedAt || null,
     streak: getStreak(),
+    inHotspot,
   };
 }

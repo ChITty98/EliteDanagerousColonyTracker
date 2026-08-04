@@ -337,6 +337,15 @@ export function getUnmappedRings(systemsLower) {
     String(a.system).localeCompare(String(b.system)) || String(a.name).localeCompare(String(b.name)));
 }
 
+/** Ring class for ANY seen ring — mapped or not (allRings carries classes from body Scans). */
+export function getRingClassOf(ringName) {
+  if (!ringName) return '';
+  const m = index.rings[ringName];
+  if (m && m.ringClass) return m.ringClass;
+  const a = (index.allRings || {})[ringName];
+  return (a && a.ringClass) || '';
+}
+
 export function ringIndexStats() {
   return {
     rings: Object.keys(index.rings).length,

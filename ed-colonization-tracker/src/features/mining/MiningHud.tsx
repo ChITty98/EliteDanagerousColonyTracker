@@ -94,6 +94,7 @@ export function HeroBand(props: {
   startedAt: number | null; streak: number; bestStreak: number;
   ring: { name: string; ringClass: string; reserve: string } | null;
   bestTph: number; bestTphScope: string; indexLine: string;
+  inHotspot: boolean; onHotspotToggle: () => void;
 }) {
   const shown = useCountUp(props.credits);
   // The pace readout needs a clock that ticks between refines too.
@@ -117,6 +118,19 @@ export function HeroBand(props: {
             : <span className="text-[10px] tracking-widest text-muted-foreground">IDLE</span>}
         </div>
         <div className="flex items-center gap-3">
+          {props.ring && (
+            <button
+              onClick={props.onHotspotToggle}
+              title="Ground truth the journal can't see: rocks logged while this is on are stamped as hotspot-mined. Clears automatically when you change ring or jump."
+              className={`rounded border px-2 py-0.5 text-[11px] font-semibold transition-colors ${
+                props.inHotspot
+                  ? 'border-amber-400/70 bg-amber-400/15 text-amber-300'
+                  : 'border-border bg-muted/20 text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {'◉'} {props.inHotspot ? 'IN HOTSPOT' : 'in hotspot?'}
+            </button>
+          )}
           {props.streak >= 3 && (
             <span className="text-sm font-bold text-orange-400" title={`Target streak — best ${props.bestStreak}`}>{'🔥'} {props.streak}</span>
           )}
@@ -173,7 +187,7 @@ export function HeroBand(props: {
  * last prospects pinged onto it the moment they're scanned — value read against the population
  * BEFORE lasers are committed. Same geometry as the catch card, promoted to an instrument.
  */
-export function DistributionBoard(props: { hist: Hist | null; best: number; count: number; scans: ScanPing[] }) {
+export function DistributionBoard(props: { hist: Hist | null; best: number; count: number; scans: ScanPing[]; classLabel?: string }) {
   const { hist } = props;
   if (!hist || !hist.buckets?.length || props.count < 12) return null;
   const peak = Math.max(1, ...hist.buckets);
@@ -187,7 +201,7 @@ export function DistributionBoard(props: { hist: Hist | null; best: number; coun
     <section className="edc-chamfer border border-border bg-card/60 px-4 py-3">
       <div className="flex items-baseline justify-between flex-wrap gap-2">
         <h2 className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-          Rock board — every prospect vs your {props.count} logged rocks
+          Rock board — every prospect vs your {props.count} {props.classLabel ? `${props.classLabel} ` : ''}rocks
         </h2>
         {latest && (
           <span key={latest.at} className="text-xs tabular-nums" style={{ animation: 'edcPingIn 300ms ease-out both' }}>

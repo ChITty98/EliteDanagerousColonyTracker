@@ -64,6 +64,8 @@ import {
 import { processChatCommands } from './chat.js';
 import { runCopilot } from '../ai/copilot.js';
 import { processMiningEvents } from './mining.js';
+import { noteOwnEvents as radarNoteOwnEvents } from '../radar/radarState.js';
+import { getEdsmTraffic } from '../radar/traffic.js';
 
 // ===== Overlay layout (must match src/services/overlayService.ts) =====
 const X_LEFT = 40;
@@ -126,6 +128,11 @@ export function processNewEvents(parsed, deps) {
   // consistent view of the state — e.g. handleDockedOverlay checks
   // existing.marketSnapshots which may have been updated this tick)
   if (deps.sendOverlay) {
+    // StartJump — warm the EDSM traffic cache during the FSD charge so the arrival
+    // overlay can read it synchronously when the jump completes. One call per jump.
+    for (const ev of parsed.startJumpEvents || []) {
+      if (ev.JumpType === 'Hyperspace' && ev.StarSystem) void getEdsmTraffic(ev.StarSystem);
+    }
     // FSDJump — show score + distance + active-project market needs
     for (const ev of parsed.fsdJumpEvents) {
       try { handleFSDJumpOverlay(ev, existing, deps); } catch (e) { console.error('[Overlay] FSDJump error:', e && e.message); }
@@ -149,6 +156,10 @@ export function processNewEvents(parsed, deps) {
       });
     }
   }
+
+  // Radar own-presence fingerprints — the commander's own EDMC feeds EDDN; these keep the radar
+  // from counting its own pilot as nearby activity.
+  try { radarNoteOwnEvents(parsed); } catch { /* observer only */ }
 
   // Mining assist — prospect verdict + target alerts (stall/cargo checks run on the periodic tick).
   // Deliberately OUTSIDE the overlay block: this call also ingests mission lifecycle events, ring

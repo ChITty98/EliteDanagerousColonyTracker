@@ -1,5 +1,6 @@
-import { useState, useCallback, useMemo } from 'react';
-import { scanJournalHistory, getJournalFolderHandle, selectJournalFolder, type JournalHistoryStats } from '@/services/journalReader';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import type { JournalHistoryStats } from '@/services/journalReader';
+import { sseSubscribe } from '@/services/sseBus';
 
 function formatCredits(amount: number): string {
   if (amount >= 1_000_000_000) return `${(amount / 1_000_000_000).toFixed(1)}B CR`;
@@ -57,11 +58,16 @@ function RankList({ items, valueLabel }: { items: { name: string; value: string;
 }
 
 export function JournalStatsPage() {
+  // Server-side cached stats (v1.28.9): GET renders instantly from journal-stats.json;
+  // an incremental refresh only reads NEW journal bytes. No folder picker, no rescans,
+  // works from any device. The old flow rescanned all files into component state per visit.
   const [stats, setStats] = useState<JournalHistoryStats | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState({ pct: 0, phase: '' });
+  const [meta, setMeta] = useState<{ scanning: boolean; pendingFiles: number; processedFiles: number } | null>(null);
+  const [progress, setProgress] = useState<{ pct: number; phase: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [systemSearch, setSystemSearch] = useState('');
+  const autoKicked = useRef(false);
 
   const systemSearchResults = useMemo(() => {
     if (!stats || !systemSearch.trim()) return [];
@@ -71,81 +77,96 @@ export function JournalStatsPage() {
       .slice(0, 25);
   }, [stats, systemSearch]);
 
-  const handleScan = useCallback(async () => {
-    let handle = getJournalFolderHandle();
-    if (!handle) {
-      handle = await selectJournalFolder();
-      if (!handle) return;
-    }
-    setLoading(true);
-    setError(null);
-    setProgress({ pct: 0, phase: 'Starting...' });
+  const api = useCallback((p: string) => {
     try {
-      const result = await scanJournalHistory(handle, (pct, phase) => {
-        setProgress({ pct, phase });
-      });
-      setStats(result);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to scan journals');
-    } finally {
-      setLoading(false);
-    }
+      const t = sessionStorage.getItem('colony-token');
+      return t ? `${p}?token=${t}` : p;
+    } catch { return p; }
   }, []);
 
-  if (!stats && !loading) {
-    return (
-      <div className="text-center py-20">
-        <p className="text-4xl mb-4">📖</p>
-        <h2 className="text-xl font-bold text-foreground mb-2">Journal History</h2>
-        <p className="text-muted-foreground mb-6">
-          Scan your entire journal history to see lifetime stats across years of gameplay.
-          This reads every log file in your journal directory.
-        </p>
-        <button
-          onClick={handleScan}
-          className="px-6 py-2.5 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors"
-        >
-          Scan Journal History
-        </button>
-      </div>
-    );
-  }
+  const load = useCallback(() => {
+    fetch(api('/api/journal-stats'))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((d) => {
+        setStats(d.stats ?? null);
+        setMeta(d.meta ?? null);
+        setLoaded(true);
+        setError(null);
+        // Auto catch-up: new files exist and nothing is scanning — kick once per visit.
+        if (d.meta && d.meta.pendingFiles > 0 && !d.meta.scanning && !autoKicked.current) {
+          autoKicked.current = true;
+          setProgress({ pct: 0, phase: 'Catching up on new journals…' });
+          fetch(api('/api/journal-stats/refresh'), { method: 'POST' }).catch(() => { /* server will log */ });
+        }
+      })
+      .catch((e) => { setError(e instanceof Error ? e.message : 'Failed to load stats'); setLoaded(true); });
+  }, [api]);
 
-  if (loading) {
+  useEffect(() => {
+    load();
+    const off = sseSubscribe('journal_stats_progress', (raw) => {
+      const e = raw as { pct?: number; phase?: string };
+      const pct = Number(e.pct) || 0;
+      setProgress({ pct, phase: String(e.phase || '') });
+      if (pct >= 100) setTimeout(() => { setProgress(null); load(); }, 400);
+    });
+    return off;
+  }, [load]);
+
+  const handleRefresh = useCallback(() => {
+    setProgress({ pct: 0, phase: 'Starting…' });
+    fetch(api('/api/journal-stats/refresh'), { method: 'POST' }).catch(() => { /* server will log */ });
+  }, [api]);
+
+  if (!loaded) {
     return (
       <div className="text-center py-20">
         <p className="text-4xl mb-4 animate-pulse">📖</p>
-        <h2 className="text-xl font-bold text-foreground mb-2">Scanning Journals...</h2>
-        <div className="w-64 mx-auto mb-3">
-          <div className="h-2 bg-muted rounded-full overflow-hidden">
-            <div
-              className="h-full bg-primary rounded-full transition-all duration-300"
-              style={{ width: `${progress.pct}%` }}
-            />
-          </div>
-        </div>
-        <p className="text-sm text-muted-foreground">{progress.phase}</p>
+        <p className="text-muted-foreground">Loading journal history…</p>
       </div>
     );
   }
 
-  if (error) {
+  if (error && !stats) {
     return (
       <div className="text-center py-20">
         <p className="text-4xl mb-4">⚠️</p>
-        <h2 className="text-xl font-bold text-foreground mb-2">Scan Failed</h2>
+        <h2 className="text-xl font-bold text-foreground mb-2">Couldn't Load Stats</h2>
         <p className="text-muted-foreground mb-4">{error}</p>
-        <button
-          onClick={handleScan}
-          className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90"
-        >
+        <button onClick={load} className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90">
           Try Again
         </button>
       </div>
     );
   }
 
-  if (!stats) return null;
+  if (!stats) {
+    // First-ever scan (auto-kicked when files are pending) or genuinely no journals.
+    const scanningNow = progress != null || meta?.scanning;
+    return (
+      <div className="text-center py-20">
+        <p className={`text-4xl mb-4 ${scanningNow ? 'animate-pulse' : ''}`}>📖</p>
+        <h2 className="text-xl font-bold text-foreground mb-2">
+          {scanningNow ? 'Building Journal History…' : 'Journal History'}
+        </h2>
+        {scanningNow ? (
+          <>
+            <p className="text-muted-foreground mb-4">
+              First scan reads every log file once — after this it's incremental and instant.
+            </p>
+            <div className="w-64 mx-auto mb-3">
+              <div className="h-2 bg-muted rounded-full overflow-hidden">
+                <div className="h-full bg-primary rounded-full transition-all duration-300" style={{ width: `${progress?.pct ?? 0}%` }} />
+              </div>
+            </div>
+            <p className="text-sm text-muted-foreground">{progress?.phase || 'Working…'}</p>
+          </>
+        ) : (
+          <p className="text-muted-foreground">No journal files found on the server.</p>
+        )}
+      </div>
+    );
+  }
 
   const dateRange = stats.firstEventDate && stats.lastEventDate
     ? `${new Date(stats.firstEventDate).toLocaleDateString()} — ${new Date(stats.lastEventDate).toLocaleDateString()}`
@@ -162,12 +183,20 @@ export function JournalStatsPage() {
             {formatNumber(stats.journalFileCount)} journal files processed
           </p>
         </div>
-        <button
-          onClick={handleScan}
-          className="px-4 py-2 bg-muted/50 text-foreground rounded-lg text-sm hover:bg-muted transition-colors border border-border"
-        >
-          Rescan
-        </button>
+        <div className="flex items-center gap-3">
+          {progress && (
+            <span className="text-xs text-muted-foreground animate-pulse">{progress.phase} {progress.pct}%</span>
+          )}
+          {!progress && meta && meta.pendingFiles > 0 && (
+            <span className="text-xs text-amber-400">{meta.pendingFiles} new file(s) pending</span>
+          )}
+          <button
+            onClick={handleRefresh}
+            className="px-4 py-2 bg-muted/50 text-foreground rounded-lg text-sm hover:bg-muted transition-colors border border-border"
+          >
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Game Stats Banner (if available) */}

@@ -46,7 +46,7 @@ export function CopilotPopup() {
 
   // Gates AFTER hooks so hook order stays stable.
   if (!enabled || !copilotOn) return null;
-  if (location.pathname === '/cockpit') return null; // the Cockpit already shows this, bigger
+  if (location.pathname === '/copilot') return null; // the Co-pilot page already shows this, bigger
   if (!ev) return null;
 
   const mood = ev.mood || 'calm';

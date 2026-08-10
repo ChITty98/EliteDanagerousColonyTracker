@@ -661,6 +661,23 @@ function OverlaySection({
           <span className="text-sm text-foreground">Enable overlay notifications</span>
         </label>
 
+        {/* Worth-mapping callouts — credits, not colony value */}
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={settings.overlayMapAlerts !== false}
+            onChange={(e) => updateSettings({ overlayMapAlerts: e.target.checked })}
+            className="w-4 h-4 accent-primary"
+          />
+          <span className="text-sm text-foreground">
+            {'\u{1F6F0}\u{FE0F}'} &ldquo;Map this&rdquo; callouts on scan
+            <span className="block text-xs text-muted-foreground">
+              Earth-like / water / ammonia worlds and terraformable bodies — worth the probes for credits.
+              Fires on ~6% of scans. Also appears in the 2nd Screen feed.
+            </span>
+          </span>
+        </label>
+
         {/* Target pop-up toggle — global corner card on any tab */}
         <label className="flex items-center gap-3 cursor-pointer">
           <input

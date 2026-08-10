@@ -1,6 +1,15 @@
 # Changelog
 
-All notable changes to ED Colony Tracker.
+All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
+
+## [1.35.0] — 2026-08-10
+
+### Added
+- **"Map this" callouts** — the app now tells you when a body is worth spending probes on, for CREDITS (a separate question from colony value, which is what the score measures). Fires on the in-game overlay and in the 2nd Screen feed the moment the body is scanned. Two tiers: ★★★ for Earth-like, water and ammonia worlds — rare and worth several times an ordinary body, so they always pop; ★★ (quieter, shorter dwell) for anything else with a terraform state, mostly terraformable HMC, which is the biggest multiplier available on an otherwise plain rock. Everything else stays silent. Each callout states what it found and whether it is a **first discovery** or **already mapped** (the latter kills the first-mapper bonus and may change your mind). Toggle in Settings → In-Game Overlay.
+- Measured against 1,644 real planet scans before shipping: ★★★ fires on 2.4%, ★★ on 4.0% — median 2 callouts per system that has any, worst case 8.
+
+### Notes
+- The callouts deliberately report QUALITIES, not credit figures. The real payout follows roughly `k + mass * k / 66.25` with a per-class `k`, and those per-class constants are not verified here — so any number the app printed would be invented. Terraformable was previously treated as noise because it is irrelevant to colonization value; for credits it is the single biggest multiplier, which is why it earns its own tier.
 
 ## [1.34.0] — 2026-08-10
 

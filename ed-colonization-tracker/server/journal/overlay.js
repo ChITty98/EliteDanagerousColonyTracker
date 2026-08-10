@@ -527,6 +527,70 @@ export function handleScanEventOverlay(ev, existing, deps) {
       x: X_LEFT, y: Y_SCAN, ttl: 15,
     });
   }
+
+  // Worth a DSS probe? Separate from colony value — this is purely about credits.
+  if (settings.overlayMapAlerts !== false) {
+    const worth = mapWorth(ev);
+    if (worth) {
+      deps.sendOverlay({
+        id: `edcolony_map_${ev.BodyName}`,
+        text: `🛰️ ${worth.stars} MAP THIS — ${shortBody(ev.BodyName)} · ${worth.reasons.join(' · ')}`,
+        color: worth.tier === 3 ? '#4ade80' : '#94a3b8',
+        x: X_LEFT, y: Y_SCAN, ttl: worth.tier === 3 ? 18 : 10,
+      });
+      deps.broadcastEvent({
+        type: 'map_worthy',
+        body: ev.BodyName,
+        planetClass: ev.PlanetClass,
+        tier: worth.tier,
+        reasons: worth.reasons,
+        firstDiscovery: ev.WasDiscovered === false,
+        alreadyMapped: ev.WasMapped === true,
+        timestamp: ev.timestamp,
+      });
+    }
+  }
+}
+
+/** Drop the system prefix so the overlay line stays short. */
+function shortBody(name) {
+  const sys = scanState.pendingSystemName;
+  return sys && name && name.startsWith(sys) ? name.slice(sys.length).trim() || name : name;
+}
+
+/**
+ * Is this body worth spending probes on, for CREDITS (not colony value)?
+ *
+ * Tier 3 — Earth-like / water / ammonia worlds: rare and worth 3-4x an ordinary
+ * body, so they always pop.
+ * Tier 2 — anything else with a terraform state: mostly terraformable HMC. The
+ * single biggest multiplier on an otherwise plain rock, but common enough that it
+ * gets a quieter, shorter-lived callout so a 30-body system isn't a wall of text.
+ *
+ * Deliberately reports QUALITIES, never a credit figure: the real payout is
+ * mass-dependent (roughly k + mass*k/66.25 with a per-class k) and the per-class
+ * constants aren't verified here, so any number would be invented. See CHANGELOG 1.35.0.
+ */
+export function mapWorth(ev) {
+  if (!ev || ev.StarType) return null;            // stars aren't mappable
+  const cls = String(ev.PlanetClass || '');
+  if (!cls) return null;
+  const terraform = ev.TerraformState && !/^(none)?$/i.test(String(ev.TerraformState).trim());
+  const reasons = [];
+  let tier = 0;
+
+  if (/earthlike|earth-like/i.test(cls)) { tier = 3; reasons.push('Earth-like world'); }
+  else if (/water world/i.test(cls)) { tier = 3; reasons.push('Water world'); }
+  else if (/ammonia world/i.test(cls)) { tier = 3; reasons.push('Ammonia world'); }
+  else if (terraform) { tier = 2; reasons.push(cls); }
+
+  if (!tier) return null;
+  if (terraform && tier === 3) reasons.push('terraformable');
+  if (ev.WasDiscovered === false) reasons.push('first discovery');
+  // Already mapped kills the first-mapper bonus — say so rather than hide it.
+  if (ev.WasMapped === true) reasons.push('already mapped');
+
+  return { tier, stars: tier === 3 ? '★★★' : '★★', reasons };
 }
 
 /**

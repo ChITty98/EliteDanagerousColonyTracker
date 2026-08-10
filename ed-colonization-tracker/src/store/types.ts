@@ -153,6 +153,8 @@ export interface AppSettings {
   squadronCarrierCallsigns: string[];
   fcModulesCapacity: number; // Tons of capacity consumed by installed services/modules (user-entered from Carrier Management)
   overlayEnabled: boolean;
+  /** "Worth mapping" DSS callouts on scan (credits, not colony value). Default on. */
+  overlayMapAlerts?: boolean;
   targetPopupEnabled?: boolean; // Show the global target-info pop-up (corner card) on any tab — default on
   copilotPopupEnabled?: boolean;
   radarThreshold?: number; // high-score radar layer threshold (composite rating) — default 70

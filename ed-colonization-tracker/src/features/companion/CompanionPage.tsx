@@ -136,7 +136,7 @@ export function CompanionPage() {
 
     // Catch-all for other event types we want in the live feed but don't
     // process specially (contribution / fc_jump_scheduled / scan_highlight / etc.)
-    const FEED_ONLY_TYPES = ['contribution', 'fc_jump_scheduled', 'fc_jump_cancelled', 'fc_space_update', 'scan_highlight', 'first_footfall', 'fss_complete', 'sc_drop', 'supercruise_exit', 'companion_action', 'carrier_jump', 'carrier_cargo_updated', 'ship_cargo', 'market_snapshot_updated'];
+    const FEED_ONLY_TYPES = ['contribution', 'fc_jump_scheduled', 'fc_jump_cancelled', 'fc_space_update', 'scan_highlight', 'first_footfall', 'fss_complete', 'sc_drop', 'supercruise_exit', 'companion_action', 'carrier_jump', 'carrier_cargo_updated', 'ship_cargo', 'market_snapshot_updated', 'map_worthy'];
     for (const type of FEED_ONLY_TYPES) {
       unsubs.push(sseSubscribe(type, (ev) => {
         setEvents((prev) => [ev as CompanionEvent, ...prev].slice(0, 50));

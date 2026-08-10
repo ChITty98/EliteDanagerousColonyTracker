@@ -61,7 +61,7 @@ export function SettingsPage() {
     if (!raw) raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) { alert('No data to export'); return; }
     const blob = new Blob([raw], { type: 'application/json' });
-    const defaultName = `ed-colony-tracker-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    const defaultName = `ed-colony-architect-backup-${new Date().toISOString().slice(0, 10)}.json`;
 
     // Use File System Access API save dialog if available
     if ('showSaveFilePicker' in window) {
@@ -371,7 +371,6 @@ function VersionSection() {
   const [info, setInfo] = useState<{
     current: string | null; latest: string | null; updateAvailable: boolean;
     releaseUrl: string | null; lastChecked: string | null; lastError: string | null;
-    canSelfUpdate: boolean;
   } | null>(null);
   const [checking, setChecking] = useState(false);
 
@@ -426,12 +425,11 @@ function VersionSection() {
       {info?.lastChecked && (
         <div className="mt-1 text-[11px] text-muted-foreground/70">
           Last checked {new Date(info.lastChecked).toLocaleString()}
-          {!info.canSelfUpdate && ' · self-update available in the .exe build'}
         </div>
       )}
       {info?.updateAvailable && (
         <div className="mt-1 text-[11px] text-muted-foreground/70">
-          Use the banner at the top of the page to install it.
+          Use the banner at the top of the page to download it.
         </div>
       )}
     </div>
@@ -616,7 +614,7 @@ function OverlaySection({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: 'overlay-test',
-          text: 'Colony Tracker overlay is working!',
+          text: 'Colony Architect overlay is working!',
           color: '#00ff88',
           x: 40,
           y: 40,

@@ -10,8 +10,8 @@
  * modules under `server/journal/*.js` just works.
  *
  * Usage:  node build-exe.mjs
- * Output: ed-colony-tracker.bat + server-bundled.cjs (always)
- *         ed-colony-tracker.exe (if SEA succeeds)
+ * Output: ed-colony-architect.bat + server-bundled.cjs (always)
+ *         ed-colony-architect.exe (if SEA succeeds)
  */
 
 import fs from 'node:fs';
@@ -87,7 +87,7 @@ await esbuild.build({
     ),
   },
   banner: {
-    js: '/* ED Colony Tracker ' + VERSION + ' — bundled via esbuild */',
+    js: '/* ED Colony Architect ' + VERSION + ' — bundled via esbuild */',
   },
 });
 
@@ -95,8 +95,8 @@ const bundleSize = fs.statSync(OUT_CJS).size;
 console.log('  Wrote ' + OUT_CJS + ' (' + (bundleSize / 1024).toFixed(0) + 'KB)');
 
 // Step 4: Create .bat launcher (always works, no dependencies)
-const batContent = '@echo off\r\ntitle ED Colony Tracker\r\necho Starting ED Colony Tracker...\r\nnode "%~dp0server-bundled.cjs"\r\npause\r\n';
-const batPath = path.join(__dirname, 'ed-colony-tracker.bat');
+const batContent = '@echo off\r\ntitle ED Colony Architect\r\necho Starting ED Colony Architect...\r\nnode "%~dp0server-bundled.cjs"\r\npause\r\n';
+const batPath = path.join(__dirname, 'ed-colony-architect.bat');
 fs.writeFileSync(batPath, batContent);
 console.log('Wrote ' + batPath);
 
@@ -106,7 +106,7 @@ console.log('Attempting SEA exe build...');
 
 const SEA_CONFIG = path.join(__dirname, 'sea-config.json');
 const SEA_BLOB = path.join(__dirname, 'sea-prep.blob');
-const EXE_PATH = path.join(__dirname, 'ed-colony-tracker.exe');
+const EXE_PATH = path.join(__dirname, 'ed-colony-architect.exe');
 
 let seaSuccess = false;
 try {
@@ -145,9 +145,9 @@ try { fs.unlinkSync(SEA_BLOB); } catch {}
 console.log('');
 console.log('Done!');
 if (seaSuccess) {
-  console.log('  Run ed-colony-tracker.exe to start (standalone, no Node needed)');
+  console.log('  Run ed-colony-architect.exe to start (standalone, no Node needed)');
 } else {
-  console.log('  Run ed-colony-tracker.bat to start (requires Node.js installed)');
+  console.log('  Run ed-colony-architect.bat to start (requires Node.js installed)');
   console.log('  Or:  node server-bundled.cjs');
 }
 console.log('');

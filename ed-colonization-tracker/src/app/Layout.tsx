@@ -56,7 +56,7 @@ export function Layout() {
       <nav className={`w-56 shrink-0 border-r border-border bg-card flex flex-col h-screen sticky top-0 ${hideNav ? 'hidden' : ''}`}>
         <div className="p-4 border-b border-border">
           <h1 className="text-lg font-bold text-primary tracking-wide">
-            ED Colony Tracker
+            ED Colony Architect
           </h1>
           <p className="text-xs text-muted-foreground mt-1">Colonization Progress</p>
         </div>

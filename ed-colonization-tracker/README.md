@@ -1,4 +1,4 @@
-# ED Colony Tracker
+# ED Colony Architect
 
 A comprehensive companion app for **Elite Dangerous** colonization gameplay. Track your colonies, scout expansion candidates, plan multi-hop routes, manage fleet carrier logistics, and monitor everything in real-time through an in-game overlay and iPad companion screen.
 

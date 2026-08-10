@@ -1,4 +1,4 @@
-# ED Colony Tracker — Project Instructions
+# ED Colony Architect — Project Instructions
 
 Read `PROJECT-HANDOFF.md` for architecture. This file is operating rules + conventions that are NOT obvious from reading the code.
 

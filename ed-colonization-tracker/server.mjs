@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Standalone server for ED Colony Tracker.
+ * Standalone server for ED Colony Architect.
  * Serves the built static files and proxies API requests to external services.
  *
  * Usage:  node server.mjs
@@ -76,8 +76,7 @@ import { getJournalStats, refreshJournalStats } from './server/journal/history.j
 import { initChainWatch, seedChainWatch, snapshotChains, defaultRegions, resolvePendingRegions } from './server/chains/chainWatch.js';
 import { refreshLookback } from './server/radar/lookback.js';
 import { searchRingsBySignals } from './server/journal/spansh.js';
-import { resolveDataDir } from './server/update/dataDir.js';
-import { initUpdater, getUpdateStatus, checkForUpdate, downloadUpdate, applyUpdate } from './server/update/updater.js';
+import { initUpdater, getUpdateStatus, checkForUpdate } from './server/update/updater.js';
 
 // SEA detection: when bundled via build-exe.mjs and injected as a single executable,
 // the node:sea API reports isSea() === true. In that case, runtime state (colony-data.json,
@@ -87,12 +86,14 @@ const _require = createRequire(import.meta.url);
 let IS_SEA = false;
 try { IS_SEA = _require('node:sea').isSea(); } catch {}
 const SOURCE_DIR = path.dirname(fileURLToPath(import.meta.url));
-const EXE_DIR = IS_SEA ? path.dirname(process.execPath) : SOURCE_DIR;
-// Data no longer lives beside the exe — see server/update/dataDir.js. A legacy
-// exe-adjacent install is copied across on first boot (copy-only, originals kept),
-// which is what makes the exe replaceable without losing a commander's history.
-const _dataDir = resolveDataDir({ isSea: IS_SEA, exeDir: EXE_DIR, sourceDir: SOURCE_DIR });
-const APP_DIR = _dataDir.dir;
+// Data lives beside the .exe. A v1.33.0 build moved it to %LOCALAPPDATA% so the exe
+// could be swapped in place; that migration was withdrawn after review found it could
+// silently orphan an install (an empty folder containing only the auto-generated token
+// read as "already migrated") and could not distinguish an interrupted copy from a
+// finished one. Updating stays manual: replace the exe in this folder. See CHANGELOG
+// 1.34.0. Any future attempt needs an atomic copy with a completion sentinel and
+// payload-based install detection — not a file-presence check.
+const APP_DIR = IS_SEA ? path.dirname(process.execPath) : SOURCE_DIR;
 
 const __dirname = SOURCE_DIR; // preserved for any downstream references
 const PORT = parseInt(process.env.PORT || '5173', 10);
@@ -369,33 +370,6 @@ function writeStateDebounced(data) {
   }, 500);
 }
 
-/**
- * Write any debounced state immediately. Used on the self-update handoff, where
- * the process exits within a second and a pending 500 ms write would be lost.
- * Applies the same shrink guard as the debounced path.
- */
-function flushStateNow() {
-  if (stateWriteTimer) { clearTimeout(stateWriteTimer); stateWriteTimer = null; }
-  if (pendingState === null) return false;
-  try {
-    const newJson = JSON.stringify(pendingState);
-    try {
-      const existingSize = fs.statSync(STATE_FILE).size;
-      if (existingSize > 1000 && newJson.length < existingSize * 0.3) {
-        console.error('[State] BLOCKED flush — new data is <30% of existing.');
-        pendingState = null;
-        return false;
-      }
-    } catch { /* no file yet */ }
-    fs.writeFileSync(STATE_FILE, newJson);
-    console.log(`[State] Flushed colony-data.json (${(newJson.length / 1024).toFixed(0)}KB)`);
-    pendingState = null;
-    return true;
-  } catch (e) {
-    console.error('[State] Flush error:', e.message);
-    return false;
-  }
-}
 
 // MIME types for static file serving
 const MIME = {
@@ -811,7 +785,7 @@ const server = http.createServer((req, res) => {
 
   // Chain Watch — colonization frontier chains, region-filtered. GET renders the ledger;
   // POST /seed (re)runs the bounded Spansh is_being_colonised seed.
-  // --- Self-update ---
+  // --- Update notice (read-only: reports what's published, never touches a file) ---
   if (pathname === '/api/version' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(getUpdateStatus()));
@@ -821,30 +795,6 @@ const server = http.createServer((req, res) => {
     checkForUpdate()
       .then((s) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(s)); })
       .catch((e) => { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: e.message })); });
-    return;
-  }
-  if (pathname === '/api/update/download' && req.method === 'POST') {
-    // Long-running: acknowledge immediately, report progress over SSE.
-    downloadUpdate().catch((e) => {
-      console.error('[Update] download failed:', e.message);
-      broadcastEvent({ type: 'update_failed', stage: 'download', error: e.message });
-    });
-    res.writeHead(202, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ started: true }));
-    return;
-  }
-  if (pathname === '/api/update/apply' && req.method === 'POST') {
-    try {
-      const r = applyUpdate();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(r));
-      // Flush the state one last time, then exit so the helper can swap the exe.
-      console.log('[Update] Handing off to the update helper — the app will restart.');
-      setTimeout(() => { try { flushStateNow(); } catch {} process.exit(0); }, 750);
-    } catch (e) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: e.message }));
-    }
     return;
   }
   if (pathname === '/api/chains' && req.method === 'GET') {
@@ -2183,7 +2133,7 @@ server.listen(PORT, '0.0.0.0', () => {
   const pad = (s) => s + ' '.repeat(Math.max(0, W - s.length));
   console.log('');
   console.log(`  ${C}╔${'═'.repeat(W)}╗${R}`);
-  console.log(`  ${C}${V}${R}${pad(`   ED Colony Tracker ${APP_VERSION}`)}${C}${V}${R}`);
+  console.log(`  ${C}${V}${R}${pad(`   ED Colony Architect ${APP_VERSION}`)}${C}${V}${R}`);
   console.log(`  ${C}${V}${R}${' '.repeat(W)}${C}${V}${R}`);
   console.log(`  ${C}${V}${R}   Local:   ${U}${localUrl}${R}${' '.repeat(Math.max(0, W - 12 - localUrl.length))}${C}${V}${R}`);
   console.log(`  ${C}${V}${R}   Network: ${U}${networkUrl}${R}${' '.repeat(Math.max(0, W - 12 - networkUrl.length))}${C}${V}${R}`);
@@ -2194,12 +2144,8 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`  Network URL (for other devices):`);
   console.log(`  ${U}${networkTokenUrl}${R}`);
   console.log('');
-  // Where the data actually lives — so nobody has to guess after an update.
+  // Where the data lives — replace the .exe in THIS folder when updating.
   console.log(`  Data folder: ${APP_DIR}`);
-  if (_dataDir.migrated) {
-    console.log(`  ↳ Moved here from ${_dataDir.from} (${_dataDir.files} files, ${(_dataDir.bytes / 1048576).toFixed(1)} MB).`);
-    console.log('    The originals were left untouched. You can now replace the .exe anywhere.');
-  }
   console.log('');
 
   // Auto-open Chrome specifically (required for File System Access API — Firefox doesn't support it)
@@ -2269,13 +2215,7 @@ server.listen(PORT, '0.0.0.0', () => {
   // Self-update — checks GitHub Releases on boot and every 6h. Best-effort: a
   // failed check is silent and never affects anything else.
   try {
-    initUpdater({
-      currentVersion: APP_VERSION,
-      exePath: process.execPath,
-      dataDir: APP_DIR,
-      isSea: IS_SEA,
-      broadcast: broadcastEvent,
-    });
+    initUpdater({ currentVersion: APP_VERSION, isSea: IS_SEA, broadcast: broadcastEvent });
   } catch (e) { console.error('[Update] init failed:', e && e.message); }
 
   try {

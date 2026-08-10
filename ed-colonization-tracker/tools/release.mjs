@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+// Repo not yet renamed on GitHub; update this when it is (GitHub redirects either way).
 const REPO = 'ChITty98/EliteDanagerousColonyTracker';
 const API = 'https://api.github.com';
 const UPLOADS = 'https://uploads.github.com';
@@ -31,7 +32,7 @@ const DRY = process.argv.includes('--dry-run');
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const VERSION = pkg.version;
 const TAG = `v${VERSION}`;
-const EXE = path.join(ROOT, 'ed-colony-tracker.exe');
+const EXE = path.join(ROOT, 'ed-colony-architect.exe');
 
 function token() {
   if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN.trim();
@@ -125,7 +126,7 @@ const main = async () => {
 
   // SHA256SUMS.txt — the updater refuses to install on a hash mismatch.
   const sumsPath = path.join(ROOT, 'SHA256SUMS.txt');
-  fs.writeFileSync(sumsPath, `${sha256(EXE)}  ed-colony-tracker.exe\n`);
+  fs.writeFileSync(sumsPath, `${sha256(EXE)}  ed-colony-architect.exe\n`);
 
   for (const [file, type] of [[EXE, 'application/octet-stream'], [sumsPath, 'text/plain']]) {
     const name = path.basename(file);

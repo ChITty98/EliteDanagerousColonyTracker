@@ -1,4 +1,4 @@
-# ED Colony Tracker — Release Notes
+# ED Colony Architect — Release Notes
 
 ## v1.1.0 (2026-03-18)
 

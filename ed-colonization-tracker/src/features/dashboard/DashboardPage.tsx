@@ -754,7 +754,7 @@ export function DashboardPage() {
         <div className="absolute inset-0 bg-gradient-to-r from-background/90 via-background/40 to-transparent" />
         <div className="relative h-full flex flex-col justify-end p-5 md:p-6 pointer-events-none">
           <h1 className="text-2xl md:text-4xl font-bold text-foreground drop-shadow-lg tracking-tight">
-            ED Colony Tracker
+            ED Colony Architect
           </h1>
           <p className="text-sm md:text-base text-muted-foreground mt-1 drop-shadow">
             Build. Expand. Dominate the black.
@@ -773,7 +773,7 @@ export function DashboardPage() {
         >
           <img
             src="/app-image.png"
-            alt="ED Colony Tracker banner"
+            alt="ED Colony Architect banner"
             className="max-w-full max-h-full object-contain"
             onClick={(e) => e.stopPropagation()}
           />

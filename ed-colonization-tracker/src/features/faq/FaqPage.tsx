@@ -10,11 +10,11 @@ const faqItems: FaqItem[] = [
   // --- About ---
   {
     category: 'About',
-    question: 'What is ED Colony Tracker?',
+    question: 'What is ED Colony Architect?',
     answer: (
       <>
         <p>
-          ED Colony Tracker is a companion app for Elite Dangerous focused on
+          ED Colony Architect is a companion app for Elite Dangerous focused on
           colonization, expansion scouting, and hauling logistics. It runs entirely
           on your local machine &mdash; a single executable that serves a web UI
           you open in your browser.
@@ -1668,7 +1668,7 @@ export function FaqPage() {
         <div>
           <h2 className="text-2xl font-bold">FAQ &amp; Help</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            Frequently asked questions about ED Colony Tracker
+            Frequently asked questions about ED Colony Architect
           </p>
         </div>
         <div className="flex gap-2">

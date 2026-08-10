@@ -2,6 +2,23 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.34.0] — 2026-08-10
+
+### Removed
+- **The v1.33.0 data migration and self-update swap are withdrawn.** Data stays beside the .exe, exactly as it always has. A review found defects severe enough that the feature could not ship: the migration treated any folder containing the auto-generated `colony-token.txt` as a completed install, so a single launch from the wrong directory would permanently and silently convince the app it had already migrated — orphaning the real 27 MB of history forever. It also could not distinguish an interrupted copy from a finished one (no atomic rename, no completion sentinel), and the 30%-shrink guard that normally protects the state file compared against the truncated copy. Separately, a commander who placed the new .exe anywhere other than their existing folder would get a silently empty app — precisely the failure the feature existed to prevent. The Windows PID-wait in the swap helper was never verified either.
+- Removed with it: `server/update/dataDir.js`, `POST /api/update/download`, `POST /api/update/apply`, the swap helper, and the download/install UI.
+
+### Added
+- **Update notice** (the safe half, kept). The server asks GitHub for the latest release on boot and every six hours — read-only, best-effort, silent on failure — and a dismissible banner reports "v1.35.0 is available — you're on v1.34.0" with a direct download link, the release notes, and a reminder to replace the .exe in its current folder. Dismissal is per-version. Settings gains a version block with last-checked and a manual **Check now**.
+- **`tools/release.mjs`** — publishes a release in one command: tags from package.json, uses that version's CHANGELOG section as the body, uploads the exe and a `SHA256SUMS.txt` so downloads can be verified by hand. Talks to the GitHub REST API directly (no `gh` required). Auth via `GITHUB_TOKEN` or a gitignored `.release-token`; `--dry-run` supported; refuses to overwrite an existing release.
+
+### Changed
+- **Renamed: ED Colony Tracker → ED Colony Architect.** Colonization is still the spine of the app — it plans claim chains, scores 2.4M systems for colony value and watches the frontier — but "tracker" undersold that; Architect is what the game calls the role. The executable is now `ed-colony-architect.exe` and the package is `ed-colony-architect`. With the data migration gone this is a pure cosmetic change: no file moves anywhere.
+
+### Notes
+- If self-update is revisited, it needs an atomic copy with a completion sentinel, install detection based on real payload rather than file presence, and a PID-wait tested on non-English Windows — and it must not be bundled with a data move.
+- The GitHub repo has not been renamed yet; the update check points at the existing repo name.
+
 ## [1.33.0] — 2026-08-10
 
 ### Changed

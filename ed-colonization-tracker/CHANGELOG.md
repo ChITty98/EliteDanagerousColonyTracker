@@ -2,6 +2,21 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.33.0] — 2026-08-10
+
+### Changed
+- **Your data no longer lives next to the .exe.** It moves to `%LOCALAPPDATA%\ED Colony Tracker` (`~/.local/share/ed-colony-tracker` elsewhere), which is the root fix for update pain: the exe becomes disposable, so a new build can be dropped anywhere without the app coming up empty. Migration runs automatically on first boot of this version and is **copy-only** — the originals stay put with a `DATA-MOVED.txt` note beside them, and any failure aborts back to the old location rather than risk a half-move. The boot banner now prints the data folder. Dev runs (`node server.mjs`) still use the repo folder, and `ED_COLONY_DATA_DIR` overrides everything for portable installs.
+
+### Added
+- **Update notice** — the server checks GitHub Releases on boot and every six hours (best-effort; failures are silent). A banner shows "v1.34.0 is available — you're on v1.33.0" with a link to the release notes, dismissible per version so ignoring one release doesn't silence the next. Settings gains a version block with last-checked time and a manual **Check now**.
+- **One-click self-update** — Update now downloads the release exe with live progress, verifies size and SHA-256 against the published checksums, then Restart & install hands off to a helper script that waits for the app to exit, swaps the binary and relaunches. The previous exe is always kept as `.bak`, so a failed swap is undone by renaming one file, and every step is logged to `apply-update.log` in the data folder.
+- **`tools/release.mjs`** — one command publishes a release: tags the version from package.json, uses that version's CHANGELOG section as the release body, and uploads the exe plus `SHA256SUMS.txt` for the updater to verify. Talks to the GitHub REST API directly (no `gh` needed). Auth via `GITHUB_TOKEN` or a gitignored `.release-token`; supports `--dry-run` and refuses to overwrite an existing release.
+
+### Notes
+- Self-update is Windows-only for now, and only from the packaged .exe (dev runs show the notice but not the button).
+- Everyone needs **one** manual update to reach this version — after that, updates are in-app.
+- The exe is unsigned, so Windows SmartScreen behaviour on a freshly downloaded build is unverified until it's tried in the wild.
+
 ## [1.32.0] — 2026-08-10
 
 ### Added

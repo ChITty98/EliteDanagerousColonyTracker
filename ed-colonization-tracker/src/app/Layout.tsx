@@ -7,6 +7,7 @@ import { TargetPopup } from '@/components/TargetPopup';
 import { MiningTicker } from '@/components/MiningTicker';
 import { CatchCard } from '@/components/CatchCard';
 import { CopilotPopup } from '@/components/CopilotPopup';
+import { UpdateBanner } from '@/features/update/UpdateBanner';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '\u25C6' },
@@ -89,6 +90,8 @@ export function Layout() {
 
       {/* Main content */}
       <main className="flex-1 overflow-auto">
+        {/* Update notice — hidden unless a newer release is published */}
+        {!hideNav && <UpdateBanner />}
         <div className={`${isFullWidth || hideNav ? '' : 'max-w-7xl'} mx-auto ${hideNav ? 'p-0' : 'p-6'}`}>
           <Outlet />
         </div>

@@ -71,3 +71,7 @@ PROJECT-HANDOFF.md
 
 # Sample journal data from friend (not part of repo)
 Buz/
+
+# Release publishing — token must never be committed
+.release-token
+SHA256SUMS.txt

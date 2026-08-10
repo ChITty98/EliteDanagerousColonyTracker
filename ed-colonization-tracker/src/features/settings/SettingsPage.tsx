@@ -131,6 +131,9 @@ export function SettingsPage() {
         <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded">Auto-saved</span>
       </div>
       <div className="max-w-lg space-y-6">
+        {/* Version & updates */}
+        <VersionSection />
+
         {/* Commander */}
         <div>
           <label className="block text-sm text-muted-foreground mb-1">Commander Name</label>
@@ -358,6 +361,79 @@ export function SettingsPage() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// --- Version & update section ---
+
+function VersionSection() {
+  const [info, setInfo] = useState<{
+    current: string | null; latest: string | null; updateAvailable: boolean;
+    releaseUrl: string | null; lastChecked: string | null; lastError: string | null;
+    canSelfUpdate: boolean;
+  } | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  const url = useCallback((p: string) => {
+    let t: string | null = null;
+    try { t = sessionStorage.getItem('colony-token'); } catch { /* no storage */ }
+    return t ? `${p}${p.includes('?') ? '&' : '?'}token=${t}` : p;
+  }, []);
+
+  const load = useCallback(() => {
+    fetch(url('/api/version')).then((r) => (r.ok ? r.json() : null)).then(setInfo).catch(() => {});
+  }, [url]);
+
+  useEffect(load, [load]);
+
+  const checkNow = () => {
+    setChecking(true);
+    fetch(url('/api/update/check'), { method: 'POST' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setInfo(d); })
+      .catch(() => {})
+      .finally(() => setChecking(false));
+  };
+
+  return (
+    <div className="rounded-lg border border-border p-3">
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-muted-foreground">Version</span>
+        <span className="font-mono text-sm font-semibold">v{__APP_VERSION__}</span>
+      </div>
+      <div className="mt-2 flex items-center gap-2 text-xs">
+        {info?.updateAvailable ? (
+          <span className="text-amber-300">
+            {'⬆'} {info.latest} available
+            {info.releaseUrl && (
+              <> {'—'} <a className="underline" href={info.releaseUrl} target="_blank" rel="noreferrer">what&apos;s new</a></>
+            )}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">
+            {info?.lastError ? `Update check failed: ${info.lastError}` : 'Up to date'}
+          </span>
+        )}
+        <button
+          onClick={checkNow}
+          disabled={checking}
+          className="ml-auto rounded border border-border px-2 py-0.5 hover:bg-muted disabled:opacity-50"
+        >
+          {checking ? 'Checking…' : 'Check now'}
+        </button>
+      </div>
+      {info?.lastChecked && (
+        <div className="mt-1 text-[11px] text-muted-foreground/70">
+          Last checked {new Date(info.lastChecked).toLocaleString()}
+          {!info.canSelfUpdate && ' · self-update available in the .exe build'}
+        </div>
+      )}
+      {info?.updateAvailable && (
+        <div className="mt-1 text-[11px] text-muted-foreground/70">
+          Use the banner at the top of the page to install it.
+        </div>
+      )}
     </div>
   );
 }

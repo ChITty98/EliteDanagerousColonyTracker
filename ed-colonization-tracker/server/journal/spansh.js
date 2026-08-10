@@ -24,6 +24,9 @@ async function rateLimitedFetch(url, init) {
   lastRequestTime = Date.now();
   return fetch(url, init);
 }
+// Exported so other Spansh consumers (Chain Watch seed/region resolution) share the
+// SAME politeness clock instead of each keeping their own 1 req/s lane.
+export { rateLimitedFetch };
 
 // --- Caches ---
 /** @type {Map<string, { data: any[], ts: number }>} */

@@ -20,6 +20,7 @@ import {
   buildBodyString,
   buildBodySegments,
   emptyScore,
+  SCORE_FORMULA_VERSION,
   type ScoreBreakdown,
   type BodySegment,
 } from '@/lib/scoutingScorer';
@@ -43,6 +44,7 @@ interface BodyDetail {
   economy: string; // classified economy
   hasRings: boolean;
   hasAtmosphere: boolean;
+  geoSignals: number; // geological signal count (0 = none reported)
 }
 
 /** Per-star detail shown in expanded view */
@@ -212,6 +214,12 @@ export function ScoutingPage() {
   const clearJournalExplorationCache = useAppStore((s) => s.clearJournalExplorationCache);
   const knownSystems = useAppStore((s) => s.knownSystems);
   const knownStations = useAppStore((s) => s.knownStations);
+  const bodyVisits = useAppStore((s) => s.bodyVisits);
+  // System addresses with at least one recorded landing — powers the 👣 Landed filter.
+  const landedSystemAddresses = useMemo(
+    () => new Set(Object.values(bodyVisits).map((v) => v.systemAddress)),
+    [bodyVisits],
+  );
   const commanderPosition = useAppStore((s) => s.commanderPosition);
 
   // My colonized systems = systems I've personally colonized (projects + manual additions)
@@ -349,6 +357,8 @@ export function ScoutingPage() {
 
   // --- Filter state ---
   const [hideColonized, setHideColonized] = useState(true);
+  const [geoOnly, setGeoOnly] = useState(false);
+  const [landedOnly, setLandedOnly] = useState(false);
   const [partialOnly, setPartialOnly] = useState(false);
   // Buckets mirror the measured yield in the commander's scored data (Aug 2026):
   // 41+ ≈53% score ≥60 · 21–40 ≈26% · 10–20 ≈7% · 1–9 ≈0.4% ("skip entirely").
@@ -585,6 +595,7 @@ export function ScoutingPage() {
           economy: qb.economy,
           hasRings: qb.hasRings,
           hasAtmosphere: qb.hasAtmosphere,
+          geoSignals: qb.body.signals?.signals?.['$SAA_SignalType_Geological;'] ?? 0,
         }));
 
       const starDetailsList: StarDetail[] = stars.map((s) => ({
@@ -629,6 +640,7 @@ export function ScoutingPage() {
           : (typeof totalBodyCount === 'number' && totalBodyCount > 0
               ? spanshBodyCount >= totalBodyCount
               : journalCached?.fssAllBodiesFound),
+        scoreVersion: SCORE_FORMULA_VERSION,
         scoutedAt: new Date().toISOString(),
       });
 
@@ -798,9 +810,20 @@ export function ScoutingPage() {
       // Partial-only filter — just the systems with a known body total but unrecorded bodies.
       if (partialOnly && !(saved && scanCompleteness(saved).isPartial)) return false;
 
+      // Geo filter — systems with at least one geological-signal body. Persisted
+      // geoCount (v1.31+ scores) first; falls back to this run's bodyDetails.
+      if (geoOnly) {
+        const gc = (saved?.score as { geoCount?: number } | undefined)?.geoCount ?? 0;
+        const runGeo = sys.bodyDetails?.some((bd) => (bd.geoSignals ?? 0) > 0) ?? false;
+        if (gc <= 0 && !runGeo) return false;
+      }
+
+      // Landed filter — a recorded surface set-down anywhere in this system.
+      if (landedOnly && !landedSystemAddresses.has(sys.search.id64)) return false;
+
       return true;
     });
-  }, [sortedSystems, hideColonized, partialOnly, bodyCountFilter, sourceFilters, colonizedSystems, scoutedSystems, journalExplorationCache]);
+  }, [sortedSystems, hideColonized, partialOnly, geoOnly, landedOnly, landedSystemAddresses, bodyCountFilter, sourceFilters, colonizedSystems, scoutedSystems, journalExplorationCache]);
 
   // Keep filteredRef in sync so scoutAll always uses the latest filtered list
   filteredRef.current = filteredSystems;
@@ -1097,8 +1120,10 @@ export function ScoutingPage() {
                 {([
                   ['Stars', 'starPoints'],
                   ['Atmosphere', 'atmospherePoints'],
+                  ['Diversity', 'diversityPoints'],
                   ['Oxygen', 'oxygenPoints'],
                   ['Exotic atmo', 'exoticPoints'],
+                  ['Epic view', 'epicPoints'],
                   ['Rings', 'ringPoints'],
                   ['Proximity', 'proximityPoints'],
                   ['Economy', 'economyPoints'],
@@ -1113,6 +1138,7 @@ export function ScoutingPage() {
                         const sd = scoutedSystems[id];
                         let detail = '';
                         if (key === 'atmospherePoints') detail = `(${sd?.score.atmosphereCount ?? 0})`;
+                        if (key === 'diversityPoints') detail = `(${sd?.score.distinctAtmoClasses ?? 0} classes)`;
                         if (key === 'oxygenPoints') detail = `(${sd?.score.oxygenCount ?? 0})`;
                         if (key === 'exoticPoints') detail = `(${sd?.score.exoticCount ?? 0})`;
                         if (key === 'ringPoints') detail = `(${sd?.score.ringCount ?? 0})`;
@@ -1594,6 +1620,7 @@ export function ScoutingPage() {
                   const visited: typeof boxelInfo.enum.gaps = [];
                   const mapped: Array<{ index: number; id64: string; name: string; bodyCount: number }> = [];
                   const knownSameName: Array<{ index: number; id64: string; name: string; bodyCount: number }> = [];
+                  const neverScanned: Array<{ index: number; id64: string; name: string }> = [];
                   for (const g of boxelInfo.enum.gaps) {
                     if (g.id64 !== null && visitedKeys.has(g.id64)) { visited.push(g); continue; }
                     const resolved = g.id64 !== null ? boxelNameLookups[g.id64] : undefined;
@@ -1603,7 +1630,13 @@ export function ScoutingPage() {
                       // caps in dense core boxels) — calling "e1-0 → e1-0" a rename was wrong.
                       const expected = `${boxelInfo.enum.prefix}${g.index}`;
                       if (resolved.name.toLowerCase() === expected.toLowerCase()) {
-                        knownSameName.push({ index: g.index, id64: g.id64, name: resolved.name, bodyCount: resolved.bodyCount });
+                        // Dump has the system but ZERO recorded bodies: position known
+                        // (someone jumped through), never FSS'd — still a real target.
+                        if (resolved.bodyCount === 0) {
+                          neverScanned.push({ index: g.index, id64: g.id64, name: resolved.name });
+                        } else {
+                          knownSameName.push({ index: g.index, id64: g.id64, name: resolved.name, bodyCount: resolved.bodyCount });
+                        }
                       } else {
                         mapped.push({ index: g.index, id64: g.id64, name: resolved.name, bodyCount: resolved.bodyCount });
                       }
@@ -1617,16 +1650,29 @@ export function ScoutingPage() {
                       {boxelResolving && (
                         <div className="text-[11px] text-muted-foreground italic">Resolving names… checking gaps against Spansh by id64.</div>
                       )}
-                      {/* 🟢 The real targets — no Spansh data */}
-                      {unclassified.length > 0 && (
+                      {/* 🟢 The real targets — no Spansh body data (unknown OR 0-body positions) */}
+                      {(unclassified.length > 0 || neverScanned.length > 0) && (
                         <div>
                           <div className="text-xs text-green-300 font-medium mb-1">
-                            {'\u{1F7E2}'} {unclassified.length} unclassified &mdash; no data yet, go FSS:
+                            {'\u{1F7E2}'} {unclassified.length + neverScanned.length} unclassified &mdash; no body data yet, go FSS
+                            {neverScanned.length > 0 && (
+                              <span className="text-green-300/60"> ({neverScanned.length} of them position-known ⚬)</span>
+                            )}
+                            :
                           </div>
                           <div className="flex flex-wrap gap-1.5">
                             {unclassified.map((g) => (
                               <span key={g.index} className="text-[11px] font-mono bg-amber-500/10 text-amber-200 border border-amber-500/30 rounded px-1.5 py-0.5 select-all">
                                 {boxelInfo.enum.prefix}{g.index}
+                              </span>
+                            ))}
+                            {neverScanned.map((m) => (
+                              <span
+                                key={`ns-${m.index}`}
+                                title="In Spansh with 0 bodies — position known, never scanned"
+                                className="text-[11px] font-mono bg-amber-500/10 text-amber-200/90 border border-amber-500/30 border-dashed rounded px-1.5 py-0.5 select-all"
+                              >
+                                {m.name} ⚬
                               </span>
                             ))}
                           </div>
@@ -1763,6 +1809,26 @@ export function ScoutingPage() {
                   className="accent-amber-500"
                 />
                 {'⚠'} Partial only
+              </label>
+              {/* Filter: geo-signal systems (surface-mining venues) */}
+              <label className="flex items-center gap-1.5 text-xs text-orange-300 cursor-pointer select-none" title="Only systems with geological signals (needs v1.31+ score or this run's bodies)">
+                <input
+                  type="checkbox"
+                  checked={geoOnly}
+                  onChange={(e) => setGeoOnly(e.target.checked)}
+                  className="accent-orange-500"
+                />
+                {'\u{1F30B}'} Geo only
+              </label>
+              {/* Filter: systems where you've actually set down */}
+              <label className="flex items-center gap-1.5 text-xs text-sky-300 cursor-pointer select-none" title="Only systems with a recorded landing">
+                <input
+                  type="checkbox"
+                  checked={landedOnly}
+                  onChange={(e) => setLandedOnly(e.target.checked)}
+                  className="accent-sky-500"
+                />
+                {'\u{1F463}'} Landed
               </label>
               {/* Filter: body count */}
               <select
@@ -2107,6 +2173,9 @@ export function ScoutingPage() {
                       {sys.score.epicView?.isEpic && (
                         <div className="mb-2 text-sm text-violet-300">
                           {'✨'} Epic view {'—'} {sys.score.epicView.reasons?.join('  ·  ')}
+                          {(sys.score.epicPoints ?? 0) > 0 && (
+                            <span className="ml-2 text-foreground">+{sys.score.epicPoints}</span>
+                          )}
                         </div>
                       )}
                       <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-sm max-w-lg">
@@ -2127,6 +2196,16 @@ export function ScoutingPage() {
                             </div>
                             <div className="text-right text-foreground">
                               +{sys.score.atmospherePoints}
+                            </div>
+                          </>
+                        )}
+                        {(sys.score.diversityPoints ?? 0) > 0 && (
+                          <>
+                            <div className="text-muted-foreground">
+                              {'\u{1F308}'} {sys.score.distinctAtmoClasses} distinct atmo classes
+                            </div>
+                            <div className="text-right text-foreground">
+                              +{sys.score.diversityPoints}
                             </div>
                           </>
                         )}
@@ -2278,6 +2357,7 @@ export function ScoutingPage() {
                                 <th className="text-left py-0.5 pr-2 font-medium">Atmosphere</th>
                                 <th className="text-right py-0.5 pr-2 font-medium">Temp</th>
                                 <th className="text-right py-0.5 pr-2 font-medium">Dist</th>
+                                <th className="text-right py-0.5 pr-2 font-medium" title="Geological signals">{'\u{1F30B}'}</th>
                                 <th className="text-left py-0.5 font-medium">Econ</th>
                               </tr>
                             </thead>
@@ -2295,6 +2375,7 @@ export function ScoutingPage() {
                                   <td className="py-0.5 pr-2 whitespace-nowrap">{bd.atmosphereType}</td>
                                   <td className="py-0.5 pr-2 text-right">{Math.round(bd.surfaceTemp)} K</td>
                                   <td className="py-0.5 pr-2 text-right">{Math.round(bd.distanceLs)} ls</td>
+                                  <td className="py-0.5 pr-2 text-right">{(bd.geoSignals ?? 0) > 0 ? bd.geoSignals : '—'}</td>
                                   <td className="py-0.5 whitespace-nowrap">{bd.economy}</td>
                                 </tr>
                               ))}

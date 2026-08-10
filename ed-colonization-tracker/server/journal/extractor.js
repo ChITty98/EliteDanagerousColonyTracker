@@ -422,6 +422,8 @@ export function extractKnowledgeBaseFromEvents(parsed, settings) {
   const supercruiseEntryEvents = parsed.supercruiseEntryEvents || [];
   const systemClaimEvents = parsed.systemClaimEvents || [];
   const touchdownEvents = parsed.touchdownEvents || [];
+  const approachBodyEvents = parsed.approachBodyEvents || [];
+  const scanOrganicEvents = parsed.scanOrganicEvents || [];
 
   // Visit counts
   const systemVisitCounts = new Map();
@@ -564,11 +566,55 @@ export function extractKnowledgeBaseFromEvents(parsed, settings) {
     });
   }
 
+  // BodyID → name resolution. ScanOrganic carries only a numeric Body (= BodyID),
+  // and pre-2019 Touchdowns carry no body at all; ApproachBody and Scan both pair
+  // the id with the name, so they seed the lookup for everyone else.
+  const bodyNameById = new Map(); // "systemAddress|bodyId" -> { name, systemName }
+  for (const ev of approachBodyEvents) {
+    if (ev.SystemAddress == null || ev.BodyID == null || !ev.Body) continue;
+    bodyNameById.set(`${ev.SystemAddress}|${ev.BodyID}`, { name: ev.Body, systemName: ev.StarSystem });
+  }
+  for (const ev of (parsed.scanEvents || [])) {
+    if (ev.SystemAddress == null || ev.BodyID == null || !ev.BodyName) continue;
+    const k = `${ev.SystemAddress}|${ev.BodyID}`;
+    if (!bodyNameById.has(k)) bodyNameById.set(k, { name: ev.BodyName, systemName: ev.StarSystem });
+  }
+
+  // Pre-2019 Touchdowns predate the Body/StarSystem/SystemAddress fields — they carry
+  // only a timestamp and lat/lon, so they all collapsed into one "undefined|undefined"
+  // ledger entry. Attribute each to the most recent ApproachBody before it.
+  const approachesByTime = approachBodyEvents
+    .filter((e) => e.Body && e.timestamp)
+    .sort((a, b) => (a.timestamp < b.timestamp ? -1 : 1));
+  const attributeOrphan = (ts) => {
+    let hit = null;
+    for (const a of approachesByTime) {
+      if (a.timestamp > ts) break;
+      hit = a;
+    }
+    return hit;
+  };
+
   // Touchdown → body visits
   const bodyVisitsMap = new Map();
+  let orphanLandings = 0;
   for (const ev of touchdownEvents) {
     if (ev.PlayerControlled === false) continue;
-    const k = `${ev.SystemAddress}|${ev.Body}`;
+    let body = ev.Body;
+    let systemName = ev.StarSystem;
+    let systemAddress = ev.SystemAddress;
+    if (!body) {
+      const src = attributeOrphan(ev.timestamp);
+      if (src) {
+        body = src.Body;
+        systemName = src.StarSystem;
+        systemAddress = src.SystemAddress;
+      } else {
+        orphanLandings++;
+        continue; // unattributable — drop rather than pollute the ledger with a null key
+      }
+    }
+    const k = `${systemAddress}|${body}`;
     const existing = bodyVisitsMap.get(k);
     if (existing) {
       existing.landingCount += 1;
@@ -578,13 +624,51 @@ export function extractKnowledgeBaseFromEvents(parsed, settings) {
       }
     } else {
       bodyVisitsMap.set(k, {
-        bodyName: ev.Body,
-        systemName: ev.StarSystem,
-        systemAddress: ev.SystemAddress,
+        bodyName: body,
+        systemName,
+        systemAddress,
         landingCount: 1,
         lastLanded: ev.timestamp,
         lastCoords: { lat: ev.Latitude, lon: ev.Longitude },
       });
+    }
+  }
+  if (orphanLandings > 0) {
+    console.log(`[Journal] ${orphanLandings} legacy landing(s) had no body context — not attributed.`);
+  }
+
+  // ScanOrganic → per-body exobiology ledger (brain trees et al.). Three events per
+  // organism (Log → Sample → Analyse); the ANALYSE stage is the completed scan, so
+  // species are counted as "collected" only at that stage.
+  const organicMap = new Map(); // "systemAddress|bodyId" -> record
+  for (const ev of scanOrganicEvents) {
+    if (ev.SystemAddress == null || ev.Body == null) continue;
+    const k = `${ev.SystemAddress}|${ev.Body}`;
+    const named = bodyNameById.get(k);
+    let rec = organicMap.get(k);
+    if (!rec) {
+      rec = {
+        systemAddress: ev.SystemAddress,
+        bodyId: ev.Body,
+        bodyName: named ? named.name : null,
+        systemName: named ? named.systemName : null,
+        genera: [],
+        species: [],
+        analysedSpecies: [],
+        scanCount: 0,
+        lastScan: ev.timestamp,
+      };
+      organicMap.set(k, rec);
+    }
+    if (!rec.bodyName && named) { rec.bodyName = named.name; rec.systemName = named.systemName; }
+    rec.scanCount++;
+    if (ev.timestamp > rec.lastScan) rec.lastScan = ev.timestamp;
+    const genus = ev.Genus_Localised || ev.Genus;
+    const species = ev.Species_Localised || ev.Species;
+    if (genus && !rec.genera.includes(genus)) rec.genera.push(genus);
+    if (species && !rec.species.includes(species)) rec.species.push(species);
+    if (ev.ScanType === 'Analyse' && species && !rec.analysedSpecies.includes(species)) {
+      rec.analysedSpecies.push(species);
     }
   }
 
@@ -596,6 +680,7 @@ export function extractKnowledgeBaseFromEvents(parsed, settings) {
     fleetCarriers: Array.from(fcMap.values()),
     claimedSystems: Array.from(new Set(systemClaimEvents.map((e) => e.StarSystem))),
     bodyVisits: Array.from(bodyVisitsMap.values()),
+    organicScans: Array.from(organicMap.values()),
   };
 }
 
@@ -993,10 +1078,37 @@ export function extractExplorationData(journalDir) {
       };
       const existingIdx = sys.scannedBodies.findIndex((b) => b.bodyId === ev.BodyID || b.bodyName === ev.BodyName);
       if (existingIdx >= 0) {
+        // Re-scan replaces the record wholesale — carry attached signal counts
+        // forward (FSSBodySignals may have landed before this later re-scan).
+        const prev = sys.scannedBodies[existingIdx];
+        if (prev.bioSignals != null && body.bioSignals == null) body.bioSignals = prev.bioSignals;
+        if (prev.geoSignals != null && body.geoSignals == null) body.geoSignals = prev.geoSignals;
         sys.scannedBodies[existingIdx] = body;
       } else {
         sys.scannedBodies.push(body);
       }
+    }
+    // FSSBodySignals — attach bio/geo counts (the extractor previously dropped
+    // these; runs after the Scan loop so same-file signals find their bodies).
+    for (const ev of parsed.fssBodySignalsEvents) {
+      const sys = systemMap.get(ev.SystemAddress);
+      if (!sys) continue;
+      if (ev.timestamp > sys.lastSeen) sys.lastSeen = ev.timestamp;
+      const body = sys.scannedBodies.find((b) => b.bodyId === ev.BodyID || b.bodyName === ev.BodyName);
+      const target = body || {
+        bodyId: ev.BodyID,
+        bodyName: ev.BodyName,
+        type: 'Planet',
+        subType: '',
+        distanceToArrival: 0,
+        bioSignals: 0,
+        geoSignals: 0,
+      };
+      for (const sig of ev.Signals || []) {
+        if (String(sig.Type).includes('Biological')) target.bioSignals = sig.Count;
+        else if (String(sig.Type).includes('Geological')) target.geoSignals = sig.Count;
+      }
+      if (!body) sys.scannedBodies.push(target);
     }
   }
 

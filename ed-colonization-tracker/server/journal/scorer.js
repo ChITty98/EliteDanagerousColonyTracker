@@ -9,6 +9,10 @@
 
 // --- Body Filter Pipeline ---
 
+// Bumped whenever the formula changes meaning — rescore tools stamp it into entries
+// so v1-formula scores are distinguishable from v2 until re-priced.
+export const SCORE_FORMULA_VERSION = 2;
+
 export const ICY_SUBTYPES = new Set(['Icy body', 'Rocky ice world', 'Rocky Ice world']);
 
 /** Check if a body has a real atmosphere (thin counts, but "No atmosphere"/"None"/empty don't) */
@@ -414,6 +418,7 @@ function immediateParent(body, byId) {
 
 export function detectEpicView(bodies) {
   const reasons = [];
+  const criteria = []; // distinct criterion kinds — each is worth points in v2 scoring
   if (!Array.isArray(bodies) || bodies.length === 0) return { isEpic: false, reasons };
   const byId = new Map(bodies.map((b) => [b.bodyId, b]));
   const realStars = bodies.filter((b) => b.type === 'Star' && !isBrownDwarfStar(b));
@@ -477,6 +482,7 @@ export function detectEpicView(bodies) {
   if (tightestAu <= 0.1) {
     const pair = tightestPair ? ` (${short(tightestPair[0])}, ${short(tightestPair[1])})` : '';
     reasons.push(`tight binary ${tightestAu.toFixed(3)} AU${pair}`);
+    criteria.push('binary');
   }
 
   // 2. Big-sky parent — landable moon whose parent subtends >= BIG_SKY_MIN_DEG overhead.
@@ -494,7 +500,7 @@ export function detectEpicView(bodies) {
     const deg = apparentDeg(parentRadiusKm, sepKm);
     if (deg > biggestDeg) { biggestDeg = deg; biggestBody = b; }
   }
-  if (biggestDeg >= BIG_SKY_MIN_DEG) reasons.push(`${short(biggestBody)} — parent fills ${Math.round(biggestDeg)}° of sky`);
+  if (biggestDeg >= BIG_SKY_MIN_DEG) { reasons.push(`${short(biggestBody)} — parent fills ${Math.round(biggestDeg)}° of sky`); criteria.push('bigSky'); }
 
   // 3. Ring-edge moon — a landable moon orbiting AT the ring edge (or inside the rings):
   // sma within RING_EDGE_MAX_RATIO of the ring outer radius, with the rings still spanning
@@ -510,6 +516,7 @@ export function detectEpicView(bodies) {
     const smaKm = b.semiMajorAxis * AU_KM;
     if (smaKm / ringOuterKm <= RING_EDGE_MAX_RATIO && apparentDeg(ringOuterKm, smaKm) >= RING_EDGE_MIN_DEG) {
       reasons.push(`${short(b)} — ${smaKm < ringOuterKm ? 'orbits INSIDE the rings of' : 'skims the ring edge of'} ${short(parent)}`);
+      criteria.push('ringEdge');
       break;
     }
   }
@@ -543,9 +550,10 @@ export function detectEpicView(bodies) {
   }
   if (twinDeg >= TWIN_PAIR_MIN_DEG && twinPair) {
     reasons.push(`${short(twinPair[0])} & ${short(twinPair[1])} — twin worlds, ${Math.round(twinDeg)}° in each other's sky`);
+    criteria.push('twins');
   }
 
-  return { isEpic: reasons.length > 0, reasons };
+  return { isEpic: reasons.length > 0, reasons, criteria };
 }
 
 export function scoreSystem(bodies) {
@@ -578,15 +586,31 @@ export function scoreSystem(bodies) {
       if (a.isPrimaryStar !== b.isPrimaryStar) return a.isPrimaryStar ? 1 : -1;
       return a.distanceLs - b.distanceLs;
     });
+  // v2 (2026-08-05): per-CLASS ladder — the first body of each DISTINCT atmosphere class
+  // earns the full ladder rate; further bodies of a class already seen earn a flat +3.
+  // Field-calibrated on the commander's own inspections: clone families ("5 midget water
+  // planets… meh") were stacking +5s forever and burying genuinely diverse systems.
+  const seenAtmoClasses = new Set();
+  const atmoClassOf = (t) => String(t || '').toLowerCase()
+    .replace(/^hot /, '').replace(/^thin /, '').replace(/-rich/, '').trim();
   for (const qb of atmosBodies) {
     atmosphereCount++;
-    const basePoints =
-      atmosphereCount === 1 ? 15 : atmosphereCount === 2 ? 12 : atmosphereCount === 3 ? 9 : 5;
+    const cls = atmoClassOf(qb.body.atmosphereType);
+    const firstOfClass = !seenAtmoClasses.has(cls);
+    if (firstOfClass) seenAtmoClasses.add(cls);
+    const ladderIdx = seenAtmoClasses.size; // distinct classes seen so far
+    const basePoints = firstOfClass
+      ? (ladderIdx === 1 ? 15 : ladderIdx === 2 ? 12 : ladderIdx === 3 ? 9 : 5)
+      : 3;
     const decay = qb.isPrimaryStar ? distanceDecay(qb.distanceLs) : 1.0;
     // Icy atmospheric worlds are less valuable than rocky/HMC ones
     const icyPenalty = ICY_SUBTYPES.has(qb.body.subType) ? 0.5 : 1.0;
     atmospherePoints += Math.round(basePoints * decay * icyPenalty);
   }
+
+  // --- Diversity Bonus (cap 20) — distinct airs are the delight; clones are not ---
+  const distinctAtmoClasses = seenAtmoClasses.size;
+  const diversityPoints = Math.min(Math.max(0, distinctAtmoClasses - 1) * 5, 20);
 
   // --- Oxygen Atmosphere Bonus (non-icy only, distance-decayed, cap 45) ---
   let oxygenPoints = 0;
@@ -657,14 +681,32 @@ export function scoreSystem(bodies) {
   const bodyCount = qualBodies.length;
   const bodyCountPoints = Math.min(bodyCount * 2, 15);
 
+  // --- Epic View Points (cap 30) — v2: geometry is a HOME-PICKER, priced like one.
+  // "epic is probably the reason I'd make a system home" — HIP 47126 was claimed for
+  // its epic tight pair; the twin worlds then hosted the first two builds. +10 per
+  // distinct triggered criterion (twins / ringEdge / bigSky / binary).
+  const epicPoints = Math.min((epicView.criteria || []).length * 10, 30);
+
+  // Geo signal census — no points (yet); persisted so the UI can filter/badge
+  // surface-mining venues without re-fetching bodies. Counts every body with
+  // geological signals, landable or not.
+  let geoCount = 0;
+  let geoSiteTotal = 0;
+  for (const b of bodies) {
+    const g = b.signals?.signals?.['$SAA_SignalType_Geological;'] || 0;
+    if (g > 0) { geoCount++; geoSiteTotal += g; }
+  }
+
   const total =
-    starPoints + atmospherePoints + oxygenPoints + exoticPoints + ringPoints + proximityPoints + economyPoints + bodyCountPoints;
+    starPoints + atmospherePoints + diversityPoints + oxygenPoints + exoticPoints + ringPoints + proximityPoints + economyPoints + bodyCountPoints + epicPoints;
 
   return {
     starPoints,
     starDetails,
     atmospherePoints,
     atmosphereCount,
+    diversityPoints,
+    distinctAtmoClasses,
     oxygenPoints,
     oxygenCount,
     exoticPoints,
@@ -678,7 +720,10 @@ export function scoreSystem(bodies) {
     bodyCountPoints,
     bodyCount,
     starCount: stars.length, // all stars (incl. brown dwarfs / remnants), for the "multiple stars" note
-    epicView, // { isEpic, reasons[] } — geometry flag, not score points
+    epicView, // { isEpic, reasons[], criteria[] }
+    epicPoints,
+    geoCount,
+    geoSiteTotal,
     total,
     hasRingedLandable: ringCount > 0,
     // Consistent with oxygenPoints: icy oxygen bodies earn nothing, so they
@@ -699,6 +744,9 @@ export function emptyScore() {
     starDetails: [],
     atmospherePoints: 0,
     atmosphereCount: 0,
+    diversityPoints: 0,
+    distinctAtmoClasses: 0,
+    epicPoints: 0,
     oxygenPoints: 0,
     oxygenCount: 0,
     exoticPoints: 0,
@@ -713,6 +761,8 @@ export function emptyScore() {
     bodyCount: 0,
     starCount: 0,
     epicView: { isEpic: false, reasons: [] },
+    geoCount: 0,
+    geoSiteTotal: 0,
     total: 0,
     hasRingedLandable: false,
     hasOxygenAtmosphere: false,

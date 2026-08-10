@@ -56,6 +56,10 @@ import {
   handleFSDJumpOverlay,
   handleDockedOverlay,
   handleScanEventOverlay,
+  handleFSSBodySignalsOverlay,
+  handleTouchdownVisit,
+  handleScanOrganicLive,
+  noteBodyName,
   handleFSSAllBodiesFoundOverlay,
   handleTargetSelectedOverlay,
   handleNavRoutePlottedOverlay,
@@ -123,6 +127,7 @@ export function processNewEvents(parsed, deps) {
   processMaterialEvents(parsed, existing, patch, extraEvents);
   processStatisticsEvents(parsed, existing, patch);
   processCodexEvents(parsed, existing, patch);
+  processSurfaceEvents(parsed, existing, deps);
 
   // Overlay message builders (run AFTER other processors so they see a
   // consistent view of the state — e.g. handleDockedOverlay checks
@@ -148,6 +153,11 @@ export function processNewEvents(parsed, deps) {
     // Scan — ringed landable / oxygen / nitrogen / first-footfall pops
     for (const ev of parsed.scanEvents) {
       try { handleScanEventOverlay(ev, existing, deps); } catch (e) { console.error('[Overlay] Scan error:', e && e.message); }
+    }
+    // FSSBodySignals — bio/geo counts onto the live scan buffer (after Scans so
+    // same-batch signals find their bodies)
+    for (const ev of parsed.fssBodySignalsEvents) {
+      try { handleFSSBodySignalsOverlay(ev); } catch (e) { console.error('[Overlay] FSSBodySignals error:', e && e.message); }
     }
     // FSSAllBodiesFound — async Spansh/journal scoring
     for (const ev of parsed.fssAllBodiesFoundEvents) {
@@ -282,6 +292,28 @@ function resolveBodyNameById(existing, systemAddress, bodyId) {
 // $Codex_Ent_Seed_Name;). If we can't pin the body (no cached bodies for the
 // system), skip rather than flag the whole system. Never downgrades an existing
 // flag (manual confirmation stays manual).
+/**
+ * Surface activity — landings and exobiology. Deliberately OUTSIDE the overlay
+ * block: these ledgers must stay current whether or not EDMC/the overlay is
+ * connected (the same mistake that left bodyVisits Sync-All-only for months).
+ */
+function processSurfaceEvents(parsed, existing, deps) {
+  if (!deps || !deps.applyStatePatch) return;
+  // Learn BodyID → name first; ScanOrganic reports only a numeric body id.
+  for (const ev of parsed.approachBodyEvents || []) {
+    noteBodyName(ev.SystemAddress, ev.BodyID, ev.Body, ev.StarSystem);
+  }
+  for (const ev of parsed.scanEvents || []) {
+    noteBodyName(ev.SystemAddress, ev.BodyID, ev.BodyName, ev.StarSystem);
+  }
+  for (const ev of parsed.touchdownEvents || []) {
+    try { handleTouchdownVisit(ev, existing, deps); } catch (e) { console.error('[Surface] Touchdown error:', e && e.message); }
+  }
+  for (const ev of parsed.scanOrganicEvents || []) {
+    try { handleScanOrganicLive(ev, existing, deps); } catch (e) { console.error('[Surface] ScanOrganic error:', e && e.message); }
+  }
+}
+
 function processCodexEvents(parsed, existing, patch) {
   const evs = parsed.codexEntryEvents;
   if (!evs || evs.length === 0) return;

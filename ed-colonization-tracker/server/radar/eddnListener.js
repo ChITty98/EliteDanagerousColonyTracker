@@ -23,6 +23,7 @@ import {
 } from './radarState.js';
 import { isColonisableAtmosphere } from '../journal/scorer.js';
 import { pushRadarBeat } from '../ai/copilotRadar.js';
+import { noteColonisationEvent } from '../chains/chainWatch.js';
 
 const EDDN_HOST = 'eddn.edcd.io';
 const EDDN_PORT = 9500;
@@ -65,6 +66,15 @@ function onRaw(body) {
   const pos = Array.isArray(m.StarPos) ? m.StarPos : null;
   const inRad = !!(pos && inRadius(pos));
   noteEddn(inRad);
+
+  // Chain Watch feeds GALAXY-WIDE — colonization events are rare and precious, and the
+  // 200-ly gate below is a radar concern, not a frontier-tracking one. Own events still
+  // excluded (your own builds are not "someone else's chain").
+  if (isJournal && sys && (BUILD_EVENTS.has(m.event) || (m.event === 'Docked' && /ColonisationShip|Construction/i.test(m.StationName || '')))
+      && !isOwnEvent(m.event || '', sys)) {
+    const grewChain = noteColonisationEvent(sys, pos, m.event);
+    if (grewChain) pushRadarBeat('chain', { sys });
+  }
 
   if (!inRad) return;                    // positionless or out of range — not this scope's business
   if (!isJournal) {                      // commodity/outfitting etc. inside radius still = presence

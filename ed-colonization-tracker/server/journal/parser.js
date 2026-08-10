@@ -51,6 +51,10 @@ export function parseJournalLines(lines) {
   // Planetary landings
   const touchdownEvents = [];
   const liftoffEvents = [];
+  // ApproachBody — the only body context for pre-2019 Touchdowns (no Body field back then)
+  const approachBodyEvents = [];
+  // Exobiology (brain trees et al.)
+  const scanOrganicEvents = [];
   // Chat
   const sendTextEvents = [];
   // Combat
@@ -129,6 +133,8 @@ export function parseJournalLines(lines) {
       case 'MarketBuy': marketBuyEvents.push(event); break;
       case 'MarketSell': marketSellEvents.push(event); break;
       case 'Touchdown': touchdownEvents.push(event); break;
+      case 'ApproachBody': approachBodyEvents.push(event); break;
+      case 'ScanOrganic': scanOrganicEvents.push(event); break;
       case 'Liftoff': liftoffEvents.push(event); break;
       case 'SendText': sendTextEvents.push(event); break;
       case 'Bounty': bountyEvents.push(event); break;
@@ -192,6 +198,8 @@ export function parseJournalLines(lines) {
     marketSellEvents,
     touchdownEvents,
     liftoffEvents,
+    approachBodyEvents,
+    scanOrganicEvents,
     sendTextEvents,
     bountyEvents,
     factionKillBondEvents,

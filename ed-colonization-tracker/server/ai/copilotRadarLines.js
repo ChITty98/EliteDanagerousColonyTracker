@@ -22,6 +22,11 @@ export default {
       "Someone found something shiny near {system}. It's not ours. It COULD be ours. I'm just the radar guy.",
       "New chart {dist} light-years away with your kind of atmosphere on it. First one there gets to name the paperwork.",
     ],
+    'radar-chain': [
+      "Somebody's pushed a colony chain further out near {system}, in {region}. That opens up some space, if you're feeling acquisitive.",
+      "Chain Watch says the frontier moved — new anchor near {system}. More reachable galaxy than there was yesterday.",
+      "Someone's line grew a link near {system}. Their hauling, your opportunity. That's the neighborly economy.",
+    ],
     'radar-quiet': [
       "No traffic within two hundred light-years that I've heard of. Just us and the rocks. I like it.",
       "Scope's clear — nobody out here that I've heard of. The quiet kind of night.",
@@ -42,6 +47,11 @@ export default {
       "Someone just charted a match for your criteria, {dist} light-years away. First-mover windows don't stay open. Teaching moment over.",
       "Live discovery near {system} — passes your site test. It wasn't in your data an hour ago. Now it's in your ear.",
     ],
+    'radar-chain': [
+      "Chain Watch update: someone extended a colony chain near {system}, {region}. New space just came into branch range — logged for your planning list.",
+      "A colonisation chain grew near {system}. Every link somebody else builds is reach you didn't have to haul for. Worth a look when you're planning.",
+      "Frontier movement in {region} — new anchor near {system}. I only report where the door opened. Walking through it is your department.",
+    ],
     'radar-quiet': [
       "No commanders within two hundred light-years that I've heard of. Statistically restful.",
       "Scope's quiet — nothing on the stream from this neighborhood. Just us, working.",
@@ -60,6 +70,11 @@ export default {
       "A body {dist} light-years out just matched your criteria. Freshly charted. Unclaimed, probably. Briefly.",
       "New scan near {system} passes your site test. The odds of it staying unnoticed are poor. Act accordingly.",
       "Live match on the stream, {dist} light-years away. I would call it luck, but someone else's scanner did the work.",
+    ],
+    'radar-chain': [
+      "A colony chain extended near {system}, in {region}. Someone else's logistics just improved your map. Take the win.",
+      "Chain Watch: new anchor near {system}. The reachable frontier grew. I report doors, not destinations.",
+      "Frontier expansion logged in {region}. Someone is building a road. Roads run both directions.",
     ],
     'radar-quiet': [
       "No activity within two hundred light-years that I have heard of. Either we are alone, or everyone else is quieter than you.",

@@ -1,7 +1,7 @@
 {
   "name": "ed-colonization-tracker",
   "private": true,
-  "version": "1.28.11",
+  "version": "1.32.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

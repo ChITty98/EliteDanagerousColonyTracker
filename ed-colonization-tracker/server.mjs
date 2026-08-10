@@ -73,6 +73,7 @@ import { startEddnListener, recenterRadar } from './server/radar/eddnListener.js
 import { snapshot as radarSnapshot, setCenterTraffic } from './server/radar/radarState.js';
 import { getEdsmTraffic } from './server/radar/traffic.js';
 import { getJournalStats, refreshJournalStats } from './server/journal/history.js';
+import { initChainWatch, seedChainWatch, snapshotChains, defaultRegions, resolvePendingRegions } from './server/chains/chainWatch.js';
 import { refreshLookback } from './server/radar/lookback.js';
 import { searchRingsBySignals } from './server/journal/spansh.js';
 
@@ -124,6 +125,7 @@ function validateToken(req) {
 // --- Server-side JSON state storage ---
 const STATE_FILE = path.join(APP_DIR, 'colony-data.json');
 const JOURNAL_STATS_FILE = path.join(APP_DIR, 'journal-stats.json');
+const CHAIN_WATCH_FILE = path.join(APP_DIR, 'chain-watch.json');
 let journalStatsScanInFlight = false;
 const GALLERY_DIR = path.join(APP_DIR, 'colony-images');
 const GALLERY_META = path.join(APP_DIR, 'colony-gallery.json');
@@ -235,6 +237,7 @@ const APPEND_ONLY_KEYS = new Set([
   'knownSystems',             // system info from FSS/Spansh
   'systemAddressMap',         // name ↔ address mapping
   'bodyVisits',               // landings — exploration history
+  'organicScans',             // exobiology catalogued per body — journal-derived
   'bodyNotes',                // player-authored notes
   'fleetCarriers',            // FC dossier
   'fleetCarrierSpaceUsage',   // FC space tracking
@@ -771,6 +774,41 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Chain Watch — colonization frontier chains, region-filtered. GET renders the ledger;
+  // POST /seed (re)runs the bounded Spansh is_being_colonised seed.
+  if (pathname === '/api/chains' && req.method === 'GET') {
+    const st = readStateFile();
+    const url = new URL(req.url, 'http://x');
+    const qRegions = (url.searchParams.get('regions') || '').split('|').map((s) => s.trim()).filter(Boolean);
+    const p = st.commanderPosition;
+    const center = p && p.coordinates ? [p.coordinates.x, p.coordinates.y, p.coordinates.z] : null;
+    const holdings = [];
+    for (const pr of st.projects || []) {
+      const kb = (st.knownSystems || {})[(pr.systemName || '').toLowerCase()];
+      if (kb && kb.coordinates) holdings.push([kb.coordinates.x, kb.coordinates.y, kb.coordinates.z]);
+    }
+    const finish = (regions) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(Object.assign(snapshotChains({ regions, center, holdings }), { regionsUsed: regions })));
+    };
+    if (qRegions.length) finish(qRegions);
+    else if (Array.isArray(st.settings && st.settings.chainWatchRegions) && st.settings.chainWatchRegions.length) finish(st.settings.chainWatchRegions);
+    else defaultRegions().then(finish).catch(() => finish(['Inner Orion Spur']));
+    return;
+  }
+  if (pathname === '/api/chains/seed' && req.method === 'POST') {
+    const st = readStateFile();
+    const regionsP = Array.isArray(st.settings && st.settings.chainWatchRegions) && st.settings.chainWatchRegions.length
+      ? Promise.resolve(st.settings.chainWatchRegions)
+      : defaultRegions();
+    regionsP.then((regions) => seedChainWatch(regions)
+      .then((r) => console.log('[ChainWatch] seed:', JSON.stringify(r)))
+      .catch((e) => console.error('[ChainWatch] seed failed:', e && e.message)));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ started: true }));
+    return;
+  }
+
   // Journal lifetime stats — cached + incremental (no more full rescans per visit).
   // GET returns instantly from journal-stats.json; POST /refresh catches up on new
   // files in the background with progress over SSE.
@@ -921,7 +959,7 @@ const server = http.createServer((req, res) => {
           }
 
           // Build sparse PATCH — shapes per MERGE_STRATEGIES in src/store/index.ts:
-          //   knownSystems/knownStations/systemAddressMap/bodyVisits/stationTravelTimes/journalExplorationCache = map
+          //   knownSystems/knownStations/systemAddressMap/bodyVisits/organicScans/stationTravelTimes/journalExplorationCache = map
           //   fleetCarriers = arrayById (idKey: callsign)
           //   visitedMarkets = arrayById (idKey: marketId)
           //   fssSignals = replace (bare array — no canonical id)
@@ -936,6 +974,7 @@ const server = http.createServer((req, res) => {
               __upsert: Object.fromEntries(kb.fleetCarriers.map((fc) => [fc.callsign, fc])),
             },
             bodyVisits: { __upsert: Object.fromEntries(kb.bodyVisits.map((b) => [`${b.systemAddress}|${b.bodyName}`, b])) },
+            organicScans: { __upsert: Object.fromEntries((kb.organicScans || []).map((o) => [`${o.systemAddress}|${o.bodyId}`, o])) },
             stationTravelTimes: { __upsert: travelStats },
             journalExplorationCache: { __upsert: Object.fromEntries(Array.from(exploration.entries()).map(([addr, sys]) => [String(addr), sys])) },
             visitedMarkets: {
@@ -1131,6 +1170,7 @@ const server = http.createServer((req, res) => {
               stations: kb.stations.length,
               fleetCarriers: kb.fleetCarriers.length,
               bodyVisits: kb.bodyVisits.length,
+              organicScans: (kb.organicScans || []).length,
               travelTimes: Object.keys(travelStats).length,
               exploration: exploration.size,
               visitedMarkets: visitedMarkets.length,
@@ -2136,6 +2176,16 @@ server.listen(PORT, '0.0.0.0', () => {
       void refreshLookback(st0, p0.systemName, [p0.coordinates.x, p0.coordinates.y, p0.coordinates.z]);
     }
     startEddnListener({ broadcastEvent });
+    // Chain Watch — persistent frontier ledger; first run seeds from Spansh (bounded),
+    // then EDDN keeps it live. Region drip-resolver runs quietly for live-found anchors.
+    const cw = initChainWatch(CHAIN_WATCH_FILE);
+    if (!Object.keys(cw.seedInfo || {}).filter((k) => k !== 'coloniaRegion').length) {
+      defaultRegions().then((regions) => {
+        console.log('[ChainWatch] first run — seeding regions:', regions.join(', '));
+        return seedChainWatch(regions);
+      }).catch((e) => console.error('[ChainWatch] seed failed:', e && e.message));
+    }
+    setInterval(() => { resolvePendingRegions().catch(() => {}); }, 60_000);
   } catch (e) { console.error('[Radar] start failed:', e && e.message); }
 
   try {

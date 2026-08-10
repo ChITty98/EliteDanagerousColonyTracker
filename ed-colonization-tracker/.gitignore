@@ -50,6 +50,7 @@ mining-log.jsonl
 mining-rings.json
 mining-trophies.json
 journal-stats.json
+chain-watch.json
 mining-annotations.json
 colony-gallery.json
 backups/

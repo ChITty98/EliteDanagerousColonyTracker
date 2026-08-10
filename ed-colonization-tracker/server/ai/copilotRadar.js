@@ -9,7 +9,7 @@ const queue = [];
 const MAX_QUEUE = 4;
 
 // Rate limits per kind — a busy neighborhood must not become a chatterbox.
-const COOLDOWN_MS = { build: 10 * 60_000, lead: 6 * 60_000, quiet: 45 * 60_000 };
+const COOLDOWN_MS = { build: 10 * 60_000, lead: 6 * 60_000, quiet: 45 * 60_000, chain: 30 * 60_000 };
 const lastPushed = {};
 
 export function pushRadarBeat(kind, data = {}) {
@@ -28,6 +28,10 @@ const BEATS = {
   lead: (d) => ({
     key: 'radar-lead', priority: 52, interrupt: false, live: false, mood: 'hyped',
     inputs: { dist: String(d.distLy ?? '?'), system: d.sys || 'a nearby system' },
+  }),
+  chain: (d) => ({
+    key: 'radar-chain', priority: 45, interrupt: false, live: false, mood: 'calm',
+    inputs: { system: d.sys || 'a frontier system', region: d.region || 'the frontier' },
   }),
   quiet: () => ({
     key: 'radar-quiet', priority: 20, interrupt: false, live: false, mood: 'calm',

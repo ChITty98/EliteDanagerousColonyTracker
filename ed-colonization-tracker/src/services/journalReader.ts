@@ -2097,6 +2097,17 @@ export function journalBodiesToSpanshFormat(bodies: JournalScannedBody[], _syste
       mass: 0,
     })),
     parents: b.parents,
+    // FSSBodySignals counts → Spansh signals shape, so journal-scored systems keep
+    // the geo-based Extraction-economy credit and geo survives into cachedBodies.
+    signals: (b.bioSignals || b.geoSignals)
+      ? {
+          genuses: [],
+          signals: {
+            ...(b.bioSignals ? { '$SAA_SignalType_Biological;': b.bioSignals } : {}),
+            ...(b.geoSignals ? { '$SAA_SignalType_Geological;': b.geoSignals } : {}),
+          },
+        }
+      : undefined,
   }));
 }
 

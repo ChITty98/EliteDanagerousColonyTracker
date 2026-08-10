@@ -247,15 +247,18 @@ export interface BoxelEnumeration {
  *
  * Good-citizen: the boxel's own systems are relevance-sorted to the FRONT, so we
  * stop as soon as two pages in a row add no new boxel matches (the rest is junk).
- * That bounds a scan to ~3–10 requests (vs. the loose filter's ~80 to exhaust) —
- * and a boxel tops out around index ~180, so ≤12 pages is plenty.
+ * That bounds a sparse-boxel scan to ~3–10 requests. The page CEILING must cover
+ * dense core boxels too: Colonia-core d-boxels run past 1,800 members (Eol Prou
+ * PX-T d3: max index 1865), and truncating here misfiles every un-fetched member
+ * as a "gap" — each then costing an id64 dump lookup to reclassify. 40 pages
+ * (4,000 results) up front is far cheaper than hundreds of drip lookups after.
  * `prefix` should be the boxel + '-' (e.g. from parseBoxel in starNaming).
  */
 export async function enumerateBoxel(prefix: string): Promise<BoxelEnumeration> {
   const re = new RegExp('^' + prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\d+)$', 'i');
   const seen = new Map<number, BoxelSystem>();
   let pages = 0, emptyStreak = 0;
-  for (let page = 0; page < 12; page++) {
+  for (let page = 0; page < 40; page++) {
     const res = await rateLimitedFetch('/spansh-api/api/systems/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

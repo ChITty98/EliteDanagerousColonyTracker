@@ -234,8 +234,8 @@ describe('scoreSystem components', () => {
       planet({ atmo: 'Thin Neon', dist: 150, parents: [{ Star: s.bodyId }] }),
     ));
     expect(r.total).toBe(
-      r.starPoints + r.atmospherePoints + r.oxygenPoints + r.exoticPoints +
-      r.ringPoints + r.proximityPoints + r.economyPoints + r.bodyCountPoints,
+      r.starPoints + r.atmospherePoints + r.diversityPoints + r.oxygenPoints + r.exoticPoints +
+      r.ringPoints + r.proximityPoints + r.economyPoints + r.bodyCountPoints + r.epicPoints,
     );
   });
 });
@@ -277,10 +277,10 @@ describe('detectEpicView', () => {
     expect(detectEpicView([a, b]).isEpic).toBe(false);
   });
 
-  it('flags a big-sky parent (landable moon, parent subtends ≥ 20°)', () => {
+  it('flags a big-sky parent (landable moon, parent subtends ≥ 45° — the calibrated bar)', () => {
     const giant = eplanet({}); // radius 71,000 km
     giant.radius = 71000;
-    const moon = emoon({ sma: 0.0013, parents: [{ Planet: giant.bodyId }] }); // ~0.0013 AU ≈ 194,000 km → ~40°
+    const moon = emoon({ sma: 0.0009, parents: [{ Planet: giant.bodyId }] }); // ≈134,600 km → ~56°
     const r = detectEpicView([giant, moon]);
     expect(r.isEpic).toBe(true);
     expect(r.reasons.some((x) => /parent fills/.test(x))).toBe(true);
@@ -294,19 +294,19 @@ describe('detectEpicView', () => {
 
   it('flags a ring-edge moon (close to a ringed parent, rings fill its sky), naming moon + parent', () => {
     const giant = eplanet({ name: 'Col 173 Sector AX-J d9-52 2', rings: [{ name: 'A Ring', type: 'Rocky', outerRadius: 300000000 }] }); // 300,000 km
-    const moon = emoon({ name: 'Col 173 Sector AX-J d9-52 2 a', sma: 0.003, parents: [{ Planet: giant.bodyId }] }); // ≈449,000 km → rings span ~68°
+    const moon = emoon({ name: 'Col 173 Sector AX-J d9-52 2 a', sma: 0.00205, parents: [{ Planet: giant.bodyId }] }); // ≈306,700 km → ratio ~1.02 of the ring edge, span ~88°
     const r = detectEpicView([giant, moon]);
     expect(r.isEpic).toBe(true);
-    // short designator strips the common prefix → moon "2 a" skims rings of parent "2"
-    expect(r.reasons.find((x) => /skims rings of/.test(x))).toBe('2 a — skims rings of 2');
+    // short designator strips the common prefix → moon "2 a" skims the ring edge of parent "2"
+    expect(r.reasons.find((x) => /skims the ring edge of/.test(x))).toBe('2 a — skims the ring edge of 2');
   });
 
   it('flags a ring-edge moon of a ringed BROWN DWARF / star parent — the Col 173 2a case', () => {
     const bd = { bodyId: id++, name: 'Col 173 Sector AX-J d9-52 2', type: 'Star', subType: 'Y (Brown dwarf) Star', rings: [{ name: 'Ring', type: 'Rocky', outerRadius: 300000000 }] };
-    const moon = { bodyId: id++, name: 'Col 173 Sector AX-J d9-52 2 a', type: 'Planet', subType: 'High metal content world', isLandable: true, semiMajorAxis: 0.004, parents: [{ Star: bd.bodyId }] };
+    const moon = { bodyId: id++, name: 'Col 173 Sector AX-J d9-52 2 a', type: 'Planet', subType: 'High metal content world', isLandable: true, semiMajorAxis: 0.00205, parents: [{ Star: bd.bodyId }] }; // ratio ~1.02 — the real 2 a rides at 1.01
     const r = detectEpicView([bd, moon]);
     expect(r.isEpic).toBe(true);
-    expect(r.reasons.find((x) => /skims rings of/.test(x))).toContain('2 a');
+    expect(r.reasons.find((x) => /skims the ring edge of/.test(x))).toContain('2 a');
   });
 
   it('does NOT flag a far moon of a ringed parent (rings are a distant thread — the d9-107 3c case)', () => {
@@ -323,7 +323,7 @@ describe('detectEpicView', () => {
 
   it('big-sky uses solarRadius when a star/brown-dwarf parent has no km radius', () => {
     const bd = { bodyId: id++, type: 'Star', subType: 'Y (Brown dwarf) Star', solarRadius: 0.1 }; // ≈69,634 km
-    const moon = { bodyId: id++, type: 'Planet', subType: 'Rocky body', isLandable: true, semiMajorAxis: 0.0013, parents: [{ Star: bd.bodyId }] }; // ≈194,477 km → ~39°
+    const moon = { bodyId: id++, type: 'Planet', subType: 'Rocky body', isLandable: true, semiMajorAxis: 0.0009, parents: [{ Star: bd.bodyId }] }; // ≈134,600 km → ~55°
     const r = detectEpicView([bd, moon]);
     expect(r.isEpic).toBe(true);
     expect(r.reasons.some((x) => /parent fills/.test(x))).toBe(true);

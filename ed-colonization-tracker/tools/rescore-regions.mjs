@@ -20,38 +20,14 @@
 
 import fs from 'node:fs';
 import { once } from 'node:events';
-import {
-  exoticAtmoPoints,
-  distanceDecay,
-  ICY_SUBTYPES,
-  isColonisableAtmosphere,
-} from '../server/journal/scorer.js';
+import { patchScoreV2 } from './lib/rescoreV2.mjs';
 import { streamLines } from './lib/stream.mjs';
 
 function rescoreSystem(sys) {
-  const sc = sys.score;
-  if (!sc) return false;
-  let oxy = 0, oxyN = 0, exo = 0, exoN = 0;
-  for (const b of sys.bodies || []) {
-    if (!b.landable || !isColonisableAtmosphere(b.atmo)) continue;
-    if (ICY_SUBTYPES.has(b.subType || '')) continue;
-    // Canonical parity: bodies with missing mass data are excluded (the app's
-    // filterQualifyingBodies does `(earthMasses ?? 999) >= 2.5`).
-    if ((b.em ?? 999) >= 2.5) continue;
-    const dk = distanceDecay(b.distLs || 0);
-    if (/oxygen/i.test(b.atmo)) { oxy += Math.round(15 * dk); oxyN++; }
-    else { const base = exoticAtmoPoints(b.atmo); if (base > 0) { exo += Math.round(base * dk); exoN++; } }
-  }
-  oxy = Math.min(oxy, 45);
-  exo = Math.min(exo, 50);
-  const oldOxy = sc.oxygenPoints || 0;
-  const oldExo = sc.exoticPoints || 0;
-  sc.total = (sc.total || 0) - oldOxy - oldExo + oxy + exo;
-  sc.oxygenPoints = oxy;
-  sc.oxygenCount = oxyN;
-  sc.exoticPoints = exo;
-  sc.exoticCount = exoN;
-  return true;
+  // v2 (2026-08-05): full formula repatch via the shared lib - per-class atmosphere
+  // ladder, diversity bonus, oxygen/exotic recompute, and epic points derived from
+  // stored reasons re-validated against the CURRENT bars. See tools/lib/rescoreV2.mjs.
+  return patchScoreV2(sys);
 }
 
 async function rescoreFile(path) {
@@ -81,6 +57,6 @@ async function rescoreFile(path) {
 const files = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 if (files.length === 0) { console.error('usage: node tools/rescore-regions.mjs FILE.jsonl [...]'); process.exit(1); }
 for (const f of files) { if (!fs.existsSync(f)) { console.error('not found:', f); process.exit(1); } }
-console.error('Re-scoring (exotic + non-icy oxygen atmosphere bonus, canonical table):');
+console.error('Re-scoring to formula v2 (per-class ladder + diversity + validated epic points):');
 for (const f of files) await rescoreFile(f);
 console.error('Done.');

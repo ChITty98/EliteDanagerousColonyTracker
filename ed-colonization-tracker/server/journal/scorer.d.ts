@@ -35,7 +35,8 @@ export interface BodySegment {
 
 export interface EpicView {
   isEpic: boolean;
-  reasons: string[]; // e.g. ["tight binary 0.03 AU", "parent fills 25° of sky", "ring-edge moon"]
+  reasons: string[]; // e.g. ["tight binary 0.03 AU", "parent fills 45° of sky", "skims the ring edge of X"]
+  criteria?: string[]; // distinct criterion kinds: binary | bigSky | ringEdge | twins (v2 scoring: +10 each, cap 30)
 }
 
 export interface ScoreBreakdown {
@@ -43,6 +44,9 @@ export interface ScoreBreakdown {
   starDetails: string[];
   atmospherePoints: number;
   atmosphereCount: number;
+  diversityPoints: number;
+  distinctAtmoClasses: number;
+  epicPoints: number;
   oxygenPoints: number;
   oxygenCount: number;
   exoticPoints: number;
@@ -57,12 +61,15 @@ export interface ScoreBreakdown {
   bodyCount: number;
   starCount: number;
   epicView: EpicView;
+  geoCount: number;
+  geoSiteTotal: number;
   total: number;
   hasRingedLandable: boolean;
   hasOxygenAtmosphere: boolean;
   hazardousStars: string[];
 }
 
+export declare const SCORE_FORMULA_VERSION: number;
 export declare const ICY_SUBTYPES: Set<string>;
 export declare function isColonisableAtmosphere(atmosphereType?: string | null): boolean;
 export declare function distanceDecay(distanceLs: number): number;

@@ -134,6 +134,7 @@ const MERGE_STRATEGIES: Record<string, MergeStrategy> = {
   journalExplorationCache: { kind: 'map' },
   scoutedSystems: { kind: 'map' },
   bodyVisits: { kind: 'map' },
+  organicScans: { kind: 'map' },
   bodyNotes: { kind: 'map' },
   bodyFlags: { kind: 'map' },
   fleetCarrierSpaceUsage: { kind: 'map' },
@@ -508,6 +509,7 @@ import type {
   PersistedMarketSnapshot,
   PersistedCarrierCargo,
   BodyVisit,
+  OrganicScan,
 } from './types';
 import { generateId } from '@/lib/utils';
 
@@ -700,6 +702,7 @@ interface AppState {
 
   // Body visits — per-body landing data from Touchdown events
   bodyVisits: Record<string, BodyVisit>; // keyed by "systemAddress|bodyName"
+  organicScans: Record<string, OrganicScan>; // keyed by "systemAddress|bodyId"
   upsertBodyVisits: (visits: BodyVisit[]) => void;
 
   // Body notes — user notes per body, keyed by "systemName|bodyName"
@@ -1544,6 +1547,9 @@ export const useAppStore = create<AppState>()(
           return { bodyVisits: updated };
         }),
 
+      // Exobiology ledger — server-written (live ScanOrganic + Sync All backfill)
+      organicScans: {},
+
       // Manual population overrides
       populationOverrides: {},
       setPopulationOverride: (systemName, population) =>
@@ -1689,6 +1695,7 @@ export const useAppStore = create<AppState>()(
         scoutedSystems: state.scoutedSystems,
         scoutedConflicts: state.scoutedConflicts,
         bodyVisits: state.bodyVisits,
+        organicScans: state.organicScans,
         bodyNotes: state.bodyNotes,
         bodyFlags: state.bodyFlags,
         populationOverrides: state.populationOverrides,

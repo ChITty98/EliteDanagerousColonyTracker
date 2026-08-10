@@ -82,6 +82,90 @@ export function resetScanState(systemAddress, systemName) {
   scanState.pendingScanBodies = [];
 }
 
+// BodyID → name, learned from ApproachBody/Scan. ScanOrganic only reports a numeric
+// body id, so without this a live organic scan can't name its own world.
+const liveBodyNames = new Map(); // "systemAddress|bodyId" -> { name, systemName }
+
+export function noteBodyName(systemAddress, bodyId, name, systemName) {
+  if (systemAddress == null || bodyId == null || !name) return;
+  liveBodyNames.set(`${systemAddress}|${bodyId}`, { name, systemName });
+}
+
+/**
+ * Touchdown → bodyVisits ledger, live. Until now the ledger only grew on Sync All
+ * (the server never wrote it), so a landing mid-session stayed invisible until the
+ * next full journal scan. Ship-recall landings (PlayerControlled false) don't count.
+ */
+export function handleTouchdownVisit(ev, existing, deps) {
+  if (ev.PlayerControlled === false) return;
+  let body = ev.Body;
+  let systemName = ev.StarSystem;
+  let systemAddress = ev.SystemAddress;
+  if (!body && systemAddress != null && ev.BodyID != null) {
+    const known = liveBodyNames.get(`${systemAddress}|${ev.BodyID}`);
+    if (known) { body = known.name; systemName = known.systemName; }
+  }
+  if (!body || systemAddress == null) return; // no body context — don't pollute the ledger
+  const key = `${systemAddress}|${body}`;
+  const prior = (existing.bodyVisits || {})[key];
+  const record = {
+    bodyName: body,
+    systemName: systemName || (prior && prior.systemName) || '',
+    systemAddress,
+    landingCount: (prior && prior.landingCount ? prior.landingCount : 0) + 1,
+    lastLanded: ev.timestamp,
+    lastCoords: (typeof ev.Latitude === 'number')
+      ? { lat: ev.Latitude, lon: ev.Longitude }
+      : (prior && prior.lastCoords) || undefined,
+  };
+  deps.applyStatePatch({ bodyVisits: { __upsert: { [key]: record } } });
+  deps.broadcastEvent({
+    type: 'body_landed',
+    body,
+    system: record.systemName,
+    landingCount: record.landingCount,
+    timestamp: ev.timestamp,
+  });
+}
+
+/**
+ * ScanOrganic → organicScans ledger, live. Three events fire per organism
+ * (Log → Sample → Analyse); Analyse is the completed scan.
+ */
+export function handleScanOrganicLive(ev, existing, deps) {
+  if (ev.SystemAddress == null || ev.Body == null) return;
+  const key = `${ev.SystemAddress}|${ev.Body}`;
+  const named = liveBodyNames.get(key);
+  const prior = (existing.organicScans || {})[key];
+  const genus = ev.Genus_Localised || ev.Genus || null;
+  const species = ev.Species_Localised || ev.Species || null;
+  const genera = [...((prior && prior.genera) || [])];
+  const speciesList = [...((prior && prior.species) || [])];
+  const analysed = [...((prior && prior.analysedSpecies) || [])];
+  if (genus && !genera.includes(genus)) genera.push(genus);
+  if (species && !speciesList.includes(species)) speciesList.push(species);
+  if (ev.ScanType === 'Analyse' && species && !analysed.includes(species)) analysed.push(species);
+  const record = {
+    systemAddress: ev.SystemAddress,
+    bodyId: ev.Body,
+    bodyName: (prior && prior.bodyName) || (named && named.name) || null,
+    systemName: (prior && prior.systemName) || (named && named.systemName) || null,
+    genera,
+    species: speciesList,
+    analysedSpecies: analysed,
+    scanCount: ((prior && prior.scanCount) || 0) + 1,
+    lastScan: ev.timestamp,
+  };
+  deps.applyStatePatch({ organicScans: { __upsert: { [key]: record } } });
+  if (ev.ScanType === 'Analyse' && genus) {
+    deps.sendOverlay({
+      id: `edcolony_organic_${ev.Body}`,
+      text: `🧬 ${species || genus} catalogued`,
+      color: '#a78bfa', x: X_LEFT, y: Y_SCAN, ttl: 12,
+    });
+  }
+}
+
 // ===== Helpers (project + cargo context) =====
 
 /** Find the currently active session's project (if the project is still active). */
@@ -443,6 +527,31 @@ export function handleScanEventOverlay(ev, existing, deps) {
       x: X_LEFT, y: Y_SCAN, ttl: 15,
     });
   }
+}
+
+/**
+ * FSSBodySignals — attach bio/geo counts to the live scan buffer so journal-scored
+ * systems persist them (the server dropped these entirely post-cutover; the only
+ * attach logic lived in the retired client watcher). No overlay output.
+ */
+export function handleFSSBodySignalsOverlay(ev) {
+  if (!scanState.pendingSystemAddress) return;
+  if (ev.SystemAddress && ev.SystemAddress !== scanState.pendingSystemAddress) return;
+  const body = scanState.pendingScanBodies.find((b) => b.bodyId === ev.BodyID || b.bodyName === ev.BodyName);
+  const target = body || {
+    bodyId: ev.BodyID,
+    bodyName: ev.BodyName,
+    type: 'Planet',
+    subType: '',
+    distanceToArrival: 0,
+    bioSignals: 0,
+    geoSignals: 0,
+  };
+  for (const sig of ev.Signals || []) {
+    if (String(sig.Type).includes('Biological')) target.bioSignals = sig.Count;
+    else if (String(sig.Type).includes('Geological')) target.geoSignals = sig.Count;
+  }
+  if (!body) scanState.pendingScanBodies.push(target);
 
   const atmo = (ev.AtmosphereType || ev.Atmosphere || '').toLowerCase();
   if (atmo.includes('oxygen')) {
@@ -551,6 +660,16 @@ export function journalBodiesToSpanshFormat(bodies, systemName) {
     semiMajorAxis: b.semiMajorAxis != null ? b.semiMajorAxis / 149597870700 : undefined, // metres → AU
     rings: b.rings ? b.rings.map((r) => ({ name: r.name, type: r.ringClass, outerRadius: typeof r.outerRad === 'number' ? r.outerRad : 0 })) : undefined,
     parents: b.parents,
+    // FSSBodySignals counts → Spansh signals shape, so journal-scored systems keep
+    // the geo-based Extraction-economy credit (and geo data survives into cachedBodies).
+    signals: (b.bioSignals || b.geoSignals)
+      ? {
+          signals: {
+            ...(b.bioSignals ? { '$SAA_SignalType_Biological;': b.bioSignals } : {}),
+            ...(b.geoSignals ? { '$SAA_SignalType_Geological;': b.geoSignals } : {}),
+          },
+        }
+      : undefined,
   }));
 }
 

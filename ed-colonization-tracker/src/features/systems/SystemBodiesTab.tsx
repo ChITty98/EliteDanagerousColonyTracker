@@ -773,18 +773,37 @@ function BodyVisitInfo({ bodyName, systemName }: { bodyName: string; systemName:
     .filter((st) => String(st.body || '').toLowerCase() === bodyName.toLowerCase())
     .reduce((a, st) => a + (st.dockedCount || st.visitCount || 0), 0);
   const landings = visit ? visit.landingCount : 0;
-  if (!landings && !dockings) return null;
+  // Exobiology catalogued here. ScanOrganic keys by numeric bodyId, so match on the
+  // resolved bodyName the extractor backfilled (null when the id never got paired).
+  const organic = Object.values(useAppStore((s) => s.organicScans)).find(
+    (o) => o.bodyName === bodyName && (o.systemName || '').toLowerCase() === systemName.toLowerCase()
+  );
+  if (!landings && !dockings && !organic) return null;
   const dateStr = visit ? new Date(visit.lastLanded).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : null;
   return (
-    <div className="text-sky-400">
-      {'\u{1F6EC}'} Visited {landings + dockings}{'\u00d7'} {'\u2014'} {landings} disembarked on surface, {dockings} docked at sites here
-      {dateStr && <> {'\u2022'} Last: {dateStr}</>}
-      {visit && visit.lastCoords && (
-        <span className="text-muted-foreground ml-2">
-          ({visit.lastCoords.lat.toFixed(2)}, {visit.lastCoords.lon.toFixed(2)})
-        </span>
+    <>
+      {(landings > 0 || dockings > 0) && (
+        <div className="text-sky-400">
+          {'\u{1F6EC}'} Visited {landings + dockings}{'\u00d7'} {'\u2014'} {landings} disembarked on surface, {dockings} docked at sites here
+          {dateStr && <> {'\u2022'} Last: {dateStr}</>}
+          {visit && visit.lastCoords && (
+            <span className="text-muted-foreground ml-2">
+              ({visit.lastCoords.lat.toFixed(2)}, {visit.lastCoords.lon.toFixed(2)})
+            </span>
+          )}
+        </div>
       )}
-    </div>
+      {organic && organic.genera.length > 0 && (
+        <div className="text-violet-300">
+          {'\u{1F9EC}'} Catalogued: {organic.genera.join(', ')}
+          {organic.analysedSpecies.length > 0 && (
+            <span className="text-muted-foreground ml-2">
+              ({organic.analysedSpecies.length} species analysed)
+            </span>
+          )}
+        </div>
+      )}
+    </>
   );
 }
 

@@ -24,6 +24,7 @@ import { CopilotPage } from '@/features/copilot/CopilotPage';
 import { MiningPage } from '@/features/mining/MiningPage';
 import { RadarPage } from '@/features/radar/RadarPage';
 import { ScoutMapPage } from '@/features/scouting/ScoutMapPage';
+import { ChainWatchPage } from '@/features/chains/ChainWatchPage';
 
 export const router = createBrowserRouter([
   {
@@ -50,6 +51,7 @@ export const router = createBrowserRouter([
       { path: 'mining', element: <MiningPage /> },
       { path: 'radar', element: <RadarPage /> },
       { path: 'scout-map', element: <ScoutMapPage /> },
+      { path: 'chains', element: <ChainWatchPage /> },
       { path: 'journal-stats', element: <JournalStatsPage /> },
       { path: 'settings', element: <SettingsPage /> },
       { path: 'wiki', element: <WikiPage /> },

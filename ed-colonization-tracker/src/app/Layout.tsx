@@ -17,6 +17,7 @@ const navItems = [
   { to: '/fleet-carrier', label: 'Fleet Carrier', icon: '\u2693' },
   { to: '/scouting', label: 'Expansion', icon: '\u{1F52D}' },
   { to: '/radar', label: 'Radar', icon: '\u{1F6F0}\u{FE0F}' },
+  { to: '/chains', label: 'Chain Watch', icon: '⛓️' },
   { to: '/planner', label: 'Planner', icon: '\u{1F5FA}\u{FE0F}' },
   { to: '/sources', label: 'Sources', icon: '\u2605' },
   { to: '/sessions', label: 'Sessions', icon: '\u25F7' },

@@ -2,6 +2,49 @@
 
 All notable changes to ED Colony Tracker.
 
+## [1.32.0] — 2026-08-10
+
+### Added
+- **Exobiology ledger** — `ScanOrganic` was parsed by nobody; all 214 scans in the journal history were invisible. New `organicScans` store key records, per body: genera, species, species completed through the Analyse stage, scan count and last-scanned date. Backfilled by Sync All, updated live, and shown in System Detail → Bodies as "🧬 Catalogued: …(N species analysed)". Verified against the real history: 26 bodies, 49 species analysed, 15 genera — **Brain Trees on four bodies**, two of them the d9-52 ring-band moons.
+- **👣 Landed filter** in Expansion — narrows the list to systems with a recorded surface set-down. Pairs with 🌋 Geo only to answer "which mining venues have I already stood on".
+
+### Fixed
+- **Landings now record live.** `bodyVisits` was written only by the Sync All full-history scan — no server-side writer existed, so a landing mid-session stayed invisible until the next full journal scan. A Touchdown handler now updates the ledger as you set down (ship-recall landings still excluded) and broadcasts a `body_landed` event.
+- **Five orphaned landings recovered.** Pre-2019 Touchdown events predate the `Body`/`StarSystem`/`SystemAddress` fields, so every one collapsed into a single junk `undefined|undefined` ledger entry. They're now attributed to the most recent ApproachBody before each landing: the ledger goes 196 → 201 real bodies with zero unnamed entries.
+
+## [1.31.0] — 2026-08-05
+
+### Fixed
+- **Geo/bio signals were being dropped server-side since the journal cutover.** The parser collected FSSBodySignals and nothing consumed it — the only attach logic lived in the retired client watcher, so every body scanned since then entered the exploration cache geo-blind (all 16 home systems read zero geo). Now attached in BOTH server paths: the live scan buffer (new FSSBodySignals handler) and the Sync All full-history extractor (which also preserves signal counts when a later re-scan replaces a body record). **Run Sync All once to backfill geo across your whole journal history.**
+- Both journal→Spansh converters (client + server) now carry bio/geo counts into the scorer's body shape — journal-scored systems keep the geo-based Extraction-economy credit and geo survives into cached bodies.
+
+### Added
+- **Geo lens** (Frontier's Rhino makes geological sites surface-mining venues): the scorer persists `geoCount`/`geoSiteTotal` per system (census only — zero points), the Expansion body table gains a 🌋 signals column, and a **🌋 Geo only** filter shows just the systems with geological signals. Persisted counts populate as systems are (re)scored.
+
+## [1.30.1] — 2026-08-05
+
+### Fixed
+- **Boxel scout no longer drowns dense boxels in id64 drip-lookups.** The name search stopped at 12 pages (1,200 results) — sized for sparse home boxels, not Colonia-core d-boxels (PX-T d3: 1,866 members). Every un-fetched member was misfiled as a "gap" and cost one polite dump lookup to reclassify — the swelling ⚫ bucket. Ceiling now 40 pages with the same 2-empty-pages early stop: sparse boxels still scan in a handful of requests, dense ones enumerate fully up front and the resolution drip collapses to the true unknowns.
+- **0-body systems are targets again.** A dump hit with ZERO recorded bodies (position known — someone jumped through — but never FSS'd) was filed under ⚫ "in Spansh — not targets." Those are exactly as virgin as true gaps; they now join the green target list as dashed ⚬ chips ("position known, never scanned"), and the green header counts them.
+
+## [1.30.0] — 2026-08-05
+
+### Changed
+- **Scoring formula v2** — built from the Colonia field tour's verdicts ("a lot of the same" is real): atmosphere clones stop stacking. The FIRST body of each distinct atmosphere class earns the full ladder (15/12/9/5 by class order); every further body of an already-seen class earns a flat +3. Classes fold hot/thin/-rich variants together (Thin CO₂ = CO₂). A **diversity bonus** (+5 per distinct class beyond the first, cap +20) pays systems with genuinely different airs. **✨ Epic view now scores** — +10 per met criterion (tight binary / big-sky parent / ring-edge moon / twin worlds), cap +30: "epic is probably the reason I'd make a system home." Icy half-scoring, oxygen/exotic bonuses, and every other component are unchanged. Monoculture families (5× water, 7× ammonia) drop; diverse and epic systems climb.
+- Score compare table and expanded breakdown show the new **Diversity** (+distinct classes) and **Epic view** point rows.
+
+### Added
+- **Offline background rescore tooling** — `tools/rescore-scouted.mjs` reprices every scouted system in colony-data.json with zero UI clicking and zero Spansh calls (backup written to backups/ first): exact rescore where full bodies exist locally (cachedBodies, journal scans), slim-schema repatch from the local region .jsonl files otherwise, and an honest count of entries left at v1 when no body data exists anywhere on disk. `tools/rescore-regions.mjs` now applies the same full v2 repatch to region files. Scores stamp `scoreVersion`; the UI stamps it on every fresh scout too.
+- **Approximation honesty**: slim region records carry no orbit-geometry parents, so epic points there are derived from each record's STORED epic reasons, credited only where the stored numbers prove out against the current calibrated bars (old-format span-only ring flags are NOT credited). Full-precision epic returns whenever a system is next scored from complete bodies.
+
+## [1.29.0] — 2026-08-05
+
+### Added
+- **⛓️ Chain Watch** — the colonization frontier as a browsable ledger. Watches colonization events GALAXY-WIDE off the existing EDDN socket (the 200-ly gate stays radar-only), assembles anchors into connected CHAINS (links ≤16 ly), and reports each as NAMED systems with coordinates — turning edastro's anonymous green tendrils into places you can aim the Expansion search at. Per chain: start → tip, extent, ±100 ly reach band, growth status (active = growth ≤14 d, "N updated this week"), sectors/regions traversed, distance from you and from your holdings, expandable anchor list (click → System View). Region-whitelisted (default: Inner Orion Spur + the Colonia region, resolved from live data — not hardcoded), sector text filter, growing-only toggle.
+- **Cold-start seed** — one bounded Spansh pull of is_being_colonised systems per region (newest-updated first, ≤2,000 each, truncation stated in the UI, shared politeness clock with every other Spansh consumer). EDDN keeps the ledger live thereafter; a slow drip resolves regions for live-found anchors. Persistent in chain-watch.json.
+- **Co-pilot chain beat** — arbiter-gated, 30-min cooldown, fires only when a genuinely NEW anchor appears; all three personas got awareness-only lines ("I report doors, not destinations").
+- **Anti-invention discipline as code**: anchors only from real events/records, growth only from observed additions, unresolved regions labeled unresolved, no recommendations anywhere.
+
 ## [1.28.11] — 2026-08-04
 
 ### Fixed

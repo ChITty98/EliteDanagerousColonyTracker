@@ -157,7 +157,8 @@ export interface AppSettings {
   copilotPopupEnabled?: boolean;
   radarThreshold?: number; // high-score radar layer threshold (composite rating) — default 70
   radarRange?: number; // radar zoom range in ly (25/50/100/200) — default 200
-  radarView?: string; // radar projection: '2d' (top-down) or '3d' (oblique orbit) — default 2d // Co-pilot portrait+line pop-up on any tab (for when the Cockpit page isn't visible) — default on
+  radarView?: string; // radar projection: '2d' (top-down) or '3d' (oblique orbit) — default 2d
+  chainWatchRegions?: string[]; // Chain Watch region whitelist (galactic region names) — default Bubble + Colonia regions // Co-pilot portrait+line pop-up on any tab (for when the Cockpit page isn't visible) — default on
 
   // AI co-pilot — companion cockpit comms. Requires the local `claude` CLI +
   // Max subscription on the PC running the exe; silent otherwise. Opt-in.
@@ -201,6 +202,7 @@ export interface ScoutedSystemData {
   spanshBodyCount?: number; // how many bodies Spansh returned (0 = empty response, undefined = never queried)
   totalBodyCount?: number; // true FSS total (Spansh dump bodyCount, or journal honk) — for scan-completeness checks
   cachedBodies?: import('@/services/spanshApi').SpanshDumpBody[]; // full body data cached locally (for colony detail pages)
+  scoreVersion?: number; // SCORE_FORMULA_VERSION the score was computed with (undefined = v1 era)
   scoutedAt: string; // ISO timestamp
 }
 
@@ -354,6 +356,21 @@ export interface BodyVisit {
   landingCount: number;
   lastLanded: string; // ISO timestamp
   lastCoords?: { lat: number; lon: number };
+}
+
+/** Exobiology catalogued on one body (ScanOrganic). Keyed "systemAddress|bodyId" —
+ *  ScanOrganic reports only a numeric body id, so bodyName is resolved from
+ *  ApproachBody/Scan and stays null when the id was never paired with a name. */
+export interface OrganicScan {
+  systemAddress: number;
+  bodyId: number;
+  bodyName: string | null;
+  systemName: string | null;
+  genera: string[];          // e.g. ["Brain Trees", "Bacterium"]
+  species: string[];         // every species seen at any scan stage
+  analysedSpecies: string[]; // species completed through the Analyse stage
+  scanCount: number;         // raw ScanOrganic events (3 per completed organism)
+  lastScan: string;          // ISO timestamp
 }
 
 // User-created installation from a construction signal or manual entry

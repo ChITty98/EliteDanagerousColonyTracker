@@ -70,6 +70,7 @@ import { runCopilot } from '../ai/copilot.js';
 import { processMiningEvents } from './mining.js';
 import { noteOwnEvents as radarNoteOwnEvents } from '../radar/radarState.js';
 import { getEdsmTraffic } from '../radar/traffic.js';
+import { checklistProcess, checklistSnapshot } from './checklist.js';
 
 // ===== Overlay layout (must match src/services/overlayService.ts) =====
 const X_LEFT = 40;
@@ -128,6 +129,13 @@ export function processNewEvents(parsed, deps) {
   processStatisticsEvents(parsed, existing, patch);
   processCodexEvents(parsed, existing, patch);
   processSurfaceEvents(parsed, existing, deps);
+  // Exploration checklist — ungated (works with the overlay off); epic targets are
+  // added separately by the overlay's scoring path via checklistAddEpic.
+  try {
+    if (checklistProcess(parsed) && deps.broadcastEvent) {
+      deps.broadcastEvent({ type: 'checklist_update', ...checklistSnapshot() });
+    }
+  } catch (e) { console.error('[Checklist] error:', e && e.message); }
 
   // Overlay message builders (run AFTER other processors so they see a
   // consistent view of the state — e.g. handleDockedOverlay checks

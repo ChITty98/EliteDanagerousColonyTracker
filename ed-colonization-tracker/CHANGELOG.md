@@ -2,6 +2,15 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.41.0] — 2026-08-11
+
+### Added
+- **🧭 Exploration checklist** — a self-checking card on the 2nd Screen for the current system. Targets build themselves as scans resolve: map-worthy bodies (★★★ ELW/water/ammonia, ★★ terraformables), landables with ≥3 bio signals, and ✨ epic-view bodies once the system scores. Rows tick automatically from the journal — DSS completion checks map targets, flying to the body (ApproachBody) checks epic ones; header shows honk / FSS n-of-N / all-found. Tap a row to mark it skipped. Resets on jump; hidden until the system has something to say.
+- **40k Ls travel rule** ("unless it's super valuable, I don't want to go out beyond 40k Ls"): ★★ and bio targets beyond 40,000 Ls are dropped with an honest "N far targets skipped" line; ★★★ and epic bodies are always listed, amber-flagged ⚠ with the distance shown — a far first-discovery water world is your call, not silently hidden.
+
+### Notes
+- Per-visit and in-memory: a server restart mid-system forgets skips (never scans — those re-accumulate from the journal). Bio targets appear as bodies resolve, not at the honk.
+
 ## [1.40.1] — 2026-08-11
 
 ### Fixed

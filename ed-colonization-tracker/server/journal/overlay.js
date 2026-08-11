@@ -30,6 +30,9 @@ import {
   classifyStars,
 } from './scorer.js';
 import { mapStarType } from './extractor.js';
+import { mapWorth } from './mapWorth.js';
+import { checklistAddEpic } from './checklist.js';
+export { mapWorth }; // compat: earlier consumers import it from here
 import { pickJournalFact } from './journalFacts.js';
 import { peekEdsmTraffic } from '../radar/traffic.js';
 import { visitorsIn } from '../radar/radarState.js';
@@ -558,40 +561,6 @@ function shortBody(name) {
   return sys && name && name.startsWith(sys) ? name.slice(sys.length).trim() || name : name;
 }
 
-/**
- * Is this body worth spending probes on, for CREDITS (not colony value)?
- *
- * Tier 3 — Earth-like / water / ammonia worlds: rare and worth 3-4x an ordinary
- * body, so they always pop.
- * Tier 2 — anything else with a terraform state: mostly terraformable HMC. The
- * single biggest multiplier on an otherwise plain rock, but common enough that it
- * gets a quieter, shorter-lived callout so a 30-body system isn't a wall of text.
- *
- * Deliberately reports QUALITIES, never a credit figure: the real payout is
- * mass-dependent (roughly k + mass*k/66.25 with a per-class k) and the per-class
- * constants aren't verified here, so any number would be invented. See CHANGELOG 1.35.0.
- */
-export function mapWorth(ev) {
-  if (!ev || ev.StarType) return null;            // stars aren't mappable
-  const cls = String(ev.PlanetClass || '');
-  if (!cls) return null;
-  const terraform = ev.TerraformState && !/^(none)?$/i.test(String(ev.TerraformState).trim());
-  const reasons = [];
-  let tier = 0;
-
-  if (/earthlike|earth-like/i.test(cls)) { tier = 3; reasons.push('Earth-like world'); }
-  else if (/water world/i.test(cls)) { tier = 3; reasons.push('Water world'); }
-  else if (/ammonia world/i.test(cls)) { tier = 3; reasons.push('Ammonia world'); }
-  else if (terraform) { tier = 2; reasons.push(cls); }
-
-  if (!tier) return null;
-  if (terraform && tier === 3) reasons.push('terraformable');
-  if (ev.WasDiscovered === false) reasons.push('first discovery');
-  // Already mapped kills the first-mapper bonus — say so rather than hide it.
-  if (ev.WasMapped === true) reasons.push('already mapped');
-
-  return { tier, stars: tier === 3 ? '★★★' : '★★', reasons };
-}
 
 /**
  * FSSBodySignals — attach bio/geo counts to the live scan buffer so journal-scored
@@ -908,6 +877,7 @@ export async function handleFSSAllBodiesFoundOverlay(ev, existing, deps) {
     try {
       const spanshBodies = journalBodiesToSpanshFormat(scanBodies, scanState.pendingSystemName);
       const score = scoreSystem(spanshBodies);
+      try { checklistAddEpic(score.epicView); } catch { /* checklist is best-effort */ }
       const bodyString = buildBodyString(filterQualifyingBodies(spanshBodies), classifyStars(spanshBodies));
       // The FSDJump that brought us here put exact StarPos coords on commanderPosition.
       // Without these, radius searches can't see journal-scored systems at all (the

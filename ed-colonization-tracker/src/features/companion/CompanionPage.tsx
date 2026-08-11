@@ -3,6 +3,7 @@ import { useAppStore } from '@/store';
 import { FC_MAX_CAPACITY } from '@/store/types';
 import { sseSubscribe, sseBusStatus } from '@/services/sseBus';
 import { SightingCard } from './SightingCard';
+import { ChecklistCard } from './ChecklistCard';
 import {
   computeNeedsContent,
   computeScoreContent,
@@ -623,6 +624,9 @@ export function CompanionPage() {
       </div>
       </aside>
       <div className="lg:order-1 min-w-0">
+      {/* Exploration checklist — current system, self-checking */}
+      <ChecklistCard />
+
       {/* Record-this-spot — the postcard button */}
       <SightingCard />
 

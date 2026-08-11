@@ -77,6 +77,7 @@ import { initChainWatch, seedChainWatch, snapshotChains, defaultRegions, resolve
 import { refreshLookback } from './server/radar/lookback.js';
 import { searchRingsBySignals } from './server/journal/spansh.js';
 import { initUpdater, getUpdateStatus, checkForUpdate } from './server/update/updater.js';
+import { checklistSnapshot, checklistSetSkipped } from './server/journal/checklist.js';
 
 // SEA detection: when bundled via build-exe.mjs and injected as a single executable,
 // the node:sea API reports isSea() === true. In that case, runtime state (colony-data.json,
@@ -1944,6 +1945,30 @@ const server = http.createServer((req, res) => {
       } catch { /* ignore bad payloads */ }
       res.writeHead(204);
       res.end();
+    });
+    return;
+  }
+
+  // Exploration checklist: current-system snapshot + manual skip toggle
+  if (pathname === '/api/checklist' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(checklistSnapshot()));
+    return;
+  }
+  if (pathname === '/api/checklist/skip' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const { bodyId, skipped } = JSON.parse(body || '{}');
+        if (!checklistSetSkipped(bodyId, skipped)) throw new Error('No such target');
+        broadcastEvent({ type: 'checklist_update', ...checklistSnapshot() });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
     });
     return;
   }

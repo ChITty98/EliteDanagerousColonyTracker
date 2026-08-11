@@ -50,6 +50,9 @@ export function eventIcon(type: string): string {
     case 'station_dock_summary': return '\u{1F3DB}'; // classical building
     case 'npc_threat': return '\u{1F6A8}'; // rotating red siren
     case 'supercruise_exit': return '\u{1F6F0}️'; // satellite
+    case 'map_worthy': return '\u{1F6F0}\u{FE0F}'; // worth probes (credits)
+    case 'sighting_recorded': return '\u{1F4F8}'; // postcard recorded
+    case 'screenshot_saved': return '\u{1F4F7}'; // F10 shot captured
     default: return '◉';
   }
 }
@@ -175,6 +178,12 @@ export function eventSummary(ev: CompanionEvent): string {
     }
     case 'nav_route_cleared':
       return 'Route cleared';
+    case 'map_worthy':
+      return `${'★'.repeat(Number(ev.tier) || 2)} worth mapping — ${ev.body}${Array.isArray(ev.reasons) ? ' · ' + ev.reasons.join(' · ') : ''}`;
+    case 'sighting_recorded':
+      return `Sighting recorded — ${ev.body || ev.system}${Array.isArray(ev.tags) ? ' [' + ev.tags.join(', ') + ']' : ''}${Number(ev.autoShots) > 0 ? ` +${ev.autoShots} shot(s)` : ''}`;
+    case 'screenshot_saved':
+      return `F10 shot saved — ${ev.body || ev.system}${ev.attached ? ' (attached to sighting)' : ''}`;
     case 'heartbeat':
       return '';
     default:

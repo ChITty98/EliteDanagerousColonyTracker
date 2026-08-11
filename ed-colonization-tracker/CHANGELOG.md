@@ -2,6 +2,14 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.36.0] — 2026-08-11
+
+### Added
+- **Sightings — the postcard button.** A "📸 Record this spot" card on the 2nd Screen: one tap records where you are RIGHT NOW (system + body snapshotted server-side from the journal — the iPad needs to know nothing), with quick tag chips drawn from the field-tested taste model: ✨ Close bodies · 💍 Rings · 🏜️ Terrain · 🌈 Pretty sky · 🧬 Life · 🌳 Brain Trees · 🌋 Geology · 🏠 Home candidate · ⭐ Just cool, plus an optional note. Works for ANY system, colonized or not. Recent sightings list on the same card.
+- **F10 auto-attach.** The in-game screenshot key (F10 — not Steam F12, which leaves no journal trace) writes a Screenshot journal event carrying the filename, system and body. The app now catches it live, copies the shot into the gallery, and attaches it to a matching sighting from the same system within ±10 minutes — in either order (Record then F10, or F10 then Record). BMPs are stored as-is (browsers render them; ~10–30 MB each, so the gallery grows faster if used heavily). Non-default screenshot folders are logged, not guessed.
+- **Photos land in the normal gallery keys** (system:x / system:x:body:y), so sighting shots also appear on that system's detail page automatically. An Add-photo button on the card uploads from the 2nd-screen device itself (iOS camera/library) into the same key.
+- New `sightings` state key (append-only protected), `GET/POST /api/sightings`, `sighting_recorded` / `screenshot_saved` SSE events with feed icons + summaries, and BMP serving support.
+
 ## [1.35.0] — 2026-08-10
 
 ### Added

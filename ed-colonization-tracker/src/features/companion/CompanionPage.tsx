@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from '@/store';
 import { FC_MAX_CAPACITY } from '@/store/types';
 import { sseSubscribe, sseBusStatus } from '@/services/sseBus';
+import { SightingCard } from './SightingCard';
 import {
   computeNeedsContent,
   computeScoreContent,
@@ -136,7 +137,7 @@ export function CompanionPage() {
 
     // Catch-all for other event types we want in the live feed but don't
     // process specially (contribution / fc_jump_scheduled / scan_highlight / etc.)
-    const FEED_ONLY_TYPES = ['contribution', 'fc_jump_scheduled', 'fc_jump_cancelled', 'fc_space_update', 'scan_highlight', 'first_footfall', 'fss_complete', 'sc_drop', 'supercruise_exit', 'companion_action', 'carrier_jump', 'carrier_cargo_updated', 'ship_cargo', 'market_snapshot_updated', 'map_worthy'];
+    const FEED_ONLY_TYPES = ['contribution', 'fc_jump_scheduled', 'fc_jump_cancelled', 'fc_space_update', 'scan_highlight', 'first_footfall', 'fss_complete', 'sc_drop', 'supercruise_exit', 'companion_action', 'carrier_jump', 'carrier_cargo_updated', 'ship_cargo', 'market_snapshot_updated', 'map_worthy', 'sighting_recorded', 'screenshot_saved'];
     for (const type of FEED_ONLY_TYPES) {
       unsubs.push(sseSubscribe(type, (ev) => {
         setEvents((prev) => [ev as CompanionEvent, ...prev].slice(0, 50));
@@ -554,6 +555,9 @@ export function CompanionPage() {
           </div>
         );
       })()}
+
+      {/* Record-this-spot — the postcard button */}
+      <SightingCard />
 
       {/* Quick Action Buttons */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">

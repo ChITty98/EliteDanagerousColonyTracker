@@ -360,6 +360,24 @@ export interface BodyVisit {
   lastCoords?: { lat: number; lon: number };
 }
 
+/** A recorded "this spot is worth remembering" — the in-app postcard ledger.
+ *  Location is snapshotted SERVER-side from commanderPosition/currentBody at record
+ *  time, so the 2nd-screen button only sends tags. Screenshots attach via the normal
+ *  gallery under `galleryKey`, and in-game F10 Screenshot journal events from the
+ *  same system within ±10 min auto-attach. */
+export interface Sighting {
+  id: string;
+  systemName: string;
+  systemAddress: number | null;
+  bodyName: string | null;      // null = system-level sighting (body unknown/stale)
+  coordinates: { x: number; y: number; z: number } | null;
+  tags: string[];               // chip ids, e.g. 'rings', 'terrain', 'braintrees'
+  note?: string;
+  galleryKey: string;           // existing gallery key: "system:x" or "system:x:body:y"
+  recordedAt: string;           // ISO timestamp
+  autoShots?: number;           // count of F10 screenshots auto-attached
+}
+
 /** Exobiology catalogued on one body (ScanOrganic). Keyed "systemAddress|bodyId" —
  *  ScanOrganic reports only a numeric body id, so bodyName is resolved from
  *  ApproachBody/Scan and stays null when the id was never paired with a name. */

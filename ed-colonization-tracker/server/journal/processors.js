@@ -312,6 +312,11 @@ function processSurfaceEvents(parsed, existing, deps) {
   for (const ev of parsed.scanOrganicEvents || []) {
     try { handleScanOrganicLive(ev, existing, deps); } catch (e) { console.error('[Surface] ScanOrganic error:', e && e.message); }
   }
+  // F10 screenshots → gallery + sighting auto-attach. Implemented in server.mjs
+  // (needs the gallery dir + meta helpers); optional dep so tests/dev don't break.
+  for (const ev of parsed.screenshotEvents || []) {
+    try { deps.recordGameScreenshot && deps.recordGameScreenshot(ev); } catch (e) { console.error('[Surface] Screenshot error:', e && e.message); }
+  }
 }
 
 function processCodexEvents(parsed, existing, patch) {

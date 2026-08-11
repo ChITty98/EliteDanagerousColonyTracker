@@ -55,6 +55,8 @@ export function parseJournalLines(lines) {
   const approachBodyEvents = [];
   // Exobiology (brain trees et al.)
   const scanOrganicEvents = [];
+  // In-game F10 screenshots — carry Filename + System + Body (Steam F12 leaves no trace)
+  const screenshotEvents = [];
   // Chat
   const sendTextEvents = [];
   // Combat
@@ -135,6 +137,7 @@ export function parseJournalLines(lines) {
       case 'Touchdown': touchdownEvents.push(event); break;
       case 'ApproachBody': approachBodyEvents.push(event); break;
       case 'ScanOrganic': scanOrganicEvents.push(event); break;
+      case 'Screenshot': screenshotEvents.push(event); break;
       case 'Liftoff': liftoffEvents.push(event); break;
       case 'SendText': sendTextEvents.push(event); break;
       case 'Bounty': bountyEvents.push(event); break;
@@ -200,6 +203,7 @@ export function parseJournalLines(lines) {
     liftoffEvents,
     approachBodyEvents,
     scanOrganicEvents,
+    screenshotEvents,
     sendTextEvents,
     bountyEvents,
     factionKillBondEvents,

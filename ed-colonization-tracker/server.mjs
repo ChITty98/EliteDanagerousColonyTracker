@@ -176,6 +176,88 @@ function readGalleryMeta() {
 function writeGalleryMeta(data) {
   try { fs.writeFileSync(GALLERY_META, JSON.stringify(data)); } catch (e) { console.error('[Gallery] Write error:', e.message); }
 }
+
+// --- Sightings (the postcard ledger) + F10 screenshot capture ---
+// Gallery keys follow the EXISTING scheme ("system:x" / "system:x:body:y"), so photos
+// recorded here show up on System Detail pages automatically — colonized or not.
+const SIGHTING_ATTACH_WINDOW_MS = 10 * 60 * 1000;
+// F10 shots land here by default. The journal Filename is a token like
+// "\ED_Pictures\Screenshot_0001.bmp", not an absolute path.
+const ED_PICTURES_DIR = path.join(os.homedir(), 'Pictures', 'Frontier Developments', 'Elite Dangerous');
+// Recent F10 shots, so Record→F10 and F10→Record both attach (same system, ±10 min).
+const recentGameShots = []; // { ts, system, key, imageId, url, caption }
+
+function galleryKeyFor(systemName, bodyName) {
+  const sys = `system:${String(systemName).toLowerCase()}`;
+  return bodyName ? `${sys}:body:${String(bodyName).toLowerCase()}` : sys;
+}
+
+function addImageToGalleryKey(key, entry) {
+  const meta = readGalleryMeta();
+  if (!Array.isArray(meta[key])) meta[key] = [];
+  meta[key].push(entry);
+  writeGalleryMeta(meta);
+}
+
+/** Move an image's meta entry between gallery keys (used when a buffered F10 shot
+ *  gets adopted by a sighting recorded moments later). The file itself never moves. */
+function moveGalleryImage(imageId, fromKey, toKey) {
+  if (fromKey === toKey) return false;
+  const meta = readGalleryMeta();
+  const src = Array.isArray(meta[fromKey]) ? meta[fromKey] : [];
+  const idx = src.findIndex((e) => e && e.id === imageId);
+  if (idx === -1) return false;
+  const [entry] = src.splice(idx, 1);
+  if (!Array.isArray(meta[toKey])) meta[toKey] = [];
+  meta[toKey].push(entry);
+  writeGalleryMeta(meta);
+  return true;
+}
+
+/**
+ * In-game F10 Screenshot journal event → copy the BMP into the gallery and attach.
+ * If a sighting from the same system was recorded within the window, the shot files
+ * under the SIGHTING's gallery key; otherwise under the key derived from the event's
+ * own System/Body (still findable on that system's page). BMPs are stored as-is —
+ * browsers render them natively, and converting would drag an image library into
+ * the SEA exe. (~10-30 MB each; noted in Settings copy.)
+ */
+function recordGameScreenshot(ev) {
+  const basename = path.basename(String(ev.Filename || '').replace(/\\/g, '/'));
+  if (!basename) return;
+  const src = path.join(ED_PICTURES_DIR, basename);
+  if (!fs.existsSync(src)) {
+    console.warn(`[Sightings] F10 shot not found at ${src} — non-default screenshot folder?`);
+    return;
+  }
+  const ext = (path.extname(basename) || '.bmp').slice(1).toLowerCase();
+  const id = `img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const filename = `${id}.${ext}`;
+  try {
+    fs.copyFileSync(src, path.join(GALLERY_DIR, filename));
+  } catch (e) {
+    console.error('[Sightings] F10 copy failed:', e.message);
+    return;
+  }
+  const url = `/gallery-images/${filename}`;
+  const ts = Date.parse(ev.timestamp) || Date.now();
+
+  // Newest sighting from the same system inside the window adopts the shot.
+  const st = readStateFile();
+  const match = Object.values(st.sightings || {})
+    .filter((s) => s && s.systemName === ev.System && Math.abs(ts - Date.parse(s.recordedAt)) <= SIGHTING_ATTACH_WINDOW_MS)
+    .sort((a, b) => (a.recordedAt < b.recordedAt ? 1 : -1))[0];
+  const key = match ? match.galleryKey : galleryKeyFor(ev.System, ev.Body);
+  addImageToGalleryKey(key, { id, url, caption: basename, addedAt: new Date().toISOString() });
+  if (match) {
+    applyStatePatch({ sightings: { __upsert: { [match.id]: { ...match, autoShots: (match.autoShots || 0) + 1 } } } });
+  }
+  recentGameShots.push({ ts, system: ev.System, key, imageId: id, url, caption: basename });
+  while (recentGameShots.length > 20) recentGameShots.shift();
+  console.log(`[Sightings] F10 shot ${basename} → ${key}${match ? ' (attached to sighting)' : ''}`);
+  broadcastEvent({ type: 'screenshot_saved', system: ev.System, body: ev.Body || null, url, attached: !!match, timestamp: ev.timestamp });
+}
+
 let stateWriteTimer = null;
 let pendingState = null;
 
@@ -246,6 +328,7 @@ const APPEND_ONLY_KEYS = new Set([
   'systemAddressMap',         // name ↔ address mapping
   'bodyVisits',               // landings — exploration history
   'organicScans',             // exobiology catalogued per body — journal-derived
+  'sightings',                // player-recorded "worth remembering" spots (postcard ledger)
   'bodyNotes',                // player-authored notes
   'fleetCarriers',            // FC dossier
   'fleetCarrierSpaceUsage',   // FC space tracking
@@ -1852,6 +1935,66 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Sightings: GET list (newest first)
+  if (pathname === '/api/sightings' && req.method === 'GET') {
+    const st = readStateFile();
+    const list = Object.values(st.sightings || {})
+      .filter(Boolean)
+      .sort((a, b) => (a.recordedAt < b.recordedAt ? 1 : -1));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ sightings: list }));
+    return;
+  }
+  // Sightings: POST { tags, note? } — location is snapshotted SERVER-side, so the
+  // 2nd-screen button needs to know nothing. Adopts recent F10 shots from the same
+  // system (±10 min) recorded before the button press.
+  if (pathname === '/api/sightings' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const { tags, note } = JSON.parse(body || '{}');
+        if (!Array.isArray(tags) || tags.length === 0) throw new Error('Pick at least one tag');
+        const st = readStateFile();
+        const pos = st.commanderPosition;
+        if (!pos || !pos.systemName) throw new Error('Commander position unknown — jump or relog first');
+        // Trust currentBody only when it belongs to the system we're actually in.
+        const cb = st.currentBody && st.currentBody.systemAddress === pos.systemAddress ? st.currentBody : null;
+        const rec = {
+          id: `sight_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          systemName: pos.systemName,
+          systemAddress: pos.systemAddress ?? null,
+          bodyName: cb ? cb.bodyName : null,
+          coordinates: pos.coordinates || null,
+          tags: tags.map(String).slice(0, 12),
+          note: typeof note === 'string' && note.trim() ? note.trim().slice(0, 500) : undefined,
+          galleryKey: galleryKeyFor(pos.systemName, cb ? cb.bodyName : null),
+          recordedAt: new Date().toISOString(),
+          autoShots: 0,
+        };
+        // Adopt F10 shots taken just before the button press (same system, in window).
+        const now = Date.now();
+        for (const shot of recentGameShots) {
+          if (shot.system !== pos.systemName) continue;
+          if (now - shot.ts > SIGHTING_ATTACH_WINDOW_MS) continue;
+          if (moveGalleryImage(shot.imageId, shot.key, rec.galleryKey) || shot.key === rec.galleryKey) {
+            shot.key = rec.galleryKey;
+            rec.autoShots++;
+          }
+        }
+        applyStatePatch({ sightings: { __upsert: { [rec.id]: rec } } });
+        broadcastEvent({ type: 'sighting_recorded', id: rec.id, system: rec.systemName, body: rec.bodyName, tags: rec.tags, autoShots: rec.autoShots, timestamp: rec.recordedAt });
+        console.log(`[Sightings] Recorded ${rec.bodyName || rec.systemName} [${rec.tags.join(', ')}]${rec.autoShots ? ` +${rec.autoShots} F10 shot(s)` : ''}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(rec));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
   // Gallery API: GET /api/gallery — returns metadata
   if (pathname === '/api/gallery' && req.method === 'GET') {
     const meta = readGalleryMeta();
@@ -1921,7 +2064,10 @@ const server = http.createServer((req, res) => {
     fs.readFile(filePath, (err, data) => {
       if (err) { res.writeHead(404); res.end('Not found'); return; }
       const ext = path.extname(filename).toLowerCase();
-      const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.png' ? 'image/png' : 'image/jpeg';
+      const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg'
+        : ext === '.png' ? 'image/png'
+        : ext === '.bmp' ? 'image/bmp' // F10 in-game screenshots are uncompressed BMPs
+        : 'image/jpeg';
       res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'public, max-age=86400' });
       res.end(data);
     });
@@ -2225,6 +2371,7 @@ server.listen(PORT, '0.0.0.0', () => {
       broadcastEvent,
       sendOverlay: sendOverlayMessage,
       captureLine: captureStore.capture,
+      recordGameScreenshot,
     });
   } catch (e) {
     console.error('[Watcher] Failed to start:', e && e.message);

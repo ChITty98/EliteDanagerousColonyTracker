@@ -24,6 +24,7 @@ const TAGS: Array<{ id: string; icon: string; label: string }> = [
   { id: 'braintrees', icon: '\u{1F333}', label: 'Brain Trees' },
   { id: 'geology', icon: '\u{1F30B}', label: 'Geology' },
   { id: 'home', icon: '\u{1F3E0}', label: 'Home candidate' },
+  { id: 'landmark', icon: '\u{1F5FD}', label: 'Landmark' }, // famous in-game places — Jaques, megaships, tourist spots
   { id: 'cool', icon: '⭐', label: 'Just cool' },
 ];
 

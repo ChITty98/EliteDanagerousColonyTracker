@@ -2,6 +2,11 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.37.1] — 2026-08-11
+
+### Added
+- **🗽 Landmark** sighting tag — for famous in-game places (Jaques Station, megaships, tourist beacons). Station sights record at system level and F10 shots attach the same as anywhere else.
+
 ## [1.37.0] — 2026-08-11
 
 ### Added

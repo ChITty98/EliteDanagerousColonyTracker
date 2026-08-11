@@ -2,6 +2,15 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.37.0] — 2026-08-11
+
+### Added
+- **📸 Sights page** — the postcard wall. Every recorded sighting as a card, newest first: photo (F10 auto-attached or device-uploaded, click for full size), body + system, tag chips, your note, links to the system page and System View. Filter by tag — "show me every Brain Trees sight" is one click. Reads the same data as the 2nd-screen card and the per-system galleries, so all three always agree. Nav entry between System View and Projects.
+
+### Fixed
+- The "✓ Recorded" line on the 2nd-screen card now updates live when an F10 shot attaches seconds after Save (it previously showed the stale count from the moment of the button press — verified against the first real F10 attach, which landed 8 seconds after the sighting and was invisible on the card).
+- F10 attach window tightened to ±3 minutes (was 10) — the real flow is Record and F10 within seconds of each other; a long window let unrelated same-system shots glom on.
+
 ## [1.36.0] — 2026-08-11
 
 ### Added

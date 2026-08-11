@@ -49,7 +49,13 @@ export function SightingCard() {
   const loadRecent = useCallback(() => {
     fetch(apiUrl('/api/sightings'))
       .then((r) => (r.ok ? r.json() : null))
-      .then((d: { sightings: Sighting[] } | null) => { if (d) setRecent(d.sightings.slice(0, 8)); })
+      .then((d: { sightings: Sighting[] } | null) => {
+        if (!d) return;
+        setRecent(d.sightings.slice(0, 8));
+        // Keep the "✓ Recorded" line live — an F10 shot landing seconds after Save
+        // bumps autoShots server-side, and the stale POST response hid it.
+        setSaved((prev) => (prev ? d.sightings.find((s) => s.id === prev.id) || prev : prev));
+      })
       .catch(() => {});
   }, []);
 

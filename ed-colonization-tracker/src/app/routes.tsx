@@ -17,6 +17,7 @@ import { JournalStatsPage } from '@/features/journal-stats/JournalStatsPage';
 import { CompanionPage } from '@/features/companion/CompanionPage';
 import { ArchitectDomainPage } from '@/features/domain/ArchitectDomainPage';
 import { ColonyMapPage } from '@/features/map/ColonyMapPage';
+import { SightsPage } from '@/features/sights/SightsPage';
 import { SystemViewPage } from '@/features/system-view/SystemViewPage';
 import { WarPeacePage } from '@/features/war-peace/WarPeacePage';
 import { MaterialsPage } from '@/features/materials/MaterialsPage';
@@ -44,6 +45,7 @@ export const router = createBrowserRouter([
       { path: 'domain', element: <ArchitectDomainPage /> },
       { path: 'map', element: <ColonyMapPage /> },
       { path: 'system-view', element: <SystemViewPage /> },
+      { path: 'sights', element: <SightsPage /> },
       { path: 'second-screen', element: <CompanionPage /> },
       { path: 'copilot', element: <CopilotPage /> },
       { path: 'war-peace', element: <WarPeacePage /> },

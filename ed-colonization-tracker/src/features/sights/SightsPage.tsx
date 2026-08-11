@@ -30,7 +30,8 @@ export function SightsPage() {
   const [sightings, setSightings] = useState<Sighting[]>([]);
   const [gallery, setGallery] = useState<Record<string, GalleryImage[]>>({});
   const [tagFilter, setTagFilter] = useState<string | null>(null);
-  const [lightbox, setLightbox] = useState<GalleryImage | null>(null);
+  // Lightbox browses ALL of a sighting's photos, not just the cover.
+  const [lightbox, setLightbox] = useState<{ photos: GalleryImage[]; index: number } | null>(null);
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
@@ -127,18 +128,34 @@ export function SightsPage() {
           return (
             <div key={s.id} className="bg-card border border-border rounded-lg overflow-hidden flex flex-col">
               {photos.length > 0 ? (
-                <button
-                  onClick={() => setLightbox(photos[photos.length - 1])}
-                  className="block w-full h-44 overflow-hidden bg-black/40"
-                  title="View full size"
-                >
-                  <img
-                    src={photos[photos.length - 1].url}
-                    alt={s.bodyName || s.systemName}
-                    className="w-full h-full object-cover hover:scale-105 transition-transform"
-                    loading="lazy"
-                  />
-                </button>
+                <div>
+                  <button
+                    onClick={() => setLightbox({ photos, index: photos.length - 1 })}
+                    className="block w-full h-44 overflow-hidden bg-black/40"
+                    title="View full size"
+                  >
+                    <img
+                      src={photos[photos.length - 1].url}
+                      alt={s.bodyName || s.systemName}
+                      className="w-full h-full object-cover hover:scale-105 transition-transform"
+                      loading="lazy"
+                    />
+                  </button>
+                  {photos.length > 1 && (
+                    <div className="flex gap-1 p-1 bg-black/30 overflow-x-auto">
+                      {photos.map((p, i) => (
+                        <button
+                          key={p.id}
+                          onClick={() => setLightbox({ photos, index: i })}
+                          className="h-12 w-16 shrink-0 overflow-hidden rounded border border-border/50 hover:border-emerald-400"
+                          title={p.caption || ''}
+                        >
+                          <img src={p.url} alt="" className="w-full h-full object-cover" loading="lazy" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               ) : (
                 <div className="w-full h-16 flex items-center justify-center text-xs text-muted-foreground/60 bg-muted/20">
                   no photo yet — F10 in-game or Add photo on the 2nd Screen
@@ -190,13 +207,38 @@ export function SightsPage() {
       {uploadError && <div className="mt-3 text-xs text-red-400">{uploadError}</div>}
       <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={onFiles} />
 
-      {/* Lightbox — plain full-size view, click anywhere to close */}
+      {/* Lightbox — browses every photo of the sighting; backdrop click closes */}
       {lightbox && (
         <div
           className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4 cursor-zoom-out"
           onClick={() => setLightbox(null)}
         >
-          <img src={lightbox.url} alt={lightbox.caption || ''} className="max-w-full max-h-full object-contain" />
+          <img
+            src={lightbox.photos[lightbox.index].url}
+            alt={lightbox.photos[lightbox.index].caption || ''}
+            className="max-w-full max-h-full object-contain"
+          />
+          {lightbox.photos.length > 1 && (
+            <>
+              <button
+                onClick={(e) => { e.stopPropagation(); setLightbox({ ...lightbox, index: (lightbox.index - 1 + lightbox.photos.length) % lightbox.photos.length }); }}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-3xl px-3 py-2 rounded-lg bg-black/50 text-white hover:bg-black/80"
+                title="Previous"
+              >
+                ‹
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setLightbox({ ...lightbox, index: (lightbox.index + 1) % lightbox.photos.length }); }}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-3xl px-3 py-2 rounded-lg bg-black/50 text-white hover:bg-black/80"
+                title="Next"
+              >
+                ›
+              </button>
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-xs text-white/80 bg-black/50 rounded px-2 py-1">
+                {lightbox.index + 1} / {lightbox.photos.length}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

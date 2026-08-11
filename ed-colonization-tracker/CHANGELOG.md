@@ -2,6 +2,11 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.38.1] — 2026-08-11
+
+### Fixed
+- **All of a sight's photos are reachable now.** Cards with more than one photo show a thumbnail strip under the cover, and the lightbox pages through every photo with ‹ › and a counter — previously only the newest photo was viewable even when the card said 📷 2.
+
 ## [1.38.0] — 2026-08-11
 
 ### Added

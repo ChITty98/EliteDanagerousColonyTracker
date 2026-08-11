@@ -44,6 +44,10 @@ export function CompanionPage() {
 
   const [events, setEvents] = useState<CompanionEvent[]>([]);
   const [connected, setConnected] = useState(false);
+  // FC strip collapse — remembered per device.
+  const [fcCollapsed, setFcCollapsed] = useState(() => {
+    try { return localStorage.getItem('companion-fc-collapsed') === '1'; } catch { return false; }
+  });
   const [actionResult, setActionResult] = useState<CompanionContent | null>(null);
   const [actionLabel, setActionLabel] = useState('');
   const [lastTarget, setLastTarget] = useState<CompanionEvent | null>(null);
@@ -270,56 +274,63 @@ export function CompanionPage() {
         </div>
       </div>
 
-      {/* FC Free Space — computed live from settings + journal cargo */}
+      {/* FC Free Space — collapsible; far from the carrier this is one quiet line.
+          Collapsed preference is per-device (the iPad can stay minimized for a whole
+          tour while the PC browser stays expanded). */}
       {myFleetCarrier && (
-        <div className="bg-card border border-border rounded-lg px-4 py-3 mb-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-xl">{'\u{1F69A}'}</span>
-            <div>
-              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                {myFleetCarrier} — Free Cargo
-              </div>
-              <div className="flex items-baseline gap-2">
-                <span
-                  className={`text-2xl font-bold tabular-nums ${
-                    fcFreeSpace < 1000
-                      ? 'text-red-400'
-                      : fcFreeSpace < 5000
-                      ? 'text-yellow-400'
-                      : 'text-green-400'
-                  }`}
-                >
-                  {fcFreeSpace.toLocaleString()}t
-                </span>
-                <span className="text-xs text-muted-foreground font-mono">
-                  = 25,000 − {(fcModulesCapacity || 0).toLocaleString()} − {currentCargoTons.toLocaleString()}
-                </span>
-              </div>
-              {!fcModulesCapacity && (
-                <div className="text-[11px] text-yellow-400/80 mt-0.5">
-                  Set Modules tonnage in Settings for accurate free space
+        <div className="bg-card border border-border rounded-lg mb-4">
+          <button
+            onClick={() => {
+              setFcCollapsed((c) => {
+                try { localStorage.setItem('companion-fc-collapsed', c ? '0' : '1'); } catch { /* private mode */ }
+                return !c;
+              });
+            }}
+            className="w-full flex items-center gap-2 px-4 py-2.5 text-left"
+          >
+            <span>{'\u{1F69A}'}</span>
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{myFleetCarrier}</span>
+            <span
+              className={`text-sm font-bold tabular-nums ${
+                fcFreeSpace < 1000 ? 'text-red-400' : fcFreeSpace < 5000 ? 'text-yellow-400' : 'text-green-400'
+              }`}
+            >
+              {fcFreeSpace.toLocaleString()}t free
+            </span>
+            <span className="text-muted-foreground/60 text-xs ml-auto">{fcCollapsed ? '▸' : '▾'}</span>
+          </button>
+          {!fcCollapsed && (
+            <div className="px-4 pb-3 flex items-start justify-between">
+              <div>
+                <div className="text-xs text-muted-foreground font-mono">
+                  = 25,000 − {(fcModulesCapacity || 0).toLocaleString()} modules − {currentCargoTons.toLocaleString()} cargo
                 </div>
-              )}
+                {!fcModulesCapacity && (
+                  <div className="text-[11px] text-yellow-400/80 mt-0.5">
+                    Set Modules tonnage in Settings for accurate free space
+                  </div>
+                )}
+              </div>
+              <div className="text-right text-xs text-muted-foreground">
+                <div>Modules: {(fcModulesCapacity || 0).toLocaleString()}t</div>
+                <div>Cargo: {currentCargoTons.toLocaleString()}t</div>
+                {myCargo && (() => {
+                  const ts = (myCargo as { updatedAt?: string }).updatedAt
+                    || (myCargo as { latestTransfer?: string }).latestTransfer
+                    || null;
+                  const d = ts ? new Date(ts) : null;
+                  const label = d && !isNaN(d.getTime())
+                    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    : '—';
+                  return (
+                    <div className="text-[10px] opacity-70">
+                      as of {label}
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
-          </div>
-          <div className="text-right text-xs text-muted-foreground">
-            <div>Modules: {(fcModulesCapacity || 0).toLocaleString()}t</div>
-            <div>Cargo: {currentCargoTons.toLocaleString()}t</div>
-            {myCargo && (() => {
-              const ts = (myCargo as { updatedAt?: string }).updatedAt
-                || (myCargo as { latestTransfer?: string }).latestTransfer
-                || null;
-              const d = ts ? new Date(ts) : null;
-              const label = d && !isNaN(d.getTime())
-                ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                : '—';
-              return (
-                <div className="text-[10px] opacity-70">
-                  as of {label}
-                </div>
-              );
-            })()}
-          </div>
+          )}
         </div>
       )}
 
@@ -556,6 +567,62 @@ export function CompanionPage() {
         );
       })()}
 
+      {/* Wide screens: two columns — content left, Live Feed pinned right.
+          Narrow screens: the feed renders FIRST, directly under the banners, so
+          running alerts are never below the fold. */}
+      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_400px] lg:gap-4 lg:items-start flex-1 min-h-0">
+      <aside className="lg:order-2 lg:sticky lg:top-4 mb-4 lg:mb-0 min-w-0">
+      {/* Live Event Feed */}
+      <div className="flex-1 min-h-0">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold text-muted-foreground">Live Feed</h3>
+          {events.length > 0 && (
+            <button
+              onClick={() => setEvents([])}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+
+        <div
+          ref={feedRef}
+          className="bg-card border border-border rounded-lg overflow-y-auto max-h-[40vh] lg:max-h-[calc(100vh-140px)] min-h-[200px]"
+        >
+          {events.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <div className="text-3xl mb-2">{'\u{1F4E1}'}</div>
+              <p className="text-sm">Waiting for events...</p>
+              <p className="text-xs mt-1">
+                {connected
+                  ? 'Connected \u2014 events will appear when the journal watcher detects activity'
+                  : 'Connecting to event stream...'}
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-border/30">
+              {events.map((ev, i) => {
+                const summary = eventSummary(ev);
+                if (!summary) return null;
+                return (
+                  <div key={i} className="flex items-start gap-3 px-3 py-2 hover:bg-muted/20">
+                    <span className="text-sm shrink-0 mt-0.5">{eventIcon(ev.type)}</span>
+                    <div className="flex-1 min-w-0">
+                      <span className={`text-sm ${eventColor(ev.type)}`}>{summary}</span>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums mt-0.5">
+                      {new Date(ev.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+      </aside>
+      <div className="lg:order-1 min-w-0">
       {/* Record-this-spot — the postcard button */}
       <SightingCard />
 
@@ -643,55 +710,7 @@ export function CompanionPage() {
         </div>
       )}
 
-      {/* Live Event Feed */}
-      <div className="flex-1 min-h-0">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-semibold text-muted-foreground">Live Feed</h3>
-          {events.length > 0 && (
-            <button
-              onClick={() => setEvents([])}
-              className="text-xs text-muted-foreground hover:text-foreground"
-            >
-              Clear
-            </button>
-          )}
-        </div>
-
-        <div
-          ref={feedRef}
-          className="bg-card border border-border rounded-lg overflow-y-auto"
-          style={{ maxHeight: 'calc(100vh - 480px)', minHeight: '200px' }}
-        >
-          {events.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <div className="text-3xl mb-2">{'\u{1F4E1}'}</div>
-              <p className="text-sm">Waiting for events...</p>
-              <p className="text-xs mt-1">
-                {connected
-                  ? 'Connected \u2014 events will appear when the journal watcher detects activity'
-                  : 'Connecting to event stream...'}
-              </p>
-            </div>
-          ) : (
-            <div className="divide-y divide-border/30">
-              {events.map((ev, i) => {
-                const summary = eventSummary(ev);
-                if (!summary) return null;
-                return (
-                  <div key={i} className="flex items-start gap-3 px-3 py-2 hover:bg-muted/20">
-                    <span className="text-sm shrink-0 mt-0.5">{eventIcon(ev.type)}</span>
-                    <div className="flex-1 min-w-0">
-                      <span className={`text-sm ${eventColor(ev.type)}`}>{summary}</span>
-                    </div>
-                    <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums mt-0.5">
-                      {new Date(ev.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+      </div>
       </div>
     </div>
   );

@@ -2,6 +2,11 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.40.0] — 2026-08-11
+
+### Changed
+- **2nd Screen decluttered — running alerts are never below the fold.** The Live Feed now sits in its own right-hand column on wide screens (iPad landscape), pinned and full-height; on narrow screens it renders directly under the status banners in a capped scroll box, ABOVE the buttons. The 📸 Record card collapses to a single row (tap to open, auto-collapses after save, ✓-line stays visible in the strip) and its recent-sightings list is gone — the Sights wall owns browsing, linked via "wall ↗". The FC free-cargo panel collapses to a one-line strip (🚚 callsign · colored tonnage), tap to expand, remembered per device — your iPad can stay minimized for a whole tour while the PC stays expanded.
+
 ## [1.39.0] — 2026-08-11
 
 ### Fixed

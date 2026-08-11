@@ -45,17 +45,17 @@ export function SightingCard() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<Sighting | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [recent, setRecent] = useState<Sighting[]>([]);
   const [uploading, setUploading] = useState(false);
+  // Collapsed by default — the 2nd screen got busy; the panel expands only while recording.
+  const [open, setOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const loadRecent = useCallback(() => {
+  const refreshSaved = useCallback(() => {
     fetch(apiUrl('/api/sightings'))
       .then((r) => (r.ok ? r.json() : null))
       .then((d: { sightings: Sighting[] } | null) => {
         if (!d) return;
-        setRecent(d.sightings.slice(0, 8));
-        // Keep the "✓ Recorded" line live — an F10 shot landing seconds after Save
+        // Keep the '✓ Recorded' line live — an F10 shot landing seconds after Save
         // bumps autoShots server-side, and the stale POST response hid it.
         setSaved((prev) => (prev ? d.sightings.find((s) => s.id === prev.id) || prev : prev));
       })
@@ -63,11 +63,11 @@ export function SightingCard() {
   }, []);
 
   useEffect(() => {
-    loadRecent();
-    const offRec = sseSubscribe('sighting_recorded', () => loadRecent());
-    const offShot = sseSubscribe('screenshot_saved', () => loadRecent());
+    refreshSaved();
+    const offRec = sseSubscribe('sighting_recorded', () => refreshSaved());
+    const offShot = sseSubscribe('screenshot_saved', () => refreshSaved());
     return () => { offRec(); offShot(); };
-  }, [loadRecent]);
+  }, [refreshSaved]);
 
   const toggle = (id: string) => {
     setSelected((prev) => {
@@ -93,7 +93,8 @@ export function SightingCard() {
         setSaved(rec);
         setSelected(new Set());
         setNote('');
-        loadRecent();
+        setOpen(false); // collapse after save — the ✓ line stays visible in the strip
+        refreshSaved();
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setSaving(false));
@@ -106,7 +107,7 @@ export function SightingCard() {
     setUploading(true);
     const err = await uploadAllToGalleryKey(saved.galleryKey, files);
     if (err) setError(err);
-    loadRecent();
+    refreshSaved();
     setUploading(false);
     if (fileRef.current) fileRef.current.value = '';
   };
@@ -114,12 +115,31 @@ export function SightingCard() {
   const here = commanderPosition?.systemName || 'position unknown';
 
   return (
-    <div className="bg-card border border-emerald-500/30 rounded-lg p-4 mb-4">
-      <div className="flex items-baseline justify-between mb-2">
-        <h3 className="text-sm font-semibold text-emerald-400">{'\u{1F4F8}'} Record this spot</h3>
-        <span className="text-xs text-muted-foreground truncate ml-3">{here}</span>
+    <div className="bg-card border border-emerald-500/30 rounded-lg mb-4">
+      {/* Collapsed strip — one tap to open the recorder; the wall owns browsing */}
+      <div className="flex items-center gap-2 px-4 py-2.5">
+        <button
+          onClick={() => setOpen((o) => !o)}
+          className="flex items-center gap-2 flex-1 min-w-0 text-left"
+        >
+          <span className="text-sm font-semibold text-emerald-400">{'\u{1F4F8}'} Record this spot</span>
+          <span className="text-xs text-muted-foreground truncate">{here}</span>
+          <span className="text-emerald-400/70 text-xs ml-auto">{open ? '▾' : '▸'}</span>
+        </button>
+        <a href={apiUrl('/sights')} target="_blank" rel="noreferrer" className="text-xs text-sky-400 hover:text-sky-300 underline shrink-0">
+          wall ↗
+        </a>
       </div>
 
+      {!open && saved && (
+        <div className="px-4 pb-2 text-xs text-emerald-300">
+          {'✓'} {saved.bodyName || saved.systemName}
+          {(saved.autoShots ?? 0) > 0 && ` · ${saved.autoShots} F10 shot${(saved.autoShots ?? 0) > 1 ? 's' : ''}`}
+        </div>
+      )}
+
+      {open && (
+      <div className="px-4 pb-3">
       <div className="flex flex-wrap gap-2 mb-2">
         {TAGS.map((t) => (
           <button
@@ -171,22 +191,7 @@ export function SightingCard() {
           <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={onFile} />
         </div>
       )}
-
-      {recent.length > 0 && (
-        <div className="mt-3 border-t border-border/50 pt-2">
-          <div className="text-[11px] text-muted-foreground mb-1">Recent sightings</div>
-          <div className="space-y-1">
-            {recent.map((s) => (
-              <div key={s.id} className="text-xs flex items-baseline gap-2 flex-wrap">
-                <span className="text-foreground">{s.bodyName || s.systemName}</span>
-                <span className="text-muted-foreground">{s.tags.map((t) => TAG_LABELS[t] || t).join(' · ')}</span>
-                {(s.autoShots ?? 0) > 0 && <span className="text-emerald-400">{'\u{1F4F7}'}{s.autoShots}</span>}
-                {s.note && <span className="text-muted-foreground italic truncate max-w-[16rem]">“{s.note}”</span>}
-                <span className="text-muted-foreground/60 ml-auto">{new Date(s.recordedAt).toLocaleDateString()}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+      </div>
       )}
     </div>
   );

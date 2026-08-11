@@ -909,11 +909,19 @@ export async function handleFSSAllBodiesFoundOverlay(ev, existing, deps) {
       const spanshBodies = journalBodiesToSpanshFormat(scanBodies, scanState.pendingSystemName);
       const score = scoreSystem(spanshBodies);
       const bodyString = buildBodyString(filterQualifyingBodies(spanshBodies), classifyStars(spanshBodies));
+      // The FSDJump that brought us here put exact StarPos coords on commanderPosition.
+      // Without these, radius searches can't see journal-scored systems at all (the
+      // whole UN-T campaign was invisible to "within 15 ly" — 32 null-coord entries).
+      const pos = existing.commanderPosition;
+      const hereCoords = pos && pos.systemAddress === ev.SystemAddress && pos.coordinates
+        ? pos.coordinates
+        : null;
       const record = {
         id64: ev.SystemAddress,
         name: systemName,
         score,
         bodyString,
+        coordinates: hereCoords || undefined,
         scoutedAt: new Date().toISOString(),
         fromJournal: true,
         spanshBodyCount: 0,
@@ -930,7 +938,7 @@ export async function handleFSSAllBodiesFoundOverlay(ev, existing, deps) {
         journalExplorationCache: { __upsert: { [String(ev.SystemAddress)]: {
           systemAddress: ev.SystemAddress,
           systemName,
-          coordinates: null,
+          coordinates: hereCoords,
           bodyCount: ev.Count,
           fssAllBodiesFound: true,
           scannedBodies: scanBodies,

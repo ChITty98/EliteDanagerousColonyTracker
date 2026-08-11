@@ -4,6 +4,9 @@ All notable changes to ED Colony Architect (named ED Colony Tracker through v1.3
 
 ## [1.39.0] — 2026-08-11
 
+### Fixed
+- **Journal-scanned systems were invisible to radius searches.** The live scoring path wrote every journal-scored system with null coordinates (the entire UN-T campaign — 32 systems — could not be measured against any "within N ly" search, so Expansion merges reported "+1 from your journal" where dozens existed). Coordinates now come from the commander's jump position at scan time, and a one-time backfill repaired 49 cache + 281 scouted entries from jump history.
+
 ### Added
 - **Edit sights from the wall.** Each card gains ✏️ Edit: toggle tag chips (same shared list as the record card), rewrite or clear the note, Save/Cancel — plus 🗑️ Delete with a confirm. Deleting a sighting never touches photos: they belong to the location's gallery and stay there. Edits and deletes go through dedicated endpoints (sightings stays append-only against state PATCHes, so stale tabs still can't wipe it) and broadcast live to every open screen.
 

@@ -180,7 +180,9 @@ function writeGalleryMeta(data) {
 // --- Sightings (the postcard ledger) + F10 screenshot capture ---
 // Gallery keys follow the EXISTING scheme ("system:x" / "system:x:body:y"), so photos
 // recorded here show up on System Detail pages automatically — colonized or not.
-const SIGHTING_ATTACH_WINDOW_MS = 10 * 60 * 1000;
+// Tight on purpose: the real flow is tap-Record ↔ press-F10 within seconds of each
+// other. A long window let unrelated same-system shots glom onto a sighting.
+const SIGHTING_ATTACH_WINDOW_MS = 3 * 60 * 1000;
 // F10 shots land here by default. The journal Filename is a token like
 // "\ED_Pictures\Screenshot_0001.bmp", not an absolute path.
 const ED_PICTURES_DIR = path.join(os.homedir(), 'Pictures', 'Frontier Developments', 'Elite Dangerous');

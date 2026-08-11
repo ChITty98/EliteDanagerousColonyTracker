@@ -183,7 +183,7 @@ export function SightingCard() {
           >
             {uploading ? 'Uploading…' : '\u{1F4F7} Add photo'}
           </button>
-          <span className="text-muted-foreground">F10 in-game also auto-attaches for 10 min.</span>
+          <span className="text-muted-foreground">F10 in-game also auto-attaches for 3 min.</span>
           <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
         </div>
       )}

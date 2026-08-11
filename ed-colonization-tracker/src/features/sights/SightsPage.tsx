@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { Sighting } from '@/store/types';
 import { sseSubscribe } from '@/services/sseBus';
 import { TAG_LABELS } from '@/features/companion/SightingCard';
+import { uploadAllToGalleryKey } from '@/lib/galleryUpload';
 
 /**
  * 📸 Sights — the postcard wall. Every recorded sighting, newest first: photo
@@ -30,6 +31,33 @@ export function SightsPage() {
   const [gallery, setGallery] = useState<Record<string, GalleryImage[]>>({});
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<GalleryImage | null>(null);
+  const [uploadingFor, setUploadingFor] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // One hidden input reused for every card — clicking a card's Add-photo arms it
+  // with that sighting's gallery key first.
+  const fileRef = useRef<HTMLInputElement>(null);
+  const pendingKeyRef = useRef<string | null>(null);
+
+  const pickFor = (sighting: Sighting) => {
+    pendingKeyRef.current = sighting.galleryKey;
+    setUploadingFor(null);
+    setUploadError(null);
+    fileRef.current?.click();
+  };
+
+  const onFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    const key = pendingKeyRef.current;
+    if (!files || files.length === 0 || !key) return;
+    setUploadingFor(key);
+    const err = await uploadAllToGalleryKey(key, files);
+    if (err) setUploadError(err);
+    setUploadingFor(null);
+    pendingKeyRef.current = null;
+    if (fileRef.current) fileRef.current.value = '';
+    load();
+  };
 
   const load = useCallback(() => {
     fetch(apiUrl('/api/sightings'))
@@ -133,7 +161,7 @@ export function SightsPage() {
                   ))}
                 </div>
                 {s.note && <div className="text-xs text-muted-foreground italic">“{s.note}”</div>}
-                <div className="mt-auto pt-1.5 flex gap-3 text-xs">
+                <div className="mt-auto pt-1.5 flex gap-3 text-xs items-baseline">
                   <Link className="text-sky-400 hover:text-sky-300 underline" to={`/systems/${encodeURIComponent(s.systemName)}`}>
                     System page
                   </Link>
@@ -145,12 +173,22 @@ export function SightsPage() {
                   >
                     System View ↗
                   </a>
+                  <button
+                    onClick={() => pickFor(s)}
+                    disabled={uploadingFor === s.galleryKey}
+                    className="ml-auto px-2 py-0.5 rounded border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40"
+                  >
+                    {uploadingFor === s.galleryKey ? 'Uploading…' : '\u{1F4F7} Add photo'}
+                  </button>
                 </div>
               </div>
             </div>
           );
         })}
       </div>
+
+      {uploadError && <div className="mt-3 text-xs text-red-400">{uploadError}</div>}
+      <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={onFiles} />
 
       {/* Lightbox — plain full-size view, click anywhere to close */}
       {lightbox && (

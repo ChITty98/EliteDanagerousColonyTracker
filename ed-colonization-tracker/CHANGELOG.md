@@ -2,6 +2,11 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.38.0] — 2026-08-11
+
+### Added
+- **Add photos to any sight, any time.** Every card on the Sights wall gains an Add-photo button (multi-select), uploading into that sighting's gallery key from whatever device you're on. The 2nd-screen card's Add-photo now takes multiple files too. Both run through one shared upload helper so they can't behave differently.
+
 ## [1.37.1] — 2026-08-11
 
 ### Added

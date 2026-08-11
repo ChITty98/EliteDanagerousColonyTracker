@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore } from '@/store';
 import type { Sighting } from '@/store/types';
 import { sseSubscribe } from '@/services/sseBus';
+import { uploadAllToGalleryKey } from '@/lib/galleryUpload';
 
 /**
  * "Record this spot" — the 2nd-screen postcard button. One tap sends TAGS only;
@@ -97,41 +98,16 @@ export function SightingCard() {
       .finally(() => setSaving(false));
   };
 
-  // Upload a photo from THIS device into the saved sighting's gallery key.
-  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !saved) return;
+  // Upload photos from THIS device into the saved sighting's gallery key.
+  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0 || !saved) return;
     setUploading(true);
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const up = await fetch(apiUrl('/api/gallery/upload'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dataUrl: reader.result }),
-        });
-        const img = await up.json();
-        if (!up.ok) throw new Error(img.error || 'Upload failed');
-        const metaRes = await fetch(apiUrl('/api/gallery'));
-        const meta = await metaRes.json();
-        const arr = Array.isArray(meta[saved.galleryKey]) ? meta[saved.galleryKey] : [];
-        arr.push({ id: img.id, url: img.url, caption: file.name, addedAt: new Date().toISOString() });
-        meta[saved.galleryKey] = arr;
-        await fetch(apiUrl('/api/gallery'), {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(meta),
-        });
-        setSaved({ ...saved, autoShots: saved.autoShots }); // re-render; count shown is F10-only
-        loadRecent();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Upload failed');
-      } finally {
-        setUploading(false);
-        if (fileRef.current) fileRef.current.value = '';
-      }
-    };
-    reader.readAsDataURL(file);
+    const err = await uploadAllToGalleryKey(saved.galleryKey, files);
+    if (err) setError(err);
+    loadRecent();
+    setUploading(false);
+    if (fileRef.current) fileRef.current.value = '';
   };
 
   const here = commanderPosition?.systemName || 'position unknown';
@@ -191,7 +167,7 @@ export function SightingCard() {
             {uploading ? 'Uploading…' : '\u{1F4F7} Add photo'}
           </button>
           <span className="text-muted-foreground">F10 in-game also auto-attaches for 3 min.</span>
-          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
+          <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={onFile} />
         </div>
       )}
 

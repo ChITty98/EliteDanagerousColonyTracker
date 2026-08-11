@@ -2,6 +2,11 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.40.1] — 2026-08-11
+
+### Fixed
+- **Hi-res screenshots no longer balloon the gallery.** ALT+F10 captures run ~500 MB each; the auto-attach copied them faithfully (one session quietly added 1.5 GB). Shots over 100 MB are now skipped with a visible note in the console and the 2nd-screen feed — the original stays in Pictures for manual attach. Plain F10 (~32 MB) attaches as before.
+
 ## [1.40.0] — 2026-08-11
 
 ### Added

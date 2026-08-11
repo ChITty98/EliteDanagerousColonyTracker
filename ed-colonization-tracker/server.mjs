@@ -232,6 +232,17 @@ function recordGameScreenshot(ev) {
     console.warn(`[Sightings] F10 shot not found at ${src} — non-default screenshot folder?`);
     return;
   }
+  // ALT+F10 hi-res captures run ~500 MB each ("I had no idea it was going to be
+  // half a gig!") — don't silently balloon the gallery. Skip with a visible note;
+  // the original stays in Pictures for manual attach if genuinely wanted.
+  const MAX_ATTACH_BYTES = 100 * 1024 * 1024;
+  const srcSize = fs.statSync(src).size;
+  if (srcSize > MAX_ATTACH_BYTES) {
+    const sizeMB = Math.round(srcSize / 1048576);
+    console.warn(`[Sightings] Skipped ${basename} (${sizeMB} MB hi-res) — left in Pictures; attach manually if wanted.`);
+    broadcastEvent({ type: 'screenshot_saved', skipped: true, sizeMB, system: ev.System, body: ev.Body || null, timestamp: ev.timestamp });
+    return;
+  }
   const ext = (path.extname(basename) || '.bmp').slice(1).toLowerCase();
   const id = `img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const filename = `${id}.${ext}`;

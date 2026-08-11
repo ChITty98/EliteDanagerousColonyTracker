@@ -183,6 +183,7 @@ export function eventSummary(ev: CompanionEvent): string {
     case 'sighting_recorded':
       return `Sighting recorded — ${ev.body || ev.system}${Array.isArray(ev.tags) ? ' [' + ev.tags.join(', ') + ']' : ''}${Number(ev.autoShots) > 0 ? ` +${ev.autoShots} shot(s)` : ''}`;
     case 'screenshot_saved':
+      if (ev.skipped) return `Hi-res shot NOT attached (${ev.sizeMB} MB) — left in Pictures, attach manually if wanted`;
       return `F10 shot saved — ${ev.body || ev.system}${ev.attached ? ' (attached to sighting)' : ''}`;
     case 'heartbeat':
       return '';

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import type { Sighting } from '@/store/types';
 import { sseSubscribe } from '@/services/sseBus';
 import { TAGS, TAG_LABELS } from '@/features/companion/SightingCard';
-import { uploadAllToGalleryKey } from '@/lib/galleryUpload';
+import { uploadAllToGalleryKey, deleteFromGalleryKey } from '@/lib/galleryUpload';
 
 /**
  * 📸 Sights — the postcard wall. Every recorded sighting, newest first: photo
@@ -31,7 +31,7 @@ export function SightsPage() {
   const [gallery, setGallery] = useState<Record<string, GalleryImage[]>>({});
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   // Lightbox browses ALL of a sighting's photos, not just the cover.
-  const [lightbox, setLightbox] = useState<{ photos: GalleryImage[]; index: number } | null>(null);
+  const [lightbox, setLightbox] = useState<{ photos: GalleryImage[]; index: number; galleryKey: string } | null>(null);
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
@@ -175,7 +175,7 @@ export function SightsPage() {
               {photos.length > 0 ? (
                 <div>
                   <button
-                    onClick={() => setLightbox({ photos, index: photos.length - 1 })}
+                    onClick={() => setLightbox({ photos, index: photos.length - 1, galleryKey: s.galleryKey })}
                     className="block w-full h-44 overflow-hidden bg-black/40"
                     title="View full size"
                   >
@@ -191,7 +191,7 @@ export function SightsPage() {
                       {photos.map((p, i) => (
                         <button
                           key={p.id}
-                          onClick={() => setLightbox({ photos, index: i })}
+                          onClick={() => setLightbox({ photos, index: i, galleryKey: s.galleryKey })}
                           className="h-12 w-16 shrink-0 overflow-hidden rounded border border-border/50 hover:border-emerald-400"
                           title={p.caption || ''}
                         >
@@ -341,6 +341,26 @@ export function SightsPage() {
               </div>
             </>
           )}
+          <button
+            onClick={async (e) => {
+              e.stopPropagation();
+              const img = lightbox.photos[lightbox.index];
+              if (!window.confirm('Delete this photo? This removes it from the gallery entirely.')) return;
+              try {
+                await deleteFromGalleryKey(lightbox.galleryKey, img.id);
+                const rest = lightbox.photos.filter((p) => p.id !== img.id);
+                setLightbox(rest.length ? { ...lightbox, photos: rest, index: Math.min(lightbox.index, rest.length - 1) } : null);
+                load();
+              } catch (err) {
+                setUploadError(err instanceof Error ? err.message : 'Delete failed');
+                setLightbox(null);
+              }
+            }}
+            className="absolute top-4 right-4 text-xs px-3 py-1.5 rounded-lg bg-red-600/70 text-white hover:bg-red-600"
+            title="Delete this photo from the gallery"
+          >
+            {'\u{1F5D1}\u{FE0F}'} Delete photo
+          </button>
         </div>
       )}
     </div>

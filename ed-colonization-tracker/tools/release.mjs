@@ -3,8 +3,8 @@
  * Publish a GitHub Release for the current package.json version.
  *
  * Tags the commit, creates the release using this version's CHANGELOG section as
- * the body, and uploads the built exe plus a SHA256SUMS.txt (which the in-app
- * updater verifies against before installing).
+ * the body, and uploads the built exe plus a SHA256SUMS.txt so a download can be
+ * verified by hand. (The in-app updater is notice-only — it never installs.)
  *
  * The `gh` CLI isn't required — this talks to the REST API directly.
  *

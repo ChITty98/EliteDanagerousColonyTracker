@@ -2,6 +2,11 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.39.0] — 2026-08-11
+
+### Added
+- **Edit sights from the wall.** Each card gains ✏️ Edit: toggle tag chips (same shared list as the record card), rewrite or clear the note, Save/Cancel — plus 🗑️ Delete with a confirm. Deleting a sighting never touches photos: they belong to the location's gallery and stay there. Edits and deletes go through dedicated endpoints (sightings stays append-only against state PATCHes, so stale tabs still can't wipe it) and broadcast live to every open screen.
+
 ## [1.38.1] — 2026-08-11
 
 ### Fixed

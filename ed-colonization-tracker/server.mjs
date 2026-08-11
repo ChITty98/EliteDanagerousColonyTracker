@@ -1997,6 +1997,59 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Sightings: PATCH { id, tags?, note? } — edit a card from the wall. Tags replace
+  // (the UI sends the full chip set), note replaces ('' clears it). Photos are not
+  // touched — they belong to the location, not the sighting.
+  if (pathname === '/api/sightings' && req.method === 'PATCH') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const { id, tags, note } = JSON.parse(body || '{}');
+        const st = readStateFile();
+        const existing = (st.sightings || {})[id];
+        if (!existing) throw new Error('Sighting not found');
+        const rec = { ...existing };
+        if (tags !== undefined) {
+          if (!Array.isArray(tags) || tags.length === 0) throw new Error('Pick at least one tag');
+          rec.tags = tags.map(String).slice(0, 12);
+        }
+        if (note !== undefined) {
+          const trimmed = String(note).trim();
+          if (trimmed) rec.note = trimmed.slice(0, 500); else delete rec.note;
+        }
+        applyStatePatch({ sightings: { __upsert: { [id]: rec } } });
+        broadcastEvent({ type: 'sighting_updated', id, tags: rec.tags, timestamp: new Date().toISOString() });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(rec));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+  // Sightings: DELETE /api/sightings/:id — remove a card. sightings is append-only
+  // for state PATCHes (stale-baseline protection), so deletion goes through this
+  // dedicated endpoint with a direct mutation. Photos stay — they belong to the place.
+  if (pathname.startsWith('/api/sightings/') && req.method === 'DELETE') {
+    const id = decodeURIComponent(pathname.slice('/api/sightings/'.length));
+    // pendingState-aware read, same rule as applyStatePatch — otherwise a delete
+    // racing a debounced write would resurrect from stale disk data.
+    const st = pendingState ?? readStateFile();
+    if (st.sightings && st.sightings[id]) {
+      delete st.sightings[id];
+      writeStateDebounced(st);
+      broadcastEvent({ type: 'sighting_deleted', id, timestamp: new Date().toISOString() });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ deleted: id }));
+    } else {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Sighting not found' }));
+    }
+    return;
+  }
+
   // Gallery API: GET /api/gallery — returns metadata
   if (pathname === '/api/gallery' && req.method === 'GET') {
     const meta = readGalleryMeta();

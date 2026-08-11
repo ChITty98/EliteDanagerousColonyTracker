@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { Sighting } from '@/store/types';
 import { sseSubscribe } from '@/services/sseBus';
-import { TAG_LABELS } from '@/features/companion/SightingCard';
+import { TAGS, TAG_LABELS } from '@/features/companion/SightingCard';
 import { uploadAllToGalleryKey } from '@/lib/galleryUpload';
 
 /**
@@ -73,10 +73,55 @@ export function SightsPage() {
 
   useEffect(() => {
     load();
-    const offRec = sseSubscribe('sighting_recorded', () => load());
-    const offShot = sseSubscribe('screenshot_saved', () => load());
-    return () => { offRec(); offShot(); };
+    const offs = ['sighting_recorded', 'sighting_updated', 'sighting_deleted', 'screenshot_saved']
+      .map((t) => sseSubscribe(t, () => load()));
+    return () => { offs.forEach((fn) => fn()); };
   }, [load]);
+
+  // --- Per-card edit mode (tags + note) ---
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftTags, setDraftTags] = useState<Set<string>>(new Set());
+  const [draftNote, setDraftNote] = useState('');
+  const [editBusy, setEditBusy] = useState(false);
+
+  const startEdit = (s: Sighting) => {
+    setEditingId(s.id);
+    setDraftTags(new Set(s.tags));
+    setDraftNote(s.note || '');
+    setUploadError(null);
+  };
+
+  const saveEdit = async () => {
+    if (!editingId || draftTags.size === 0 || editBusy) return;
+    setEditBusy(true);
+    try {
+      const r = await fetch(apiUrl('/api/sightings'), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: editingId, tags: [...draftTags], note: draftNote }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Save failed');
+      setEditingId(null);
+      load();
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
+  const deleteSighting = async (s: Sighting) => {
+    if (!window.confirm(`Delete the ${s.bodyName || s.systemName} sighting? Its photos stay in the ${s.bodyName ? 'body' : 'system'} gallery.`)) return;
+    try {
+      const r = await fetch(apiUrl(`/api/sightings/${encodeURIComponent(s.id)}`), { method: 'DELETE' });
+      if (!r.ok) { const d = await r.json(); throw new Error(d.error || 'Delete failed'); }
+      setEditingId(null);
+      load();
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : 'Delete failed');
+    }
+  };
 
   const allTags = useMemo(() => {
     const seen = new Map<string, number>();
@@ -170,14 +215,65 @@ export function SightsPage() {
                   </span>
                 </div>
                 {s.bodyName && <div className="text-xs text-muted-foreground">{s.systemName}</div>}
-                <div className="flex flex-wrap gap-1">
-                  {s.tags.map((t) => (
-                    <span key={t} className="px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-200 text-[11px]">
-                      {TAG_LABELS[t] || t}
-                    </span>
-                  ))}
-                </div>
-                {s.note && <div className="text-xs text-muted-foreground italic">“{s.note}”</div>}
+                {editingId === s.id ? (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap gap-1">
+                      {TAGS.map((t) => (
+                        <button
+                          key={t.id}
+                          onClick={() => setDraftTags((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(t.id)) next.delete(t.id); else next.add(t.id);
+                            return next;
+                          })}
+                          className={`px-1.5 py-0.5 rounded text-[11px] border ${
+                            draftTags.has(t.id)
+                              ? 'bg-emerald-500/20 border-emerald-400 text-emerald-200'
+                              : 'bg-muted/30 border-border text-muted-foreground hover:border-emerald-500/40'
+                          }`}
+                        >
+                          {t.icon} {t.label}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      value={draftNote}
+                      onChange={(e) => setDraftNote(e.target.value)}
+                      placeholder="Note (empty clears it)…"
+                      className="w-full bg-muted border border-border rounded px-2 py-1 text-xs focus:outline-none focus:border-emerald-500"
+                    />
+                    <div className="flex gap-2 text-xs">
+                      <button
+                        onClick={saveEdit}
+                        disabled={draftTags.size === 0 || editBusy}
+                        className="px-2.5 py-1 rounded bg-emerald-500 text-black font-semibold hover:bg-emerald-400 disabled:opacity-40"
+                      >
+                        {editBusy ? 'Saving…' : 'Save'}
+                      </button>
+                      <button onClick={() => setEditingId(null)} className="px-2.5 py-1 rounded border border-border text-muted-foreground hover:bg-muted/40">
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => deleteSighting(s)}
+                        className="ml-auto px-2.5 py-1 rounded border border-red-500/40 text-red-300 hover:bg-red-500/10"
+                        title="Delete this sighting (photos stay in the location's gallery)"
+                      >
+                        {'\u{1F5D1}\u{FE0F}'} Delete
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap gap-1">
+                      {s.tags.map((t) => (
+                        <span key={t} className="px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-200 text-[11px]">
+                          {TAG_LABELS[t] || t}
+                        </span>
+                      ))}
+                    </div>
+                    {s.note && <div className="text-xs text-muted-foreground italic">“{s.note}”</div>}
+                  </>
+                )}
                 <div className="mt-auto pt-1.5 flex gap-3 text-xs items-baseline">
                   <Link className="text-sky-400 hover:text-sky-300 underline" to={`/systems/${encodeURIComponent(s.systemName)}`}>
                     System page
@@ -191,9 +287,15 @@ export function SightsPage() {
                     System View ↗
                   </a>
                   <button
+                    onClick={() => (editingId === s.id ? setEditingId(null) : startEdit(s))}
+                    className="ml-auto px-2 py-0.5 rounded border border-border text-muted-foreground hover:bg-muted/40"
+                  >
+                    {'✏️'} Edit
+                  </button>
+                  <button
                     onClick={() => pickFor(s)}
                     disabled={uploadingFor === s.galleryKey}
-                    className="ml-auto px-2 py-0.5 rounded border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40"
+                    className="px-2 py-0.5 rounded border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40"
                   >
                     {uploadingFor === s.galleryKey ? 'Uploading…' : '\u{1F4F7} Add photo'}
                   </button>

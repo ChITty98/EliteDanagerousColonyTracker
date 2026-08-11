@@ -16,7 +16,8 @@ import { uploadAllToGalleryKey } from '@/lib/galleryUpload';
  */
 
 // Tag chips — drawn from the field-tested taste model, brain trees included.
-const TAGS: Array<{ id: string; icon: string; label: string }> = [
+// Exported: the Sights wall reuses this list for its edit mode and filters.
+export const TAGS: Array<{ id: string; icon: string; label: string }> = [
   { id: 'closebodies', icon: '✨', label: 'Close bodies' },
   { id: 'rings', icon: '\u{1F48D}', label: 'Rings' },
   { id: 'terrain', icon: '\u{1F3DC}\u{FE0F}', label: 'Terrain' },

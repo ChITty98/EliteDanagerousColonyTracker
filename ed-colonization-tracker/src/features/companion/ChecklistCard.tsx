@@ -18,6 +18,7 @@ interface ChecklistTarget {
   bioDone?: number;
   genera?: string[];
   hot?: boolean;
+  hint?: string | null;
   distLs: number;
   far: boolean;
   mapped: boolean;
@@ -106,7 +107,7 @@ export function ChecklistCard() {
             >
               <span className="shrink-0">{t.mapped ? '✓' : t.hot ? '💰' : t.stars}</span>
               <span className="font-medium shrink-0">{t.bodyName}</span>
-              <span className={`truncate ${t.hot && !t.mapped && !t.skipped ? 'text-amber-300' : 'text-muted-foreground'}`}>{[...(t.genera && t.genera.length ? [t.genera.join('/')] : []), ...t.reasons, ...((t.bio ?? 0) > 0 ? [`bio ${t.bioDone ?? 0}/${t.bio}`] : [])].join(' · ')}</span>
+              <span className={`truncate ${t.hot && !t.mapped && !t.skipped ? 'text-amber-300' : 'text-muted-foreground'}`}>{[...(t.genera && t.genera.length ? [t.genera.join('/')] : t.hint ? [t.hint] : []), ...t.reasons, ...((t.bio ?? 0) > 0 ? [`bio ${t.bioDone ?? 0}/${t.bio}`] : [])].join(' · ')}</span>
               <span className={`ml-auto shrink-0 tabular-nums ${t.far ? 'text-amber-400' : 'text-muted-foreground/70'}`}>
                 {fmtLs(t.distLs)}{t.far ? ' ⚠' : ''}
               </span>

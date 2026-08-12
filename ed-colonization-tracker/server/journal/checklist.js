@@ -22,10 +22,30 @@ const BIO_MIN = 2;
 /**
  * Genera worth a 💰 flag, judged on BASE species values only (calibrated from the
  * user's 2026-08-11 Vista sale): Tubus 7.8–11.9M, Aleoida 3.4–12.9M, Stratum up to
- * 19M (Tectonicas), Cactoida up to 16.2M (Vermis). First-logged ×5 is upside, never
- * assumed — someone else may have logged the variant already.
+ * 19M (Tectonicas), Cactoida up to 16.2M (Vermis), Concha up to ~16.8M (Biconcavis;
+ * Renibus ~4.5M sold that night). First-logged ×5 is upside, never assumed —
+ * someone else may have logged the variant already.
  */
-const HIGH_VALUE_GENERA = new Set(['Tubus', 'Aleoida', 'Stratum', 'Cactoida']);
+const HIGH_VALUE_GENERA = new Set(['Tubus', 'Aleoida', 'Stratum', 'Cactoida', 'Concha']);
+
+/**
+ * FSS-time Tubus hint — the ONLY genus with a profile calibrated from the user's
+ * own ledger (3 hits, edge-validated by near-misses): Rocky body · CO₂ atmosphere ·
+ * 0.05–0.15 g · 160–190 K · no volcanism. The 156 K family missed it (too cold),
+ * the 0.17 g rocky missed it (too heavy). An ESTIMATE — the card marks it "?" and
+ * the DSS genus list replaces it. Other genera earn hints only when the ledger
+ * supports a profile (Tussock is deliberately unhinted: 1M filler that co-resides
+ * with Tubus anyway; Concha's two sightings are opposite regimes — no profile yet).
+ */
+function tubusLikely(b) {
+  if (!b || !b.landable) return false;
+  if (!/^Rocky body$/i.test(b.subTypeRaw || '')) return false;
+  if (!/carbon ?dioxide/i.test(b.atmoRaw || '')) return false;
+  if (b.gravityG == null || b.gravityG < 0.05 || b.gravityG > 0.15) return false;
+  if (b.tempK == null || b.tempK < 160 || b.tempK > 190) return false;
+  if (b.volcRaw && !/^(|none)$/i.test(b.volcRaw)) return false;
+  return true;
+}
 
 const state = {
   systemAddress: null,
@@ -103,6 +123,8 @@ function evaluate(bodyId) {
   const bioComplete = bioWorthy && done >= (b.bio || 0);
   const genera = state.bodyGenera.get(bodyId) || [];
   const hot = genera.some((g) => HIGH_VALUE_GENERA.has(g));
+  // Estimate shown only until the DSS delivers facts.
+  const hint = !genera.length && bioWorthy && tubusLikely(b) ? 'Tubus?' : null;
 
   state.targets.set(bodyId, {
     bodyId,
@@ -113,6 +135,7 @@ function evaluate(bodyId) {
     bioDone: bioWorthy ? Math.min(done, b.bio) : 0,
     genera,
     hot,
+    hint,
     distLs: Math.round(b.distLs || 0),
     far,
     mapped: state.mappedBodyIds.has(bodyId) || bioComplete || (existing ? existing.mapped : false),
@@ -172,6 +195,11 @@ export function checklistSeed(systemAddress, systemName, cachedSystem, epicView,
         landable: !!b.isLandable,
         bio: b.bioSignals || 0,
         worth: b.starType ? null : mapWorth(cachedBodyToScanShape(b)),
+        subTypeRaw: b.subType || '',
+        atmoRaw: b.atmosphereType || '',
+        gravityG: b.gravity != null ? b.gravity / 9.81 : null,
+        tempK: b.surfaceTemperature ?? null,
+        volcRaw: b.volcanism || '',
       });
       evaluate(b.bodyId);
     }
@@ -218,6 +246,11 @@ export function checklistProcess(parsed, existing) {
       landable: !!ev.Landable,
       bio: prev.bio || 0,
       worth: ev.PlanetClass ? mapWorth(ev) : null,
+      subTypeRaw: ev.PlanetClass || '',
+      atmoRaw: ev.AtmosphereType || ev.Atmosphere || '',
+      gravityG: ev.SurfaceGravity != null ? ev.SurfaceGravity / 9.81 : null,
+      tempK: ev.SurfaceTemperature ?? null,
+      volcRaw: ev.Volcanism || '',
     });
     evaluate(ev.BodyID);
     changed = true;

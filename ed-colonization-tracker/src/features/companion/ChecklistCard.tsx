@@ -14,6 +14,8 @@ interface ChecklistTarget {
   kind?: string;
   stars: string;
   reasons: string[];
+  bio?: number;
+  bioDone?: number;
   distLs: number;
   far: boolean;
   mapped: boolean;
@@ -102,7 +104,7 @@ export function ChecklistCard() {
             >
               <span className="shrink-0">{t.mapped ? '✓' : t.stars}</span>
               <span className="font-medium shrink-0">{t.bodyName}</span>
-              <span className="text-muted-foreground truncate">{t.reasons.join(' · ')}</span>
+              <span className="text-muted-foreground truncate">{[...t.reasons, ...((t.bio ?? 0) > 0 ? [`bio ${t.bioDone ?? 0}/${t.bio}`] : [])].join(' · ')}</span>
               <span className={`ml-auto shrink-0 tabular-nums ${t.far ? 'text-amber-400' : 'text-muted-foreground/70'}`}>
                 {fmtLs(t.distLs)}{t.far ? ' ⚠' : ''}
               </span>

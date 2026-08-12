@@ -17,7 +17,7 @@
 import { mapWorth } from './mapWorth.js';
 
 const DIST_CAP_LS = 40_000;
-const BIO_MIN = 3;
+const BIO_MIN = 2;
 
 const state = {
   systemAddress: null,
@@ -28,6 +28,7 @@ const state = {
   scannedBodies: new Map(), // bodyId -> { name, distLs, landable, bio, isPlanet }
   targets: new Map(),       // bodyId -> target row
   mappedBodyIds: new Set(), // SAAScanComplete seen this visit
+  bioDone: new Map(),       // bodyId -> Set(species analysed) — exobio progress
   farSkipped: 0,
 };
 
@@ -40,6 +41,7 @@ function reset(systemAddress, systemName) {
   state.scannedBodies.clear();
   state.targets.clear();
   state.mappedBodyIds.clear();
+  state.bioDone.clear();
   state.farSkipped = 0;
 }
 
@@ -83,16 +85,22 @@ function evaluate(bodyId) {
 
   const reasons = [];
   if (worth) reasons.push(...worth.reasons);
-  if (bioWorthy) reasons.push(`${b.bio} bio signals`);
+
+  // Exobio progress: species analysed vs signals present ("i may forget how many
+  // remain"). A bio target auto-completes when every signal is analysed.
+  const done = (state.bioDone.get(bodyId) || new Set()).size;
+  const bioComplete = bioWorthy && done >= (b.bio || 0);
 
   state.targets.set(bodyId, {
     bodyId,
     bodyName: shortName(b.name),
     stars: worth ? worth.stars : '🧬',
     reasons,
+    bio: bioWorthy ? b.bio : 0,
+    bioDone: bioWorthy ? Math.min(done, b.bio) : 0,
     distLs: Math.round(b.distLs || 0),
     far,
-    mapped: state.mappedBodyIds.has(bodyId) || (existing ? existing.mapped : false),
+    mapped: state.mappedBodyIds.has(bodyId) || bioComplete || (existing ? existing.mapped : false),
     skipped: existing ? existing.skipped : false,
   });
 }
@@ -119,10 +127,21 @@ function cachedBodyToScanShape(b) {
  * Previously-DSS'd bodies show unchecked (the old visit's SAA events aren't in the
  * cache) — tap-to-skip covers those honestly.
  */
-export function checklistSeed(systemAddress, systemName, cachedSystem, epicView) {
+export function checklistSeed(systemAddress, systemName, cachedSystem, epicView, organicScans) {
   if (systemAddress == null) return false;
   if (state.systemAddress === systemAddress) return false;
   reset(systemAddress, systemName || (cachedSystem && cachedSystem.systemName) || null);
+  // Prior exobio progress from the organics ledger — species analysed on earlier
+  // visits still count toward "how many remain".
+  if (organicScans) {
+    const prefix = `${systemAddress}|`;
+    for (const [key, rec] of Object.entries(organicScans)) {
+      if (!key.startsWith(prefix) || !rec) continue;
+      const bodyId = Number(key.slice(prefix.length));
+      if (!Number.isFinite(bodyId)) continue;
+      state.bioDone.set(bodyId, new Set(rec.analysedSpecies || []));
+    }
+  }
   if (cachedSystem && Array.isArray(cachedSystem.scannedBodies)) {
     state.honk = true;
     state.bodyCountFromHonk = cachedSystem.bodyCount || 0;
@@ -151,7 +170,7 @@ export function checklistProcess(parsed, existing) {
   const seedFromState = (addr, name) => {
     const cached = existing && existing.journalExplorationCache ? existing.journalExplorationCache[String(addr)] : null;
     const scouted = existing && existing.scoutedSystems ? existing.scoutedSystems[String(addr)] : null;
-    return checklistSeed(addr, name, cached, scouted && scouted.score ? scouted.score.epicView : null);
+    return checklistSeed(addr, name, cached, scouted && scouted.score ? scouted.score.epicView : null, existing && existing.organicScans);
   };
 
   for (const ev of parsed.fsdJumpEvents || []) {
@@ -213,6 +232,20 @@ export function checklistProcess(parsed, existing) {
     if (ev.SystemAddress !== state.systemAddress || ev.BodyID == null) continue;
     const t = state.targets.get(ev.BodyID);
     if (t && t.kind === 'epic' && !t.mapped) { t.mapped = true; t.skipped = false; changed = true; }
+  }
+  // ScanOrganic Analyse → per-body species progress on bio targets.
+  for (const ev of parsed.scanOrganicEvents || []) {
+    if (ev.SystemAddress !== state.systemAddress || ev.Body == null) continue;
+    if (ev.ScanType !== 'Analyse') continue;
+    const species = ev.Species_Localised || ev.Species;
+    if (!species) continue;
+    let set = state.bioDone.get(ev.Body);
+    if (!set) state.bioDone.set(ev.Body, (set = new Set()));
+    if (!set.has(species)) {
+      set.add(species);
+      evaluate(ev.Body); // refresh bioDone / auto-complete
+      changed = true;
+    }
   }
 
   return changed;

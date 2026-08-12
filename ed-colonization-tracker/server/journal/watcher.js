@@ -72,7 +72,7 @@ export function startServerWatcher(deps) {
     if (pos && pos.systemAddress != null) {
       const cached = (existing.journalExplorationCache || {})[String(pos.systemAddress)];
       const scouted = (existing.scoutedSystems || {})[String(pos.systemAddress)];
-      if (checklistSeed(pos.systemAddress, pos.systemName, cached, scouted && scouted.score ? scouted.score.epicView : null) && deps.broadcastEvent) {
+      if (checklistSeed(pos.systemAddress, pos.systemName, cached, scouted && scouted.score ? scouted.score.epicView : null, existing.organicScans) && deps.broadcastEvent) {
         deps.broadcastEvent(Object.assign({ type: 'checklist_update' }, checklistSnapshot()));
         console.log(`[Checklist] Seeded from position: ${pos.systemName}${cached ? ' (+cached scans)' : ''}`);
       }

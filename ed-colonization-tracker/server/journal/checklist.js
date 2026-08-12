@@ -57,6 +57,7 @@ const state = {
   targets: new Map(),       // bodyId -> target row
   mappedBodyIds: new Set(), // SAAScanComplete seen this visit
   bioDone: new Map(),       // bodyId -> Set(species analysed) — exobio progress
+  bioDoneGenera: new Map(), // bodyId -> Set(genus names with an analysed species)
   bodyGenera: new Map(),    // bodyId -> [genus names] — from DSS SAASignalsFound
   farSkipped: 0,
 };
@@ -71,6 +72,7 @@ function reset(systemAddress, systemName) {
   state.targets.clear();
   state.mappedBodyIds.clear();
   state.bioDone.clear();
+  state.bioDoneGenera.clear();
   state.bodyGenera.clear();
   state.farSkipped = 0;
 }
@@ -121,8 +123,14 @@ function evaluate(bodyId) {
   // remain"). A bio target auto-completes when every signal is analysed.
   const done = (state.bioDone.get(bodyId) || new Set()).size;
   const bioComplete = bioWorthy && done >= (b.bio || 0);
-  const genera = state.bodyGenera.get(bodyId) || [];
-  const hot = genera.some((g) => HIGH_VALUE_GENERA.has(g));
+  // Money genera lead the list ("likely only going to get the top two types"),
+  // and each genus carries its done-mark so banked ones read at a glance.
+  const doneGenera = state.bioDoneGenera.get(bodyId) || new Set();
+  const genera = [...(state.bodyGenera.get(bodyId) || [])].sort(
+    (x, y) => (HIGH_VALUE_GENERA.has(y) ? 1 : 0) - (HIGH_VALUE_GENERA.has(x) ? 1 : 0),
+  );
+  const generaDone = genera.filter((g) => doneGenera.has(g));
+  const hot = genera.some((g) => HIGH_VALUE_GENERA.has(g) && !doneGenera.has(g));
   // Estimate shown only until the DSS delivers facts.
   const hint = !genera.length && bioWorthy && tubusLikely(b) ? 'Tubus?' : null;
 
@@ -134,6 +142,7 @@ function evaluate(bodyId) {
     bio: bioWorthy ? b.bio : 0,
     bioDone: bioWorthy ? Math.min(done, b.bio) : 0,
     genera,
+    generaDone,
     hot,
     hint,
     distLs: Math.round(b.distLs || 0),
@@ -180,6 +189,16 @@ export function checklistSeed(systemAddress, systemName, cachedSystem, epicView,
       state.bioDone.set(bodyId, new Set(rec.analysedSpecies || []));
       // Genera you've begun scanning are known even without a fresh DSS.
       if (Array.isArray(rec.genera) && rec.genera.length) state.bodyGenera.set(bodyId, rec.genera);
+      // Map analysed SPECIES back to their genus ("Tussock Propagito" → Tussock;
+      // includes-match covers Brain Trees / anemone naming).
+      const gset = new Set();
+      for (const sp of rec.analysedSpecies || []) {
+        for (const g of rec.genera || []) {
+          const gw = String(g).split(' ')[0];
+          if (String(sp).startsWith(gw) || String(sp).includes(gw)) { gset.add(g); break; }
+        }
+      }
+      if (gset.size) state.bioDoneGenera.set(bodyId, gset);
     }
   }
   if (cachedSystem && Array.isArray(cachedSystem.scannedBodies)) {
@@ -301,6 +320,12 @@ export function checklistProcess(parsed, existing) {
     if (!species) continue;
     let set = state.bioDone.get(ev.Body);
     if (!set) state.bioDone.set(ev.Body, (set = new Set()));
+    const genus = ev.Genus_Localised || ev.Genus;
+    if (genus) {
+      let gset = state.bioDoneGenera.get(ev.Body);
+      if (!gset) state.bioDoneGenera.set(ev.Body, (gset = new Set()));
+      gset.add(genus);
+    }
     if (!set.has(species)) {
       set.add(species);
       evaluate(ev.Body); // refresh bioDone / auto-complete

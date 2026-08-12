@@ -5,6 +5,7 @@ All notable changes to ED Colony Architect (named ED Colony Tracker through v1.3
 ## [1.43.0] — 2026-08-11
 
 ### Added
+- **Per-genus done-marks on bio rows** — the genus list shows ✓/strikethrough on genera you've already banked a species from (live from Analyse events, seeded from the organics ledger), money genera sort FIRST in the list, and the 💰 flag now clears once every money genus on the body is done — "sample the top two and move on" reads directly off the card.
 - **`Tubus?` hints at FSS time** — the only genus with a profile calibrated from the commander's own ledger (Rocky · CO₂ · 0.05–0.15 g · 160–190 K · no volcanism; three confirmed sites, edge-validated by the 156 K family and a 0.17 g near-miss). Shows on bio rows the moment the body resolves, before any probe is spent; explicitly an estimate — the DSS genus list replaces it. Dry-run: fires on all four moons of the confirmed Tubus system, stays silent on five of six too-cold siblings, and honestly flags the one borderline 160 K body.
 - **Concha joins the 💰 set** (five genera: Tubus, Aleoida, Stratum, Cactoida, Concha) — Renibus ~4.5M base sold that night, Biconcavis jackpot-class. Tussock deliberately unhinted and unflagged: 1M filler that co-resides with Tubus anyway.
 

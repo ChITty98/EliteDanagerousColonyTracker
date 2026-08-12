@@ -55,6 +55,8 @@ export function parseJournalLines(lines) {
   const approachBodyEvents = [];
   // Exobiology (brain trees et al.)
   const scanOrganicEvents = [];
+  // DSS body signals — carries the GENUS list for bio bodies (also fires for rings)
+  const saaSignalsFoundEvents = [];
   // In-game F10 screenshots — carry Filename + System + Body (Steam F12 leaves no trace)
   const screenshotEvents = [];
   // Chat
@@ -137,6 +139,7 @@ export function parseJournalLines(lines) {
       case 'Touchdown': touchdownEvents.push(event); break;
       case 'ApproachBody': approachBodyEvents.push(event); break;
       case 'ScanOrganic': scanOrganicEvents.push(event); break;
+      case 'SAASignalsFound': saaSignalsFoundEvents.push(event); break;
       case 'Screenshot': screenshotEvents.push(event); break;
       case 'Liftoff': liftoffEvents.push(event); break;
       case 'SendText': sendTextEvents.push(event); break;
@@ -203,6 +206,7 @@ export function parseJournalLines(lines) {
     liftoffEvents,
     approachBodyEvents,
     scanOrganicEvents,
+    saaSignalsFoundEvents,
     screenshotEvents,
     sendTextEvents,
     bountyEvents,

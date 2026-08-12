@@ -19,6 +19,14 @@ import { mapWorth } from './mapWorth.js';
 const DIST_CAP_LS = 40_000;
 const BIO_MIN = 2;
 
+/**
+ * Genera worth a 💰 flag, judged on BASE species values only (calibrated from the
+ * user's 2026-08-11 Vista sale): Tubus 7.8–11.9M, Aleoida 3.4–12.9M, Stratum up to
+ * 19M (Tectonicas), Cactoida up to 16.2M (Vermis). First-logged ×5 is upside, never
+ * assumed — someone else may have logged the variant already.
+ */
+const HIGH_VALUE_GENERA = new Set(['Tubus', 'Aleoida', 'Stratum', 'Cactoida']);
+
 const state = {
   systemAddress: null,
   systemName: null,
@@ -29,6 +37,7 @@ const state = {
   targets: new Map(),       // bodyId -> target row
   mappedBodyIds: new Set(), // SAAScanComplete seen this visit
   bioDone: new Map(),       // bodyId -> Set(species analysed) — exobio progress
+  bodyGenera: new Map(),    // bodyId -> [genus names] — from DSS SAASignalsFound
   farSkipped: 0,
 };
 
@@ -42,6 +51,7 @@ function reset(systemAddress, systemName) {
   state.targets.clear();
   state.mappedBodyIds.clear();
   state.bioDone.clear();
+  state.bodyGenera.clear();
   state.farSkipped = 0;
 }
 
@@ -58,7 +68,8 @@ export function checklistSnapshot() {
     bodyCountFromHonk: state.bodyCountFromHonk,
     scanned: state.scannedBodies.size,
     allFound: state.allFound,
-    targets: [...state.targets.values()].sort((a, b) => (a.distLs || 0) - (b.distLs || 0)),
+    // Money first (💰 genera confirmed by DSS), then nearest.
+    targets: [...state.targets.values()].sort((a, b) => (b.hot ? 1 : 0) - (a.hot ? 1 : 0) || (a.distLs || 0) - (b.distLs || 0)),
     farSkipped: state.farSkipped,
     updatedAt: new Date().toISOString(),
   };
@@ -90,6 +101,8 @@ function evaluate(bodyId) {
   // remain"). A bio target auto-completes when every signal is analysed.
   const done = (state.bioDone.get(bodyId) || new Set()).size;
   const bioComplete = bioWorthy && done >= (b.bio || 0);
+  const genera = state.bodyGenera.get(bodyId) || [];
+  const hot = genera.some((g) => HIGH_VALUE_GENERA.has(g));
 
   state.targets.set(bodyId, {
     bodyId,
@@ -98,6 +111,8 @@ function evaluate(bodyId) {
     reasons,
     bio: bioWorthy ? b.bio : 0,
     bioDone: bioWorthy ? Math.min(done, b.bio) : 0,
+    genera,
+    hot,
     distLs: Math.round(b.distLs || 0),
     far,
     mapped: state.mappedBodyIds.has(bodyId) || bioComplete || (existing ? existing.mapped : false),
@@ -140,6 +155,8 @@ export function checklistSeed(systemAddress, systemName, cachedSystem, epicView,
       const bodyId = Number(key.slice(prefix.length));
       if (!Number.isFinite(bodyId)) continue;
       state.bioDone.set(bodyId, new Set(rec.analysedSpecies || []));
+      // Genera you've begun scanning are known even without a fresh DSS.
+      if (Array.isArray(rec.genera) && rec.genera.length) state.bodyGenera.set(bodyId, rec.genera);
     }
   }
   if (cachedSystem && Array.isArray(cachedSystem.scannedBodies)) {
@@ -232,6 +249,16 @@ export function checklistProcess(parsed, existing) {
     if (ev.SystemAddress !== state.systemAddress || ev.BodyID == null) continue;
     const t = state.targets.get(ev.BodyID);
     if (t && t.kind === 'epic' && !t.mapped) { t.mapped = true; t.skipped = false; changed = true; }
+  }
+  // DSS body signals → the body's actual GENUS list (rings carry no Genuses, so
+  // they filter themselves out). This is fact, not prediction.
+  for (const ev of parsed.saaSignalsFoundEvents || []) {
+    if (ev.SystemAddress !== state.systemAddress || ev.BodyID == null) continue;
+    const genera = (ev.Genuses || []).map((g) => g.Genus_Localised || g.Genus).filter(Boolean);
+    if (!genera.length) continue;
+    state.bodyGenera.set(ev.BodyID, genera);
+    evaluate(ev.BodyID);
+    changed = true;
   }
   // ScanOrganic Analyse → per-body species progress on bio targets.
   for (const ev of parsed.scanOrganicEvents || []) {

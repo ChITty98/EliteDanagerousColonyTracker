@@ -2,6 +2,11 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.42.0] — 2026-08-11
+
+### Added
+- **Genus-aware bio targets.** DSS-mapping a bio body reveals its actual genus list (SAASignalsFound — fact, not prediction), and the checklist now shows it: `💰 6 e · Tubus/Tussock · bio 0/3`. High-value genera get the 💰 flag and sort to the TOP of the card, ahead of distance — judged on BASE species values from the calibrated model (Tubus 7.8–11.9M, Aleoida 3.4–12.9M, Stratum to 19M, Cactoida to 16.2M); **first-logged ×5 is treated as upside, never assumed**. Genera you've already begun scanning seed from the organics ledger without a fresh DSS.
+
 ## [1.41.1] — 2026-08-11
 
 ### Added

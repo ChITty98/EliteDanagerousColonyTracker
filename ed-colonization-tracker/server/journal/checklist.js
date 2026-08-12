@@ -97,13 +97,72 @@ function evaluate(bodyId) {
   });
 }
 
+/**
+ * Adapt a journalExplorationCache body to the raw-Scan shape mapWorth expects,
+ * so an already-FSS'd system can preload its targets (the game never re-emits
+ * Scan events for bodies you've resolved — "I can't do it again").
+ */
+function cachedBodyToScanShape(b) {
+  return {
+    PlanetClass: b.starType ? undefined : b.subType,
+    StarType: b.starType,
+    TerraformState: b.terraformState,
+    WasDiscovered: b.wasDiscovered,
+    WasMapped: b.wasMapped,
+  };
+}
+
+/**
+ * Point the checklist at a system without a live FSDJump — server boot mid-session
+ * (position from state) or arrival in a previously-scanned system. Preloads bodies
+ * from the exploration cache and epic criteria from the stored score when given.
+ * Previously-DSS'd bodies show unchecked (the old visit's SAA events aren't in the
+ * cache) — tap-to-skip covers those honestly.
+ */
+export function checklistSeed(systemAddress, systemName, cachedSystem, epicView) {
+  if (systemAddress == null) return false;
+  if (state.systemAddress === systemAddress) return false;
+  reset(systemAddress, systemName || (cachedSystem && cachedSystem.systemName) || null);
+  if (cachedSystem && Array.isArray(cachedSystem.scannedBodies)) {
+    state.honk = true;
+    state.bodyCountFromHonk = cachedSystem.bodyCount || 0;
+    state.allFound = !!cachedSystem.fssAllBodiesFound;
+    for (const b of cachedSystem.scannedBodies) {
+      if (b.bodyId == null) continue;
+      if (!b.subType && !b.starType) continue;
+      state.scannedBodies.set(b.bodyId, {
+        name: b.bodyName,
+        distLs: b.distanceToArrival ?? 0,
+        landable: !!b.isLandable,
+        bio: b.bioSignals || 0,
+        worth: b.starType ? null : mapWorth(cachedBodyToScanShape(b)),
+      });
+      evaluate(b.bodyId);
+    }
+  }
+  if (epicView) checklistAddEpic(epicView);
+  return true;
+}
+
 /** Feed one batch of parsed journal events through the checklist. Returns true if anything changed. */
-export function checklistProcess(parsed) {
+export function checklistProcess(parsed, existing) {
   let changed = false;
 
+  const seedFromState = (addr, name) => {
+    const cached = existing && existing.journalExplorationCache ? existing.journalExplorationCache[String(addr)] : null;
+    const scouted = existing && existing.scoutedSystems ? existing.scoutedSystems[String(addr)] : null;
+    return checklistSeed(addr, name, cached, scouted && scouted.score ? scouted.score.epicView : null);
+  };
+
   for (const ev of parsed.fsdJumpEvents || []) {
-    reset(ev.SystemAddress, ev.StarSystem);
-    changed = true;
+    if (seedFromState(ev.SystemAddress, ev.StarSystem)) changed = true;
+  }
+  // Location fires on game boot / relog — seed if it names a DIFFERENT system than
+  // we're tracking (never reset mid-system: Location also fires on foot/board).
+  for (const ev of parsed.locationEvents || []) {
+    if (ev.SystemAddress != null && ev.SystemAddress !== state.systemAddress) {
+      if (seedFromState(ev.SystemAddress, ev.StarSystem)) changed = true;
+    }
   }
   for (const ev of parsed.fssDiscoveryScanEvents || []) {
     if (state.systemAddress === null) reset(ev.SystemAddress, ev.SystemName || null);

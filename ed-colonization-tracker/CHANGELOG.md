@@ -2,6 +2,11 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.41.1] — 2026-08-11
+
+### Fixed
+- **Checklist now works in systems you've already FSS'd, and after mid-session relaunches.** It only learned your location from a live FSDJump — boot the app while already in a system and it never knew where you were; and the game never re-emits Scan events for resolved bodies ("I can't do it again"), so an explored system stayed blank. The checklist now seeds from your last known position at server start and PRELOADS the system's bodies from the exploration cache — including epic criteria from the stored score. Location events (relog) seed the same way. Verified against the live case: UN-T d3-895 seeds honk + 32 scans + 6 targets incl. the 24° twin pair. One honest limit: bodies you DSS'd on a PREVIOUS visit show unchecked (that visit's events aren't in the cache) — tap to skip them.
+
 ## [1.41.0] — 2026-08-11
 
 ### Added

@@ -132,7 +132,7 @@ export function processNewEvents(parsed, deps) {
   // Exploration checklist — ungated (works with the overlay off); epic targets are
   // added separately by the overlay's scoring path via checklistAddEpic.
   try {
-    if (checklistProcess(parsed) && deps.broadcastEvent) {
+    if (checklistProcess(parsed, existing) && deps.broadcastEvent) {
       deps.broadcastEvent({ type: 'checklist_update', ...checklistSnapshot() });
     }
   } catch (e) { console.error('[Checklist] error:', e && e.message); }

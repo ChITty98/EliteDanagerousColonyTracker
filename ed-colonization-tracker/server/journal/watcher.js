@@ -23,6 +23,7 @@ import {
   journalDirExists,
 } from './paths.js';
 import { processNewEvents, pollCompanionFiles } from './processors.js';
+import { checklistSeed, checklistSnapshot } from './checklist.js';
 import { pollStatus } from '../ai/copilotStatus.js';
 import { setInGame } from '../ai/copilot.js';
 import { checkMiningStall } from './mining.js';
@@ -62,6 +63,21 @@ export function startServerWatcher(deps) {
   // Surface the journal directory to processors so handlers like
   // handleNavRoutePlottedOverlay can read NavRoute.json without re-resolving it.
   const extendedDeps = Object.assign({}, deps, { journalDir });
+
+  // Seed the exploration checklist from the last known position — the server often
+  // boots MID-SESSION (build-and-relaunch), when the FSDJump that put the commander
+  // here predates the watcher and an already-FSS'd system emits no new Scans.
+  try {
+    const pos = existing.commanderPosition;
+    if (pos && pos.systemAddress != null) {
+      const cached = (existing.journalExplorationCache || {})[String(pos.systemAddress)];
+      const scouted = (existing.scoutedSystems || {})[String(pos.systemAddress)];
+      if (checklistSeed(pos.systemAddress, pos.systemName, cached, scouted && scouted.score ? scouted.score.epicView : null) && deps.broadcastEvent) {
+        deps.broadcastEvent(Object.assign({ type: 'checklist_update' }, checklistSnapshot()));
+        console.log(`[Checklist] Seeded from position: ${pos.systemName}${cached ? ' (+cached scans)' : ''}`);
+      }
+    }
+  } catch (e) { console.error('[Checklist] boot seed failed:', e && e.message); }
 
   wstate = {
     running: true,

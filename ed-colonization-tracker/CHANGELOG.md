@@ -2,6 +2,16 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.44.0] — 2026-08-12
+
+### Added
+- **The co-pilot knows when you are out in the Nomad.** The Nomad is an SRV (journal ), and the big ship auto-follows it — so while you are away the co-pilot is aboard the ship *station-keeping directly overhead with eyes on you*, not reading telemetry and not riding along. Every line reframes itself accordingly through an injected context fact; no new chatter, just the right vantage point. Three states tracked: driving the Nomad, on foot beside it, and on foot from a landed ship.
+- **Welcome-back on Nomad docking** —  fires a warm return beat greeting something the co-pilot actually SAW from above (hand-written canned pools for all three personas; no regen).
+
+### Fixed
+- **An SRV is not a ship.**  reports  when you log in inside the Nomad, and the affinity tracker took it at face value — the co-pilot believed the Nomad was your hull and would pass ship judgement on it. SRV type ids are now rejected as hulls, and the real hull is remembered as the mothership.
+- The single-seat cargo-hold gag is suppressed while you are away — its premise (crammed in *this* ship's hold) is wrong when you are the one on the surface.
+
 ## [1.43.0] — 2026-08-11
 
 ### Added

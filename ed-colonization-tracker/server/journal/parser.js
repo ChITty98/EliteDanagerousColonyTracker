@@ -48,6 +48,11 @@ export function parseJournalLines(lines) {
   // Market
   const marketBuyEvents = [];
   const marketSellEvents = [];
+  // SRV / Nomad deployment — the commander leaves the big ship behind (which follows)
+  const launchSrvEvents = [];
+  const dockSrvEvents = [];
+  const disembarkEvents = [];
+  const embarkEvents = [];
   // Planetary landings
   const touchdownEvents = [];
   const liftoffEvents = [];
@@ -136,6 +141,10 @@ export function parseJournalLines(lines) {
       case 'CarrierDepositFuel': carrierDepositFuelEvents.push(event); break;
       case 'MarketBuy': marketBuyEvents.push(event); break;
       case 'MarketSell': marketSellEvents.push(event); break;
+      case 'LaunchSRV': launchSrvEvents.push(event); break;
+      case 'DockSRV': dockSrvEvents.push(event); break;
+      case 'Disembark': disembarkEvents.push(event); break;
+      case 'Embark': embarkEvents.push(event); break;
       case 'Touchdown': touchdownEvents.push(event); break;
       case 'ApproachBody': approachBodyEvents.push(event); break;
       case 'ScanOrganic': scanOrganicEvents.push(event); break;
@@ -202,6 +211,10 @@ export function parseJournalLines(lines) {
     shipyardSwapEvents,
     marketBuyEvents,
     marketSellEvents,
+    launchSrvEvents,
+    dockSrvEvents,
+    disembarkEvents,
+    embarkEvents,
     touchdownEvents,
     liftoffEvents,
     approachBodyEvents,

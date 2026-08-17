@@ -8,7 +8,9 @@
 
 import { copilotComplete } from './copilotProvider.js';
 import { COPILOT_RULES, buildPersonalityPreamble, matchBeat, IDLE_INTENTS } from './copilotRules.js';
-import { buildSnapshot, eventDetail, decorateScan, detectCompletion, detectBuildComplete, detectInferredDamage, detectAutopilot, detectDockComplete, detectDockInfo, detectNpcThreat, detectAtmo, detectCrew, detectPilotBanter, detectSessionStart, detectGrudge, detectSystemChange, detectQuestion, detectDockFlavor, detectArrival, detectCargoBayGripe, detectDamageSeverity, detectPaceNudge, detectCarrierFuel, getCrewNames, ingestWorld } from './copilotContext.js';
+import { awayProcess, awayContextFact, awayState, isSrvType } from './copilotAway.js';
+import { friendlyShip } from '../journal/extractor.js';
+import { buildSnapshot, eventDetail, decorateScan, detectCompletion, detectBuildComplete, detectInferredDamage, detectAutopilot, detectDockComplete, detectDockInfo, detectNpcThreat, detectAtmo, detectCrew, detectPilotBanter, detectSessionStart, detectGrudge, detectSystemChange, detectQuestion, detectDockFlavor, detectArrival, detectCargoBayGripe, detectSrvReturn, detectDamageSeverity, detectPaceNudge, detectCarrierFuel, getCrewNames, ingestWorld } from './copilotContext.js';
 import { isCannedScenario, pickCanned } from './copilotCanned.js';
 import { detectTarsLore } from './copilotTars.js';
 import { detectMiningBeat } from './copilotMining.js';
@@ -69,6 +71,10 @@ export async function runCopilot(parsed, state, deps) {
   // of those windows and world.hull sat at 63% for a quarter hour after the commander repaired.
   // Only SPEAKING waits on inFlight; awareness never does.
   ingestWorld(parsed); // keep world awareness (security / body / atmosphere / hull) current
+  // Away-team state: is the commander out in the Nomad / on foot? The big ship (with
+  // the co-pilot aboard) follows the deployed vehicle, so every line while away must
+  // read as 'I'm up here watching you down there'. See copilotAway.js.
+  try { awayProcess(parsed, state); } catch (e) { console.error('[Copilot] away state:', e && e.message); }
   onSessionAndPresence(parsed, state); // track own-presence + kick the session-start colony-watch snapshot
   onDock(parsed, state);               // kick the post-dock area ping (both write results read by their detectors)
 
@@ -109,8 +115,12 @@ export async function runCopilot(parsed, state, deps) {
   if (npcThreat) candidates.push({ beat: npcThreat, ev: null, synthetic: true, place: placeFor(state, null) });
   const autopilot = detectAutopilot(parsed, state);
   if (autopilot) candidates.push({ beat: autopilot, ev: null, synthetic: true, place: placeFor(state, null) });
-  const cargoGripe = detectCargoBayGripe(parsed, state, persona); // single-seat ship → co-pilot griping from the cargo hold
+  // Suppressed while away: its premise (crammed in THIS ship's hold) is wrong when the
+  // commander is out in the Nomad / on foot and the co-pilot is the one flying the ship.
+  const cargoGripe = awayState().away ? null : detectCargoBayGripe(parsed, state, persona);
+  const srvReturn = detectSrvReturn(parsed, state); // back aboard from the Nomad — welcome-back flavour
   if (cargoGripe) candidates.push({ beat: cargoGripe, ev: null, synthetic: true, place: placeFor(state, null) });
+  if (srvReturn) candidates.push({ beat: srvReturn, ev: null, synthetic: true, place: placeFor(state, null) });
   const dockComplete = detectDockComplete(parsed, state); // also advances the music tracker — keep before dockInfo
   if (dockComplete) candidates.push({ beat: dockComplete, ev: null, synthetic: true, place: placeFor(state, null) });
   const dockInfo = detectDockInfo(parsed, state);
@@ -212,7 +222,9 @@ export async function runCopilot(parsed, state, deps) {
     const news = getLatestNews();
     const freshNews = news && news.title && news.title !== offeredHeadline ? news : null;
     if (freshNews) offeredHeadline = freshNews.title;
-    const detail = freshNews ? `A recent GalNet headline you MAY mention if it fits: "${freshNews.title}". If you mention it, stick to the headline itself — NEVER invent gameplay mechanics, capabilities, or implications beyond its text, and never tie it to the commander's own work.` : '';
+    const awayFact = awayContextFact(motherShipLabel(state));
+    const detail0 = freshNews ? `A recent GalNet headline you MAY mention if it fits: "${freshNews.title}". If you mention it, stick to the headline itself — NEVER invent gameplay mechanics, capabilities, or implications beyond its text, and never tie it to the commander's own work.` : '';
+    const detail = [detail0, awayFact].filter(Boolean).join(' ');
     await speak(state, settings, deps, { key: beat.key, intent: beat.intent, model: 'sonnet', mood: beat.mood, detail });
     return;
   }
@@ -226,7 +238,8 @@ export async function runCopilot(parsed, state, deps) {
   if (isCannedScenario(beat.key)) {
     emitCanned(settings, deps, beat, Object.assign(buildCannedContext(state, winner.ev), beat.inputs || {}));
   } else {
-    const detail = winner.synthetic ? beat.detail : eventDetail(winner.ev);
+    const awayFact = awayContextFact(motherShipLabel(state));
+    const detail = [winner.synthetic ? beat.detail : eventDetail(winner.ev), awayFact].filter(Boolean).join(' ');
     const inputs = winner.synthetic ? (beat.inputs || null) : captureInputsForEvent(winner.ev);
     // Flywheel: try a PROMOTED template (free) before paying for live generation. The
     // promoted pool is grown offline by tools/promote-copilot-captures.mjs from high-
@@ -494,4 +507,16 @@ async function speak(state, settings, deps, { key, intent, model, mood, detail, 
   } finally {
     inFlight = false;
   }
+}
+
+/** Friendly name of the hull the co-pilot is sitting in (never an SRV). */
+function motherShipLabel(state) {
+  const a = awayState();
+  let hull = a.motherShip;
+  if (!hull && state && state.currentShip) {
+    const cs = state.currentShip;
+    const t = typeof cs === 'object' ? cs.type : cs;
+    if (t && !isSrvType(t)) hull = t;
+  }
+  return hull ? friendlyShip(String(hull).toLowerCase()) : null;
 }

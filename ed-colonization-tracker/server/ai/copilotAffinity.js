@@ -13,6 +13,7 @@
 // real-commodity garnish.
 
 import { isSingleSeatShip, isCrampedShip, shipRole } from '../journal/extractor.js';
+import { isSrvType, noteMotherShip } from './copilotAway.js';
 import { getMemory, saveMemory } from './copilotMemory.js';
 import { liveCarrierFreeSpace } from './copilotContext.js';
 
@@ -238,7 +239,9 @@ export function detectAffinityBeat(ev, persona, hauling, state) {
   // to the CURRENT ship — not only at a swap (which is why the Panther Clipper was silent).
   if (ev.event === 'LoadGame' || ev.event === 'Loadout' || ev.event === 'ShipyardSwap') {
     const st = ev.Ship || ev.ShipType;
-    if (st) currentShip = st;
+    // An SRV is NOT a hull: LoadGame reports Ship:"Lander01" when you log in inside the
+    // Nomad, which would otherwise make the co-pilot judge the SRV as your new ship.
+    if (st && !isSrvType(st)) { currentShip = st; noteMotherShip(st); }
   }
   // ...and seed it from PERSISTED state when no LoadGame/Loadout fired this session. Without this the
   // periodic ship read stays silent after a server restart while you're already in the ship — the

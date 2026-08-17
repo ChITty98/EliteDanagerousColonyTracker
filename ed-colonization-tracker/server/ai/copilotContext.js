@@ -539,6 +539,32 @@ export function detectCargoBayGripe(parsed, state, persona) {
   };
 }
 
+/**
+ * Back aboard from the Nomad — DockSRV. The commander asked for the welcome-back
+ * flavour to survive the away-team reframing: climbing back into the ship after a
+ * surface run is a real arrival, and the co-pilot has been watching the whole time
+ * from directly overhead, so they have something to greet them ABOUT.
+ */
+let lastSrvReturnAt = 0;
+export function detectSrvReturn(parsed, state) {
+  const ev = (parsed && parsed.dockSrvEvents || [])[0];
+  if (!ev) return null;
+  const now = Date.now();
+  if (now - lastSrvReturnAt < 3 * 60 * 1000) return null; // one greeting per outing, not per bounce
+  lastSrvReturnAt = now;
+  const srv = String(ev.SRVType_Localised || 'SRV');
+  const cs = state && state.currentShip;
+  const hull = cs ? (typeof cs === 'object' ? cs.type : cs) : null;
+  const ship = hull ? friendlyShip(String(hull).toLowerCase()) : 'the ship';
+  return {
+    key: 'srv-return', priority: 40, interrupt: false, live: true, model: 'sonnet', mood: 'warm', character: true,
+    intent: `The commander just docked the ${srv} back into the ${ship} — they are ABOARD again, in the seat next to you. `
+      + `You have been station-keeping overhead watching them work the surface, so greet the return with something you actually SAW, `
+      + `not a generic hello. Warm, short, in character. Do not recap their whole outing.`,
+    detail: `Detail: ${srv} docked — the commander is back aboard the ${ship} after a surface run.`,
+  };
+}
+
 // ── Haul-aware dock awareness ───────────────────────────────────────────────
 // The co-pilot's most useful job: when we dock mid-haul, call the next CONCRETE
 // move — what to BUY here / LOAD off the carrier for the active build — and

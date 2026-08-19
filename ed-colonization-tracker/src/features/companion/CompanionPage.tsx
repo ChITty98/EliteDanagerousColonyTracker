@@ -44,6 +44,9 @@ export function CompanionPage() {
   const fcFreeSpace = FC_MAX_CAPACITY - (fcModulesCapacity || 0) - currentCargoTons;
 
   const [events, setEvents] = useState<CompanionEvent[]>([]);
+  // Fullscreen — same approach as the Radar page: a CSS overlay always works, the
+  // Fullscreen API is best-effort on top (hides browser chrome where supported).
+  const [fs, setFs] = useState(false);
   const [connected, setConnected] = useState(false);
   // FC strip collapse — remembered per device.
   const [fcCollapsed, setFcCollapsed] = useState(() => {
@@ -152,6 +155,22 @@ export function CompanionPage() {
     return () => { unsubs.forEach((fn) => fn()); };
   }, []);
 
+  const toggleFs = useCallback(() => {
+    setFs((cur) => {
+      const next = !cur;
+      try {
+        if (next) void document.documentElement.requestFullscreen?.();
+        else if (document.fullscreenElement) void document.exitFullscreen?.();
+      } catch { /* API unavailable — CSS overlay still applies */ }
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    const h = () => { if (!document.fullscreenElement) setFs((cur) => (cur ? false : cur)); };
+    document.addEventListener('fullscreenchange', h);
+    return () => document.removeEventListener('fullscreenchange', h);
+  }, []);
+
   // Auto-scroll feed
   useEffect(() => {
     if (feedRef.current) feedRef.current.scrollTop = 0;
@@ -221,7 +240,7 @@ export function CompanionPage() {
   const targetPartial = tScanned != null && tTotal != null && tTotal > tScanned;
 
   return (
-    <div className="flex flex-col h-full">
+    <div className={fs ? 'fixed inset-0 z-50 bg-background overflow-y-auto p-4 flex flex-col' : 'flex flex-col h-full'}>
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-2xl font-bold">{'\u{1F4E1}'} Companion</h2>
@@ -230,6 +249,13 @@ export function CompanionPage() {
           </p>
         </div>
         <div className="flex items-center gap-3 text-xs">
+          <button
+            onClick={toggleFs}
+            className="px-2 py-1 rounded border border-border text-muted-foreground hover:bg-muted/40"
+            title={fs ? 'Exit fullscreen' : 'Fullscreen — hides browser chrome where supported'}
+          >
+            {fs ? '✕ Exit' : '⛶ Fullscreen'}
+          </button>
           {/* Status indicators */}
           <span className="flex items-center gap-1.5">
             <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400' : 'bg-red-400'}`} />

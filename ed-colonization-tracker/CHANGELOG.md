@@ -2,6 +2,15 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.45.0] — 2026-08-12
+
+### Added
+- **Type the token into the app.** A network device with no token now gets a paste-it-once prompt instead of needing a ?token= URL. The token is verified against the server before being saved, so a typo says so rather than half-working, and you can bookmark the plain address from then on.
+- **Fullscreen on the 2nd Screen** — same control the Radar page has: CSS overlay always works, the Fullscreen API hides browser chrome on top where supported. Pairs with an iPad home-screen shortcut for a dedicated cockpit display.
+
+### Fixed
+- **The token no longer evaporates when the tab closes.** It was stored only in sessionStorage, so an iPad home-screen shortcut lost authentication on every relaunch and had to be re-opened from a token URL. It now persists in localStorage as well (both are written, session read first), which is the actual reason bookmarking never stuck.
+
 ## [1.44.0] — 2026-08-12
 
 ### Added

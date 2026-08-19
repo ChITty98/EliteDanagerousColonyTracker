@@ -7,17 +7,30 @@ import { sseSubscribe } from '@/services/sseBus';
 // Stores state in colony-data.json on the server instead of browser IndexedDB.
 // This allows multiple devices on the network to share the same data.
 
-// Extract token from URL for network access (localhost doesn't need it)
+// Token resolution for network access (localhost doesn't need one).
+// Order: sessionStorage → localStorage → URL. localStorage is what makes an iPad
+// home-screen shortcut work: sessionStorage alone dies with the tab, so every
+// relaunch used to need the ?token= URL again. Anything found is mirrored to BOTH.
+export function storeToken(token: string): void {
+  try { sessionStorage.setItem('colony-token', token); } catch { /* private mode */ }
+  try { localStorage.setItem('colony-token', token); } catch { /* private mode */ }
+}
+
 function getToken(): string | null {
   try {
-    // Check sessionStorage first (persists across page navigations within tab)
     const cached = sessionStorage.getItem('colony-token');
     if (cached) return cached;
+    let persisted: string | null = null;
+    try { persisted = localStorage.getItem('colony-token'); } catch { /* private mode */ }
+    if (persisted) {
+      try { sessionStorage.setItem('colony-token', persisted); } catch { /* private mode */ }
+      return persisted;
+    }
     // Extract from URL on first load
     const params = new URLSearchParams(window.location.search);
     const token = params.get('token');
     if (token) {
-      sessionStorage.setItem('colony-token', token);
+      storeToken(token);
       // Clean token from URL bar (cosmetic)
       const clean = new URL(window.location.href);
       clean.searchParams.delete('token');
@@ -26,6 +39,17 @@ function getToken(): string | null {
     return token;
   } catch {
     return null;
+  }
+}
+
+/** True when this device needs a token and hasn't got one (drives the token gate). */
+export function needsToken(): boolean {
+  try {
+    const h = window.location.hostname;
+    if (h === 'localhost' || h === '127.0.0.1' || h === '[::1]') return false;
+    return !getToken();
+  } catch {
+    return false;
   }
 }
 

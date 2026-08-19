@@ -2,6 +2,12 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.46.0] — 2026-08-12
+
+### Changed
+- **Gold text for the biology worth landing for.** Focus genera now render in gold on the checklist, per-genus rather than colouring the whole row — so `Tubus/Tussock` shows the Tubus gold and the Tussock plain. Banked genera keep their struck-through ✓.
+- **Focus set corrected against measured receipts: Tubus · Frutexa · Aleoida.** Frutexa was MISSING despite Flammasis paying 10.33M base / 51.6M first-logged — second only to Tubus Cavas. Stratum, Cactoida and Concha were REMOVED: they were flagged on their jackpot species (Tectonicas, Vermis, Biconcavis), but what actually turns up is Paleas 1.36M, Lapis 2.48M and Labiata 2.35M — filler tier. Flag a genus on what shows up, not its best case.
+
 ## [1.45.0] — 2026-08-12
 
 ### Added

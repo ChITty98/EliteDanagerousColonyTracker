@@ -20,13 +20,17 @@ const DIST_CAP_LS = 40_000;
 const BIO_MIN = 2;
 
 /**
- * Genera worth a 💰 flag, judged on BASE species values only (calibrated from the
- * user's 2026-08-11 Vista sale): Tubus 7.8–11.9M, Aleoida 3.4–12.9M, Stratum up to
- * 19M (Tectonicas), Cactoida up to 16.2M (Vermis), Concha up to ~16.8M (Biconcavis;
- * Renibus ~4.5M sold that night). First-logged ×5 is upside, never assumed —
- * someone else may have logged the variant already.
+ * FOCUS GENERA — shown in GOLD on the card and driving the 💰 flag. Set from the
+ * commander's OWN measured receipts (2026-08-11/12 Vista sales), base values:
+ *   Tubus Cavas 11.87M · Frutexa Flammasis 10.33M · Tubus Compagibus 7.77M ·
+ *   Aleoida Arcus 7.25M   → all 36M+ all-in with the first-logged ×5.
+ * Deliberately EXCLUDED after measurement disproved the earlier guesses: Stratum
+ * (Paleas 1.36M), Cactoida (Lapis/Peperatis 2.48M) and Concha (Labiata 2.35M) are
+ * filler-tier in practice — their jackpot species exist but have never turned up.
+ * Flag a genus on what actually shows up, not on its best-case species.
+ * First-logged ×5 is upside, never assumed — someone may have logged the variant.
  */
-const HIGH_VALUE_GENERA = new Set(['Tubus', 'Aleoida', 'Stratum', 'Cactoida', 'Concha']);
+const HIGH_VALUE_GENERA = new Set(['Tubus', 'Frutexa', 'Aleoida']);
 
 /**
  * FSS-time Tubus hint — the ONLY genus with a profile calibrated from the user's
@@ -143,6 +147,7 @@ function evaluate(bodyId) {
     bioDone: bioWorthy ? Math.min(done, b.bio) : 0,
     genera,
     generaDone,
+    focusGenera: genera.filter((g) => HIGH_VALUE_GENERA.has(g)),
     hot,
     hint,
     distLs: Math.round(b.distLs || 0),

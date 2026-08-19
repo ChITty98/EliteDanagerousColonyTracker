@@ -18,6 +18,7 @@ interface ChecklistTarget {
   bioDone?: number;
   genera?: string[];
   generaDone?: string[];
+  focusGenera?: string[];
   hot?: boolean;
   hint?: string | null;
   distLs: number;
@@ -108,7 +109,7 @@ export function ChecklistCard() {
             >
               <span className="shrink-0">{t.mapped ? '✓' : t.hot ? '💰' : t.stars}</span>
               <span className="font-medium shrink-0">{t.bodyName}</span>
-              <span className={`truncate ${t.hot && !t.mapped && !t.skipped ? 'text-amber-300' : 'text-muted-foreground'}`}>{t.genera && t.genera.length ? (<>{t.genera.map((g, gi) => (<span key={g} className={(t.generaDone || []).includes(g) ? 'line-through opacity-50' : undefined}>{(t.generaDone || []).includes(g) ? '✓' : ''}{g}{gi < t.genera!.length - 1 ? '/' : ''}</span>))}{' · '}</>) : t.hint ? `${t.hint} · ` : ''}{[...t.reasons, ...((t.bio ?? 0) > 0 ? [`bio ${t.bioDone ?? 0}/${t.bio}`] : [])].join(' · ')}</span>
+              <span className="truncate text-muted-foreground">{t.genera && t.genera.length ? (<>{t.genera.map((g, gi) => { const banked = (t.generaDone || []).includes(g); const focus = (t.focusGenera || []).includes(g); return (<span key={g} className={banked ? 'line-through opacity-50' : focus ? 'text-yellow-400 font-semibold' : undefined}>{banked ? '✓' : ''}{g}{gi < t.genera!.length - 1 ? '/' : ''}</span>); })}{' · '}</>) : t.hint ? `${t.hint} · ` : ''}{[...t.reasons, ...((t.bio ?? 0) > 0 ? [`bio ${t.bioDone ?? 0}/${t.bio}`] : [])].join(' · ')}</span>
               <span className={`ml-auto shrink-0 tabular-nums ${t.far ? 'text-amber-400' : 'text-muted-foreground/70'}`}>
                 {fmtLs(t.distLs)}{t.far ? ' ⚠' : ''}
               </span>

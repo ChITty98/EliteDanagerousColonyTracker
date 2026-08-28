@@ -2,6 +2,19 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.47.0] — 2026-08-28
+
+### Added
+- **The tracker now knows which hotspot you are parked in.** Nav-lock a hotspot before you drop into the ring and every rock logged there is stamped with it — no more hand-annotating afterwards. `Status.json` names the lock outright (`Tritium Hotspot`), so the material is read rather than guessed, and locking anything else — a station, the carrier, nothing at all — correctly records "not a hotspot".
+- The hotspot is **frozen on ring entry**, not on the first rock. By the time you prospect, you may well have re-locked the carrier to go unload, and that would have credited the whole patch to the wrong place.
+
+### Changed
+- Your own hotspot marks still win. The automatic capture only fills gaps, because dropping into a hotspot without nav-locking it is a perfectly normal thing to do and only you know that happened.
+
+### Notes
+- **No backfill, and there never can be.** The journal records nothing about what you target — a full 63-rock session's only destination events were the carrier at either end. The nav lock exists solely in `Status.json`, which is overwritten every few seconds and never archived, so it has to be caught live. Rocks logged before this build cannot be attributed retroactively.
+- Refined material can never identify a hotspot on its own: a tritium hotspot still yields the ring's other minerals, which is precisely why the nav lock was needed.
+
 ## [1.46.0] — 2026-08-12
 
 ### Changed

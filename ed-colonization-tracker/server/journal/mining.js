@@ -34,6 +34,7 @@ import {
   stageNextRock, hasPendingRock, promotePendingRock, finalizeAllRocks,
 } from './miningLog.js';
 import { ingestRingEvent, getRingInfo, getUnmappedRings, getMaterialCatalog } from './miningIndex.js';
+import { getNavLock, ringHotspotFromNavLock } from './navLock.js';
 import { pushMiningBeat } from '../ai/copilotMining.js';
 import { recordStreakRock, getStreak, computeAggregates, evaluateBadges } from './miningTrophies.js';
 import { getLivePrice, refreshLivePrices } from './livePrices.js';
@@ -110,9 +111,33 @@ let unmappedNudgedSystems = new Set(); // colony systems already nudged about DS
 // only source of truth. Stamped onto every rock logged while on; positional, so it clears on any
 // ring change or jump rather than silently mislabeling the next site.
 let inHotspot = false;
+// WHICH hotspot, when the nav lock told us (e.g. 'tritium'). Null when the commander toggled the
+// flag by hand without one, which stays valid — they know where they are parked.
+let hotspotMaterial = null;
 let pendingStagedAt = 0;         // when the deferred-switch slot was filled
 
-export function setInHotspot(v) { inHotspot = !!v; return inHotspot; }
+export function setInHotspot(v) {
+  inHotspot = !!v;
+  if (!inHotspot) hotspotMaterial = null; // "not in a hotspot" can't carry a material
+  return inHotspot;
+}
+
+/**
+ * Freeze the nav-locked hotspot for this ring visit.
+ *
+ * FROZEN AT RING ENTRY, not at first rock: on arrival the lock is still exactly what was flown to.
+ * By the time a rock is prospected the commander may have re-locked the carrier to go unload, and
+ * that would attribute the whole patch to the wrong place.
+ *
+ * Fills a gap only. It runs right after inHotspot resets to false on a ring change, so a later
+ * manual setInHotspot() naturally wins, and the read-time sidecar marks in miningLog override both.
+ */
+function freezeNavLockHotspot(systemAddress) {
+  const hs = ringHotspotFromNavLock(getNavLock(), systemAddress);
+  if (!hs) return; // not locked onto a hotspot ⇒ not in one. The commander's rule.
+  inHotspot = true;
+  hotspotMaterial = hs.material;
+}
 
 const now = () => Date.now();
 const isRecent = (ts) => { const t = Date.parse(ts); return Number.isFinite(t) && now() - t < 120_000; };
@@ -239,24 +264,28 @@ export function processMiningEvents(parsed, state, deps) {
     if (ev.event === 'SupercruiseExit') {
       if (ev.BodyType === 'PlanetaryRing') {
         const info = getRingInfo(ev.Body);
-        if (!currentRing || currentRing.name !== ev.Body) inHotspot = false; // hotspot is positional
+        const changedRing = !currentRing || currentRing.name !== ev.Body;
+        if (changedRing) { inHotspot = false; hotspotMaterial = null; } // hotspot is positional
         currentRing = { name: ev.Body, ringClass: (info && info.ringClass) || '', reserve: (info && info.reserve) || '' };
         recentRockValues = [];   // new ring, new baseline — don't carry the last patch's window over
+        if (changedRing) freezeNavLockHotspot(ev.SystemAddress);
         ringEntryNudge(ev.Body, info, deps);
       } else {
         finalizeAllRocks();
         currentRing = null;
         inHotspot = false;
+        hotspotMaterial = null;
       }
     } else if (ev.event === 'FSDJump' || ev.event === 'Location') {
       currentSystem = ev.StarSystem || currentSystem;
-      if (ev.event === 'FSDJump') { finalizeAllRocks(); currentRing = null; inHotspot = false; }
+      if (ev.event === 'FSDJump') { finalizeAllRocks(); currentRing = null; inHotspot = false; hotspotMaterial = null; }
       // Logging in INSIDE a ring writes no SupercruiseExit — but Location carries the body
       // (verified: Body "HIP 52629 A 9 B Ring", BodyType "PlanetaryRing" at login). Without this,
       // a whole session's rocks land ring-less and hotspot marks have nothing to key on.
       if (ev.event === 'Location' && ev.BodyType === 'PlanetaryRing' && ev.Body) {
         const info = getRingInfo(ev.Body);
         currentRing = { name: ev.Body, ringClass: (info && info.ringClass) || '', reserve: (info && info.reserve) || '' };
+        freezeNavLockHotspot(ev.SystemAddress); // logging in inside a ring still deserves attribution
       }
       if (isRecent(ev.timestamp)) maybeNudgeUnmappedRings(state, deps);
     }
@@ -669,6 +698,7 @@ function prospectHelper(ev, state, deps) {
     ringClass: currentRing ? currentRing.ringClass : '',
     reserve: currentRing ? currentRing.reserve : '',
     hotspot: inHotspot || undefined,
+    hotspotMaterial: hotspotMaterial || undefined,
     content: String(ev.Content_Localised || ev.Content || '').replace(/^.*Content_/, '').replace(/;$/, ''),
     remaining: ev.Remaining,
     motherlode,
@@ -931,5 +961,6 @@ export function getMiningSnapshot() {
     sessionStartedAt: sessionStartedAt || null,
     streak: getStreak(),
     inHotspot,
+    hotspotMaterial,
   };
 }

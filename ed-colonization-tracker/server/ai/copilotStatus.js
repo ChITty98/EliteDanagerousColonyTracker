@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { runCopilot } from './copilot.js';
 import { setNavDestination } from './copilotContext.js';
+import { setNavLock } from '../journal/navLock.js';
 
 // ED Status.json Flags bit positions.
 const FLAGS = {
@@ -55,9 +56,20 @@ export function pollStatus(journalDir, deps) {
   const sysPips = pips ? pips[0] : null; // half-pips, 0..8 (8 = full 4 pips to SYS)
   // Nav-locked destination (the target we're cruising to) → lets the arrival beat tell a CARRIER
   // drop from a body/site drop. Updated on every Status write, even when no beat fires.
-  setNavDestination((data.Destination && data.Destination.Name)
-    ? { name: String(data.Destination.Name), system: data.Destination.System || null, body: data.Destination.Body || null }
-    : null);
+  const dest = (data.Destination && data.Destination.Name)
+    ? {
+        name: String(data.Destination.Name),
+        nameLocalised: data.Destination.Name_Localised ? String(data.Destination.Name_Localised) : '',
+        system: data.Destination.System || null,
+        body: data.Destination.Body || null,
+        at: Date.now(),
+      }
+    : null;
+  setNavDestination(dest);
+  // Mining needs this to OUTLIVE the poll: Status.json is overwritten every few seconds and never
+  // archived, so a nav-locked hotspot is gone unless it is caught here. navLock keeps the last one
+  // for miningLog's hotspot attribution.
+  setNavLock(dest);
 
   const events = [];
   const now = new Date().toISOString();

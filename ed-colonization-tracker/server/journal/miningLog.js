@@ -102,6 +102,7 @@ function applyAnnotations(rows) {
       if (m.day && !String(r.t || '').startsWith(m.day)) continue;
       r.hotspot = m.hotspot;
       if (m.material) r.hotspotMaterial = m.material;
+      else if (!m.hotspot) r.hotspotMaterial = undefined; // "not a hotspot" can't keep a material
     }
   }
   return rows;

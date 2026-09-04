@@ -43,7 +43,7 @@ Multi-hop route pathfinder for building colony chains. Set a start and target sy
 On each system detail page, see two lists: systems within 15 ly (single-hop colonization options) and the top 10 beyond 15 ly. Both include 8-point compass directional arrows showing where each candidate is relative to your current system.
 
 ### In-Game Overlay
-Integrates with [EDMCModernOverlay](https://github.com/) for heads-up display while playing:
+Integrates with [EDMCModernOverlay](https://github.com/SweetJonnySauce/EDMCModernOverlay) for heads-up display while playing:
 - **On jump**: Shows scouting score, colony ownership status, FSS completion
 - **On dock**: Lists commodities needed for active construction projects
 - **On scan**: Highlights qualifying landable bodies with atmosphere type, gravity, rings
@@ -188,8 +188,9 @@ Tier is determined by T2/T3 installation points when available, falling back to 
 ### Prerequisites
 - Windows 10/11
 - Elite Dangerous (for journal data)
+- [Node.js](https://nodejs.org/en/download) v20 or newer — needed to build from source or to use the `.bat` launcher; the standalone `.exe` bundles its own and needs nothing installed
 - A modern browser — Chrome, Edge, Firefox, Safari all work; the server owns journal access
-- [EDMCModernOverlay](https://github.com/) (optional, for in-game overlay)
+- [EDMCModernOverlay](https://github.com/SweetJonnySauce/EDMCModernOverlay) (optional, for in-game overlay)
 
 ### Running the App
 

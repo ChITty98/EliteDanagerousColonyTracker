@@ -3,16 +3,17 @@ import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/store';
 import { cleanProjectName, stripConstructionPrefix, inferStationTypeFromSignal } from '@/lib/utils';
 import { StationTypeIcon } from '@/components/StationTypeIcon';
-import { shouldShowInOverview, resolveStationType } from '@/data/stationTypes';
+import { resolveStationType, getStationTypeInfo } from '@/data/stationTypes';
+import { NOTABLE_STATION_LABELS } from '@/features/domain/domainHelpers';
 import { INSTALLATION_TYPE_OPTIONS } from '@/data/installationTypes';
-import { isFleetCarrier, isColonisationShip, isConstructionStationName, getJournalFolderHandle, extractExplorationData, journalBodiesToSpanshFormat } from '@/services/journalReader';
+import { isFleetCarrier, isColonisationShip, isConstructionStationName, isEphemeralStation, getJournalFolderHandle, extractExplorationData, journalBodiesToSpanshFormat } from '@/services/journalReader';
 import { fetchSystemDump } from '@/services/spanshApi';
 import { getSystemTier, getTierProgress, formatPopulation } from '@/features/dashboard/tierUtils';
 import { SystemBodiesTab } from './SystemBodiesTab';
 import { NearbyExpansionTab } from './NearbyExpansionTab';
 import { CommodityRecommendationModal } from './CommodityRecommendationModal';
 import { ImageGallery } from '@/components/ImageGallery';
-import { galleryKey } from '@/store/galleryStore';
+import { galleryKey, useGalleryStore } from '@/store/galleryStore';
 import type { KnownStation, FSSSignal, StationEconomy } from '@/store/types';
 
 // Extended station type for merged installations list
@@ -35,22 +36,11 @@ const FSS_STATION_TYPES = new Set([
 const FSS_CARRIER_TYPES = new Set(['FleetCarrier', 'Squadron', 'SquadronCarrier']);
 const FC_NAME_PATTERN = /^[A-Z0-9]{3}-[A-Z0-9]{3}$|^.+\s*\|\s*.+$/;
 
-// Installation counting — same categories as dashboard
-const ORBITAL_STATION = new Set(['Coriolis', 'Orbis', 'Ocellus', 'StationDodec', 'AsteroidBase']);
-const ORBITAL_OUTPOST = new Set(['Outpost']);
-const SURFACE_PORT = new Set(['CraterPort', 'SurfaceStation']);
-const SURFACE_OUTPOST = new Set(['CraterOutpost']);
-const SETTLEMENT = new Set(['OnFootSettlement']);
-const INSTALLATION_TYPE = new Set(['Installation', 'MegaShip']);
-
-const INSTALLATION_PARTS: { key: string; icon: string; label: string; types: Set<string> }[] = [
-  { key: 'orbitalStations', icon: '\u{1F6F0}', label: 'Orbital Station', types: ORBITAL_STATION },
-  { key: 'orbitalOutposts', icon: '\u{1F4E1}', label: 'Orbital Outpost', types: ORBITAL_OUTPOST },
-  { key: 'surfacePorts', icon: '\u{1FA90}', label: 'Surface Port', types: SURFACE_PORT },
-  { key: 'surfaceOutposts', icon: '\u{1F3D7}', label: 'Surface Outpost', types: SURFACE_OUTPOST },
-  { key: 'settlements', icon: '\u{1F3D8}', label: 'Settlement', types: SETTLEMENT },
-  { key: 'installations', icon: '\u2699', label: 'Installation', types: INSTALLATION_TYPE },
-];
+// The station-category chips that used to sit in the hero (Orbital Station / Surface Port /
+// Installation / \u2026) were REMOVED 2026-08-28. They counted how a station is CLASSIFIED, not that the
+// commander built it \u2014 a system holding seventeen stations displayed "3 Installations", which is
+// both meaningless and, worse, looks like an achievement figure. The hero now states what was built
+// and what is still going up. Nothing else belongs there.
 
 /** Format raw journal service names: "techBroker" → "Tech Broker", "facilitator/contacts" → "Facilitator" */
 const SERVICE_RENAMES: Record<string, string> = {
@@ -176,6 +166,115 @@ function journalTypeToInstallationId(journalType: string): string | undefined {
 
 type TabKey = 'installations' | 'bodies' | 'expansion';
 
+/**
+ * A montage of everything photographed in this system, shown ONLY when the system itself has no
+ * screenshot of its own.
+ *
+ * The images are already on file — one per body, one per station — but the system page only ever
+ * looked at the system-level key, so a system with a dozen body shots and no system portrait
+ * appeared to have no pictures at all.
+ */
+function EntityMontage({ systemName, id64 }: { systemName: string; id64?: number | null }) {
+  const images = useGalleryStore((s) => s.images);
+  const knownStations = useAppStore((s) => s.knownStations);
+  const scoutedSystems = useAppStore((s) => s.scoutedSystems);
+
+  const tiles = useMemo(() => {
+    const base = galleryKey(systemName);
+    if ((images[base] ?? []).length > 0) return []; // a real system shot exists — leave it alone
+
+    // Station name -> display label, so a station's importance can be judged from its type.
+    const stationLabel = new Map<string, string>();
+    for (const st of Object.values(knownStations)) {
+      if (!st || String(st.systemName || '').toLowerCase() !== systemName.toLowerCase()) continue;
+      stationLabel.set(String(st.stationName || '').toLowerCase(), getStationTypeInfo(st.stationType).label);
+    }
+
+    // Per-body detail, from the scouted record's cached bodies — the same source the Bodies tab
+    // reads, which is why it can say "Atmosphere: Thin Oxygen" on a body this montage was
+    // otherwise treating as interchangeable with every other rock.
+    const bodyInfo = new Map<string, { atmo: string; sub: string }>();
+    const cached = id64 != null ? scoutedSystems[id64]?.cachedBodies : undefined;
+    for (const b of cached ?? []) {
+      if (!b?.name) continue;
+      bodyInfo.set(String(b.name).toLowerCase(), {
+        atmo: String(b.atmosphereType || '').toLowerCase(),
+        sub: String(b.subType || '').toLowerCase(),
+      });
+    }
+
+    // THE ORDER, as the commander specified it:
+    //   stars first — it is the first thing you see arriving in a system;
+    //   then atmospheric worlds worth noting, oxygen ahead of the rest;
+    //   then the significant builds;
+    //   then everything else.
+    // Icy bodies are excluded from "of note" even when they carry an atmosphere — the standing
+    // no-ice-balls rule. Insertion order previously decided all of this, which is to say nothing did.
+    // An airless rock is in none of those tiers, so it sorts to the very bottom — below even a
+    // minor outpost. "1 A is not important — no atmo" was exactly right: it is a 0.024 M⊕ bare
+    // moon, and it was leading the montage purely because "1" sorts before "2".
+    const RANK = { star: 0, oxygen: 1, atmo: 2, build: 3, other: 4, body: 5 };
+    const rank = (kind: string, name: string): number => {
+      if (kind === 'body') {
+        const info = bodyInfo.get(name.toLowerCase());
+        if (!info) return RANK.body;
+        if (/star|dwarf/.test(info.sub)) return RANK.star;
+        if (info.atmo.includes('oxygen')) return RANK.oxygen;
+        const real = info.atmo && !/^(no atmosphere|none|no)$/.test(info.atmo);
+        if (real && !info.sub.includes('icy')) return RANK.atmo;
+        return RANK.body;
+      }
+      const label = stationLabel.get(name.toLowerCase());
+      return label && NOTABLE_STATION_LABELS.has(label) ? RANK.build : RANK.other;
+    };
+
+    const out: { id: string; url: string; label: string; kind: string; rank: number }[] = [];
+    for (const [key, imgs] of Object.entries(images)) {
+      if (!key.startsWith(`${base}:`) || !imgs?.length) continue;
+      const m = /:(body|station):(.+)$/.exec(key);
+      if (!m) continue;
+      const img = imgs[0];
+      out.push({
+        id: img.id,
+        url: img.url || `/api/images/${img.id}`,
+        // Strip the system prefix off body names — "AX-J d9-52 2 a" reads better than the full name.
+        label: m[2].toLowerCase().startsWith(systemName.toLowerCase())
+          ? m[2].slice(systemName.length).trim() || m[2]
+          : m[2],
+        kind: m[1],
+        rank: rank(m[1], m[2]),
+      });
+    }
+    // Alphabetical within a rank keeps sibling bodies adjacent and in order — 2 a before 2 b.
+    return out.sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label, undefined, { numeric: true }));
+  }, [images, systemName, knownStations, scoutedSystems, id64]);
+
+  if (tiles.length === 0) return null;
+
+  return (
+    <div className="mt-4">
+      <h3 className="text-sm font-semibold text-foreground mb-2">
+        {'\u{1F5BC}\u{FE0F}'} Photographed here
+        <span className="ml-2 text-xs font-normal text-muted-foreground">
+          {tiles.length} {tiles.length === 1 ? 'subject' : 'subjects'} · no system shot yet
+        </span>
+      </h3>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+        {tiles.map((t) => (
+          <div key={t.id} className="relative rounded-lg overflow-hidden border border-border/60 aspect-video group">
+            <img src={t.url} alt={t.label} loading="lazy" className="w-full h-full object-cover" />
+            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-2 py-1">
+              <span className="text-[11px] text-white/90 capitalize truncate block">
+                {t.kind === 'station' ? '\u{1F6F0}\u{FE0F} ' : ''}{t.label}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function EditablePopulation({ systemName, journalPopulation }: { systemName: string; journalPopulation: number }) {
   const overrideEntry = useAppStore((s) => s.populationOverrides[systemName.toLowerCase()]);
   const setOverride = useAppStore((s) => s.setPopulationOverride);
@@ -183,6 +282,18 @@ function EditablePopulation({ systemName, journalPopulation }: { systemName: str
   const [input, setInput] = useState('');
 
   const population = overrideEntry?.population ?? journalPopulation;
+
+  // Commit ONLY a real edit. This used to save on every blur, which meant clicking the figure
+  // just to read it — then clicking away — re-saved the SAME number with a fresh updatedAt.
+  // That is not harmless: the store only lets journal data reclaim an override when
+  // `system.lastSeen > override.updatedAt` (store/index.ts), so each glance pushed the
+  // override's timestamp past the game's own reading and pinned a stale population forever.
+  // HIP 47126 sat at 269,128,294 while the journal held 312,243,355 for exactly this reason.
+  const commit = () => {
+    const num = parseInt(input.replace(/[,\s]/g, ''), 10);
+    if (!isNaN(num) && num >= 0 && num !== population) setOverride(systemName, num);
+    setEditing(false);
+  };
 
   if (editing) {
     return (
@@ -195,19 +306,10 @@ function EditablePopulation({ systemName, journalPopulation }: { systemName: str
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              const num = parseInt(input.replace(/[,\s]/g, ''), 10);
-              if (!isNaN(num) && num >= 0) setOverride(systemName, num);
-              setEditing(false);
-            } else if (e.key === 'Escape') {
-              setEditing(false);
-            }
+            if (e.key === 'Enter') commit();
+            else if (e.key === 'Escape') setEditing(false);
           }}
-          onBlur={() => {
-            const num = parseInt(input.replace(/[,\s]/g, ''), 10);
-            if (!isNaN(num) && num >= 0) setOverride(systemName, num);
-            setEditing(false);
-          }}
+          onBlur={commit}
           placeholder="e.g. 150000"
         />
       </span>
@@ -255,7 +357,9 @@ export function SystemDetailPage() {
   const stationBodyOverrides = useAppStore((s) => s.stationBodyOverrides);
   const setStationBodyOverride = useAppStore((s) => s.setStationBodyOverride);
 
-  const [showSettlements, setShowSettlements] = useState(true);
+  // Replaced the hide-settlements toggle 2026-08-28. Hiding a settlement answers nothing; the real
+  // question at a glance is "can I bring the big ship here", so the filter is on landing pads.
+  const [largePadsOnly, setLargePadsOnly] = useState(false);
   const [renamingStation, setRenamingStation] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -561,36 +665,56 @@ export function SystemDetailPage() {
     });
   }, [knownStations, visitedMarkets, systemName, completedProjects, systemManualInstallations, systemSignals, hiddenInstallations]);
 
-  // Installation counts for hero
-  const installationCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const part of INSTALLATION_PARTS) counts[part.key] = 0;
-
-    for (const st of systemStations) {
-      if (isFleetCarrier(st.stationType, st.marketId)) continue;
-      for (const part of INSTALLATION_PARTS) {
-        if (part.types.has(st.stationType)) { counts[part.key]++; break; }
-      }
-    }
-    return counts;
-  }, [systemStations]);
-
   const totalInstalled = useMemo(
     () => systemStations.filter((s) => !isFleetCarrier(s.stationType, s.marketId)).length,
     [systemStations]
   );
 
-  // Split visible vs settlements
+  // What this system has PAID. Attributed by MissionCompleted.DestinationSystem — where the mission
+  // was delivered, which for the mining and collection contracts that dominate here is the same
+  // station it was accepted at. The lifetime total on the dashboard hid this entirely: one system
+  // had quietly paid out 1.91 billion across 43 missions.
+  const [missionIncome, setMissionIncome] = useState<{ credits: number; missions: number } | null>(null);
+  useEffect(() => {
+    if (!systemName) return;
+    let t: string | null = null;
+    try { t = sessionStorage.getItem('colony-token') || localStorage.getItem('colony-token'); } catch { /* no storage */ }
+    fetch(t ? `/api/journal-stats?token=${t}` : '/api/journal-stats')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const rows = d?.stats?.missionEarningsBySystem;
+        if (!Array.isArray(rows)) return;
+        const hit = rows.find((r) => String(r.name).toLowerCase() === systemName.toLowerCase());
+        if (hit) setMissionIncome({ credits: hit.credits, missions: hit.missions });
+      })
+      .catch(() => { /* the figure just stays absent */ });
+  }, [systemName]);
+
+  // THINGS YOU ACTUALLY BUILT — the number worth leading with.
+  //
+  // totalInstalled counts everything standing in the system, which includes scaffolding: HIP 47126
+  // has 17 stations, but 7 are construction depots and 1 is the colonisation ship. Nine are real.
+  // The old hero led with a taxonomy of station CATEGORIES ("3 Installations"), which answers a
+  // question nobody asked — it names what a thing is classified as, not that you raised it.
+  const builtCount = useMemo(
+    () => systemStations.filter((s) => !isEphemeralStation(s.stationName, s.stationType, s.marketId)).length,
+    [systemStations]
+  );
+
   const visibleStations = useMemo(() => {
-    let filtered = systemStations.filter((s) => showSettlements || shouldShowInOverview(s.stationType));
+    let filtered = systemStations;
+    // Pads unknown counts as "cannot land the big ship" — an on-foot settlement records none at
+    // all, and guessing yes on missing data would send you somewhere you cannot set down.
+    if (largePadsOnly) filtered = filtered.filter((s) => (s.landingPads?.large ?? 0) > 0);
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       filtered = filtered.filter((s) => s.stationName.toLowerCase().includes(q));
     }
     return filtered;
-  }, [systemStations, showSettlements, searchQuery]);
-  const settlementCount = useMemo(
-    () => systemStations.filter((s) => !shouldShowInOverview(s.stationType)).length,
+  }, [systemStations, largePadsOnly, searchQuery]);
+
+  const largePadCount = useMemo(
+    () => systemStations.filter((s) => (s.landingPads?.large ?? 0) > 0).length,
     [systemStations]
   );
 
@@ -783,6 +907,24 @@ export function SystemDetailPage() {
               Bodies: <span className="text-foreground font-medium">{bodyCount}</span>
             </span>
           )}
+          {missionIncome != null && missionIncome.credits > 0 && (
+            <span
+              className="text-muted-foreground"
+              title={`${missionIncome.missions} completed mission${missionIncome.missions === 1 ? '' : 's'} delivered here`}
+            >
+              {'\u{1F4B0}'}{' '}
+              <span className="text-amber-400 font-medium">
+                {missionIncome.credits >= 1_000_000_000
+                  ? `${(missionIncome.credits / 1e9).toFixed(2)}B`
+                  : missionIncome.credits >= 1_000_000
+                  ? `${Math.round(missionIncome.credits / 1e6)}M`
+                  : `${Math.round(missionIncome.credits / 1e3)}K`}
+              </span>
+              <span className="text-xs text-muted-foreground/60 ml-1">
+                from {missionIncome.missions} mission{missionIncome.missions === 1 ? '' : 's'}
+              </span>
+            </span>
+          )}
           {system?.coordinates && (
             <span className="text-muted-foreground/60 text-xs">
               ({system.coordinates.x.toFixed(1)}, {system.coordinates.y.toFixed(1)}, {system.coordinates.z.toFixed(1)})
@@ -813,31 +955,22 @@ export function SystemDetailPage() {
           </div>
         )}
 
-        {/* Installation icons */}
-        <div className="flex flex-wrap gap-3 items-center mb-3">
-          {INSTALLATION_PARTS.map(({ key, icon, label }) => {
-            const count = installationCounts[key];
-            if (count === 0) return null;
-            return (
-              <span
-                key={key}
-                className="inline-flex items-center gap-1 text-sm text-muted-foreground"
-                title={`${count} ${label}${count > 1 ? 's' : ''}`}
-              >
-                <span>{icon}</span>
-                <span className="font-medium text-foreground">{count}</span>
-                <span className="text-xs">{label}{count > 1 ? 's' : ''}</span>
-              </span>
-            );
-          })}
+        {/* What you built here — the headline. Category detail sits beneath it, smaller. */}
+        <div className="flex flex-wrap gap-4 items-baseline mb-2">
+          {builtCount > 0 && (
+            <span className="inline-flex items-baseline gap-2">
+              <span className="text-3xl font-bold text-amber-400 tabular-nums leading-none">{builtCount}</span>
+              <span className="text-sm text-foreground">built</span>
+            </span>
+          )}
           {activeProjects.length > 0 && (
-            <span className="inline-flex items-center gap-1 text-sm text-primary" title={`${activeProjects.length} under construction`}>
-              <span>{'\u{1F6A7}'}</span>
-              <span className="font-medium">{activeProjects.length}</span>
-              <span className="text-xs">under construction</span>
+            <span className="inline-flex items-baseline gap-2" title="Construction sites still standing">
+              <span className="text-2xl font-bold text-primary tabular-nums leading-none">{activeProjects.length}</span>
+              <span className="text-sm text-muted-foreground">under construction</span>
             </span>
           )}
         </div>
+
 
         {/* Build planner toolbar */}
         <div className="flex flex-wrap gap-2 items-center mb-3">
@@ -880,6 +1013,11 @@ export function SystemDetailPage() {
         <div className="mt-4">
           <ImageGallery galleryKey={galleryKey(systemName)} title={`${'\u{1F4F7}'} System Screenshots`} />
         </div>
+
+        {/* No portrait of the system itself — so show what WAS photographed here. The pictures
+            already exist against individual bodies and stations; without this they are invisible
+            from the system page and it reads as though nothing was ever shot here. */}
+        <EntityMontage systemName={systemName} id64={id64} />
 
         {!system && (
           <p className="text-sm text-muted-foreground mt-3">
@@ -933,9 +1071,9 @@ export function SystemDetailPage() {
           systemName={systemName}
           visibleStations={visibleStations}
           systemStations={systemStations}
-          settlementCount={settlementCount}
-          showSettlements={showSettlements}
-          setShowSettlements={setShowSettlements}
+          largePadCount={largePadCount}
+          largePadsOnly={largePadsOnly}
+          setLargePadsOnly={setLargePadsOnly}
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
           expandedStation={expandedStation}
@@ -997,9 +1135,9 @@ interface InstallationsTabProps {
   systemName: string;
   visibleStations: DisplayStation[];
   systemStations: DisplayStation[];
-  settlementCount: number;
-  showSettlements: boolean;
-  setShowSettlements: (v: boolean) => void;
+  largePadCount: number;
+  largePadsOnly: boolean;
+  setLargePadsOnly: (v: boolean) => void;
   searchQuery: string;
   setSearchQuery: (v: string) => void;
   expandedStation: number | null;
@@ -1034,9 +1172,9 @@ function InstallationsTab({
   systemName,
   visibleStations,
   systemStations,
-  settlementCount,
-  showSettlements,
-  setShowSettlements,
+  largePadCount,
+  largePadsOnly,
+  setLargePadsOnly,
   searchQuery,
   setSearchQuery,
   expandedStation,
@@ -1140,14 +1278,18 @@ function InstallationsTab({
               />
             )}
           </div>
-          {settlementCount > 0 && (
-            <button
-              onClick={() => setShowSettlements(!showSettlements)}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              {showSettlements ? 'Hide' : 'Show'} {settlementCount} settlement{settlementCount !== 1 ? 's' : ''}
-            </button>
-          )}
+          <button
+            onClick={() => setLargePadsOnly(!largePadsOnly)}
+            className={`text-xs rounded border px-2 py-1 transition-colors ${
+              largePadsOnly
+                ? 'border-primary/50 bg-primary/15 text-primary'
+                : 'border-border text-muted-foreground hover:text-foreground'
+            }`}
+            title="Show only places a large ship can actually set down"
+          >
+            {'\u{1F6EC}'} Large pads only
+            <span className="ml-1.5 tabular-nums opacity-70">{largePadCount}</span>
+          </button>
         </div>
         {visibleStations.length > 0 ? (
           <div className="bg-card border border-border rounded-lg overflow-hidden">
@@ -1158,10 +1300,10 @@ function InstallationsTab({
                   <SortHeader label="Type" sortId="type" />
                   <SortHeader label="Body" sortId="body" />
                   <SortHeader label="Dist (Ls)" sortId="dist" align="right" />
-                  <SortHeader label="Pads" sortId="pads" align="center" />
+                  <SortHeader label="Pad" sortId="pads" align="center" />
                   <SortHeader label="Economy" sortId="economy" />
                   <SortHeader label="Visits" sortId="visits" align="center" />
-                  <SortHeader label="Last Seen" sortId="lastSeen" align="right" />
+                  <SortHeader label="Last Visit" sortId="lastSeen" align="right" />
                   <th className="text-right px-4 py-3 w-10"></th>
                 </tr>
               </thead>
@@ -1248,8 +1390,12 @@ function InstallationsTab({
                                 <span
                                   className={`font-medium cursor-pointer hover:text-primary ${station.body ? 'text-foreground' : 'text-primary/70'}`}
                                   onClick={(e) => { e.stopPropagation(); setEditingBody(station.stationName); }}
-                                  title="Click to change body"
-                                >{capitalizeBodyName(resolvedBody)}</span>
+                                  title={`${capitalizeBodyName(resolvedBody)} — click to change body`}
+                                >
+                                  {/* System name stripped: it is the context of the entire page, so
+                                      repeating it on every row is noise. Full name is in the tooltip. */}
+                                  {capitalizeBodyName(shortenBodyForDropdown(resolvedBody, systemName))}
+                                </span>
                               );
                             }
                             if (bodyNames.length > 0) {
@@ -1263,17 +1409,36 @@ function InstallationsTab({
                             return <span className="text-muted-foreground/40">-</span>;
                           })()}
                         </td>
-                        <td className="px-4 py-3 text-sm text-right">
-                          {station.distFromStarLS !== null ? station.distFromStarLS.toFixed(1) : <span className="text-muted-foreground">-</span>}
+                        <td className="px-4 py-3 text-sm text-right tabular-nums">
+                          {station.distFromStarLS !== null
+                            ? station.distFromStarLS >= 1000
+                              ? `${(station.distFromStarLS / 1000).toFixed(1)}k`
+                              : Math.round(station.distFromStarLS).toLocaleString()
+                            : <span className="text-muted-foreground">-</span>}
                         </td>
                         <td className="px-4 py-3 text-sm text-center">
-                          {station.landingPads ? (
-                            <span className="font-mono text-xs">
-                              <span title="Large pads" className="text-primary">L:{station.landingPads.large}</span>{' '}
-                              <span title="Medium pads">M:{station.landingPads.medium}</span>{' '}
-                              <span title="Small pads" className="text-muted-foreground">S:{station.landingPads.small}</span>
-                            </span>
-                          ) : <span className="text-muted-foreground">-</span>}
+                          {station.landingPads ? (() => {
+                            // Largest pad is the answer to the only question usually being asked —
+                            // can the big ship land. The full breakdown stays in the tooltip.
+                            // Counts are deliberately not shown — small pads are irrelevant to this
+                            // commander and the number of large ones changes no decision. Only the
+                            // largest pad matters: can the big ship set down here or not.
+                            const { large, medium, small } = station.landingPads;
+                            const biggest = large > 0 ? 'L' : medium > 0 ? 'M' : small > 0 ? 'S' : null;
+                            return (
+                              <span
+                                className={`font-mono text-xs font-bold px-1.5 py-0.5 rounded border ${
+                                  biggest === 'L' ? 'text-primary border-primary/40 bg-primary/10'
+                                  : biggest === 'M' ? 'text-amber-400 border-amber-500/30'
+                                  : biggest === 'S' ? 'text-muted-foreground border-border'
+                                  : 'text-muted-foreground border-transparent'
+                                }`}
+                                title={biggest ? `Largest pad: ${biggest}` : 'No landing pads'}
+                              >
+                                {biggest ?? '-'}
+                              </span>
+                            );
+                          })() : <span className="text-muted-foreground" title="No landing pads recorded">-</span>}
                         </td>
                         <td className="px-4 py-3 text-sm">
                           {station.economies.length > 0 ? (
@@ -1293,8 +1458,23 @@ function InstallationsTab({
                             <span className="text-foreground font-medium">{station.visitCount}</span>
                           ) : <span className="text-muted-foreground">-</span>}
                         </td>
-                        <td className="px-4 py-3 text-sm text-right text-muted-foreground">
-                          {station.lastSeen ? new Date(station.lastSeen).toLocaleDateString() : '-'}
+                        <td className="px-4 py-3 text-sm text-right text-muted-foreground tabular-nums">
+                          {station.lastSeen ? (() => {
+                            // Months since, not a date. "14 mo" says a station has gone cold; a
+                            // date makes you do the arithmetic yourself every time you read it.
+                            const then = new Date(station.lastSeen).getTime();
+                            if (!Number.isFinite(then)) return '-';
+                            const months = Math.floor((Date.now() - then) / 2_629_800_000); // avg month
+                            const label = months < 1 ? 'this month' : `${months} mo`;
+                            return (
+                              <span
+                                className={months >= 12 ? 'text-amber-500/80' : undefined}
+                                title={new Date(station.lastSeen).toLocaleDateString()}
+                              >
+                                {label}
+                              </span>
+                            );
+                          })() : '-'}
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-2">

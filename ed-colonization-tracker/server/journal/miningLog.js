@@ -367,7 +367,7 @@ export function getYieldTable(minSamples = 6) {
  * systems over time". Buckets logged rocks by ring and by day, reporting measured tonnes/hour.
  * Span is derived from rock timestamps, so idle time between sessions never inflates the rate.
  */
-export function getRateHistory() {
+export function getRateHistory(priceFn) {
   const rows = readRocks().filter((r) => r.t && r.gotTotal > 0);
   const byRing = {};
   for (const r of rows) {
@@ -381,7 +381,13 @@ export function getRateHistory() {
     b.tonnes += r.gotTotal;
     b.rocks += 1;
     b.value += r.estValue || 0;
-    b.credits += r.gotValue || 0;
+    // Re-price rather than trust the stored figure. gotValue was written at refine time, and rows
+    // logged before 2026-08-28 have a live MISSION rate baked in (~136k/t Bromellite against ~36k
+    // at market), so summing the stored field mixes two currencies and makes the history
+    // incomparable across time. The log is append-only, so the correction happens on read.
+    b.credits += priceFn
+      ? Object.entries(r.got || {}).reduce((a, [k, t]) => a + priceFn(k) * t, 0)
+      : (r.gotValue || 0);
     if (r.hotspot) b.hotspotRocks = (b.hotspotRocks || 0) + 1;
     if (r.t < b.first) b.first = r.t;
     if (r.t > b.last) b.last = r.t;

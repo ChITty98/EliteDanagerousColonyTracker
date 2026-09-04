@@ -345,10 +345,12 @@ export function SystemBodiesTab({ systemName, id64, systemAddress }: SystemBodie
   // Build tree
   const { starRoots, orphanRoots } = buildBodyTree(bodies, systemName);
 
-  // Check if a body has gallery images
+  // Check if a body has gallery images. Utility shots don't count — a body whose only photo is a
+  // surface-mining deposit panel has nothing to look at here, and flagging it would send you
+  // hunting for a picture that lives on the Surface Mining page.
   function bodyHasImages(bodyName: string): boolean {
     const key = galleryKey(systemName, 'body', bodyName);
-    return (galleryImages[key]?.length ?? 0) > 0;
+    return (galleryImages[key] ?? []).some((i) => !i.utility);
   }
 
   return (

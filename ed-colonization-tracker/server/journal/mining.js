@@ -27,7 +27,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { commodityKey, missionRateFor, missionTargetKeys, ingestMissionEvent } from './miningMissions.js';
+// missionRateFor is deliberately NOT imported — see valueOf(). Mission targeting still comes from
+// missionTargetKeys; only mission PRICING was removed.
+import { commodityKey, missionTargetKeys, ingestMissionEvent } from './miningMissions.js';
 import {
   beginRock, creditRefined, finalizeRock, fingerprint, getYieldTable, getCurrentRock, getRingValueStats,
   getRockRecords, invalidateRecords, getCatchStats, readRocks,
@@ -35,9 +37,11 @@ import {
 } from './miningLog.js';
 import { ingestRingEvent, getRingInfo, getUnmappedRings, getMaterialCatalog } from './miningIndex.js';
 import { getNavLock, ringHotspotFromNavLock } from './navLock.js';
+import { listJournalFiles } from './paths.js';
 import { pushMiningBeat } from '../ai/copilotMining.js';
 import { recordStreakRock, getStreak, computeAggregates, evaluateBadges } from './miningTrophies.js';
 import { getLivePrice, refreshLivePrices } from './livePrices.js';
+import { isInSrvNow } from './surfaceMining.js';
 
 const X_LEFT = 40;
 const Y_TARGET = 296;
@@ -139,6 +143,61 @@ function freezeNavLockHotspot(systemAddress) {
   hotspotMaterial = hs.material;
 }
 
+/**
+ * Re-derive which ring we are sitting in, at boot.
+ *
+ * THE BUG THIS FIXES: currentRing is module state. Restart the exe while parked in a ring and it is
+ * gone, with no event left to recover from until the commander flies out and comes back — so every
+ * rock prospected in between logs with no ring at all. That cost 45 real rocks (40 in HIP 52629, 5
+ * in Col 285 Sector DG-S b19-5), and because the hotspot sidecar keys on ring NAME, those rocks
+ * also silently detached from their hotspot marks. One of them is the best rock in the entire log.
+ *
+ * Replays the newest journals for the last event that opens or closes ring context. Two files, not
+ * one: the game rotates the journal on every launch, so a session that survives a game restart
+ * straddles a boundary. listJournalFiles sorts by mtime, which is why this is safe — pre-2022
+ * filenames sort AFTER 2026 ISO ones alphabetically.
+ *
+ * Only the ring is recovered, not the hotspot: navLock is empty until the first Status.json poll,
+ * and the freeze runs on ring ENTRY. A mid-ring restart therefore loses hotspot attribution for the
+ * remainder of that visit — flying out and back re-establishes it.
+ */
+export function seedRingContext(journalDir) {
+  let files = [];
+  try { files = listJournalFiles(journalDir); } catch { return null; }
+  if (!files.length) return null;
+
+  let ring = null;
+  for (const f of files.slice(-2)) {
+    let text;
+    try { text = fs.readFileSync(f.fullPath, 'utf8'); } catch { continue; }
+    for (const line of text.split('\n')) {
+      if (!/"(SupercruiseExit|SupercruiseEntry|Location|FSDJump|Shutdown)"/.test(line)) continue;
+      let ev;
+      try { ev = JSON.parse(line); } catch { continue; }
+      switch (ev.event) {
+        case 'SupercruiseExit':
+        case 'Location':
+          // Dropping at a ring puts us in one; dropping anywhere else takes us out.
+          ring = ev.BodyType === 'PlanetaryRing' && ev.Body ? ev.Body : null;
+          break;
+        case 'SupercruiseEntry':
+        case 'FSDJump':
+        case 'Shutdown':
+          ring = null;
+          break;
+        default:
+          break;
+      }
+    }
+  }
+  if (!ring) return null;
+
+  const info = getRingInfo(ring);
+  currentRing = { name: ring, ringClass: (info && info.ringClass) || '', reserve: (info && info.reserve) || '' };
+  console.log(`[Mining] Ring context restored after restart: ${ring}`);
+  return currentRing;
+}
+
 const now = () => Date.now();
 const isRecent = (ts) => { const t = Date.parse(ts); return Number.isFinite(t) && now() - t < 120_000; };
 const fmtCr = (n) => (n >= 1_000_000 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${Math.round(n)}`);
@@ -193,14 +252,23 @@ function getPriceMap(state) {
 }
 
 /**
- * Value ladder: mission rate → live galaxy best (non-FC, real demand, via Ardent) → the average of
- * visited markets as the offline fallback. The live tier exists because the commander's selling
- * rule is "highest non-FC payout, wherever it is" — visited-average Bromellite read 36k while the
- * galaxy top-of-book sat at 116,750 (and LTD 144k vs 384,562), a 3x mispricing of every verdict.
+ * Value ladder: live galaxy best (non-FC, real demand, via Ardent) → the average of visited markets
+ * as the offline fallback. The live tier exists because the commander's selling rule is "highest
+ * non-FC payout, wherever it is" — visited-average Bromellite read 36k while the galaxy top-of-book
+ * sat at 116,750 (and LTD 144k vs 384,562), a 3x mispricing of every verdict.
+ *
+ * MISSION RATES ARE DELIBERATELY EXCLUDED (2026-08-28). The 2026-07-22 decision was the opposite —
+ * mission Cr/t overrode market everywhere, on the reasoning that a tonne pulled under a 136k/t
+ * contract really was worth that. The commander rescinded it: the log's value now as a HISTORICAL
+ * RECORD outweighs per-tonne accuracy in the moment, and missions are too variable to compare
+ * across. A July mission rock and an August market rock have to be denominated in the same currency
+ * or the history means nothing — and that matters more with surface mining arriving, since a
+ * deposit's worth must be comparable to a rock's.
+ *
+ * Mission AWARENESS is untouched: missionTargetKeys() still flags mission materials as targets, so
+ * the alerts keep firing on exactly the rocks they did before. Only the pricing changed.
  */
 function valueOf(key, prices) {
-  const mission = missionRateFor(key);
-  if (mission) return { cr: mission.crPerTonne, source: 'mission', label: mission.label };
   const live = getLivePrice(key);
   if (live) return { cr: live.cr, source: 'live', station: live.station, system: live.system };
   const m = prices[key];
@@ -294,6 +362,10 @@ export function processMiningEvents(parsed, state, deps) {
 
     switch (ev.event) {
       case 'MiningRefined': {
+        // Surface tonnes (Rhino / SRV) share this event and nothing else. They belong to the
+        // surface ledger; through here they drove the rock overlay, the session tally and a
+        // "no price data" line priced off visited markets. Status bit 26 is the discriminator.
+        if (isInSrvNow()) break;
         markActive();
         // Deferred switch decides BEFORE the clock resets — measuring the quiet gap after
         // lastRefineAt is overwritten always reads zero and the handoff never fires.
@@ -317,7 +389,8 @@ export function processMiningEvents(parsed, state, deps) {
         markActive();
         break;
       case 'Cargo':
-        if (typeof ev.Count === 'number') lastCargoTotal = ev.Count;
+        // The SRV's hold is not the ship's — a 21t Rhino count would read as an empty hold.
+        if (typeof ev.Count === 'number' && ev.Vessel !== 'SRV') lastCargoTotal = ev.Count;
         break;
       case 'ProspectedAsteroid':
         markActive();
@@ -650,14 +723,18 @@ function refinedHelper(ev, state, deps) {
 
 /** Value verdict + target alert for a freshly prospected rock, and the log record for it. */
 function prospectHelper(ev, state, deps) {
-  try {
-    refreshLivePrices((Array.isArray(ev.Materials) ? ev.Materials : [])
-      .map((m) => commodityKey(m.Name_Localised || m.Name)).filter(Boolean), currentSystem);
-  } catch { /* pricing must never break the prospect path */ }
   const prices = getPriceMap(state);
   const table = getYieldTable();
   const ignored = ignoredSet(state);
   const targets = targetSet(state);
+  // Price only what the commander actually cares about. This used to fetch every material in
+  // every rock — including the ones on the ignore list — which is a network call and a log line
+  // for ore they have explicitly said they will never sell.
+  try {
+    refreshLivePrices((Array.isArray(ev.Materials) ? ev.Materials : [])
+      .map((m) => commodityKey(m.Name_Localised || m.Name))
+      .filter((k) => k && !ignored.has(k)), currentSystem);
+  } catch { /* pricing must never break the prospect path */ }
 
   const raw = Array.isArray(ev.Materials) ? ev.Materials : [];
   const mats = raw.map((m) => {

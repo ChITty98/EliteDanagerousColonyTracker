@@ -124,6 +124,36 @@ try {
   // Copy node.exe
   fs.copyFileSync(process.execPath, EXE_PATH);
 
+  // Icon + version info. The exe is node.exe with a blob appended, so without this it wears
+  // Node's icon and says "Node.js" in Task Manager. rcedit rewrites the PE resource table; it
+  // runs BEFORE the blob goes in so the SEA fuse offsets stay untouched. node.exe's signature is
+  // already broken by the injection, so this changes nothing for SmartScreen. Skipped, not
+  // fatal, when app-icon.ico is not beside the script (a fresh clone without the icon).
+  const ICON = path.join(__dirname, 'app-icon.ico');
+  if (fs.existsSync(ICON)) {
+    try {
+      const mod = await import('rcedit');
+      const rcedit = mod.rcedit || mod.default;
+      await rcedit(EXE_PATH, {
+        icon: ICON,
+        'file-version': PKG_VERSION,
+        'product-version': PKG_VERSION,
+        'version-string': {
+          FileDescription: 'ED Colony Architect',
+          ProductName: 'ED Colony Architect',
+          InternalName: 'ed-colony-architect',
+          OriginalFilename: 'ed-colony-architect.exe',
+          CompanyName: 'ED Colony Architect',
+        },
+      });
+      console.log('Icon and version info set from app-icon.ico');
+    } catch (e) {
+      console.log('Icon step skipped:', e && e.message);
+    }
+  } else {
+    console.log('No app-icon.ico beside build-exe.mjs — exe keeps the Node icon');
+  }
+
   // Inject blob
   execSync('npx --yes postject "' + EXE_PATH + '" NODE_SEA_BLOB "' + SEA_BLOB + '" --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2', {
     cwd: __dirname,

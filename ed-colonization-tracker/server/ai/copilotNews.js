@@ -1,6 +1,6 @@
 // server/ai/copilotNews.js
 //
-// GalNet news — TARS's domain (see [[reference_tars_persona_spec]]). Fetches the OFFICIAL
+// GalNet news — Tycho's domain (see [[reference_tars_persona_spec]]). Fetches the OFFICIAL
 // Frontier CMS GalNet feed (real articles only) and caches the latest, so a LIVE take can
 // lead with the co-pilot's INTERPRETATION rather than re-reading the article. ANTI-INVENTION:
 // if the feed is empty/unreachable, return null and the co-pilot says nothing — never fake a

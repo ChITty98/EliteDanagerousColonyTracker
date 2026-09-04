@@ -25,6 +25,8 @@ import {
 import { processNewEvents, pollCompanionFiles } from './processors.js';
 import { checklistSeed, checklistSnapshot } from './checklist.js';
 import { pollStatus } from '../ai/copilotStatus.js';
+import { getNavLock } from './navLock.js';
+import { noteMiningLock, tickCompass } from './surfaceMining.js';
 import { setInGame } from '../ai/copilot.js';
 import { checkMiningStall } from './mining.js';
 import { fetchLatestPositionFromJournal } from './extractor.js';
@@ -316,6 +318,14 @@ function pollCompanionTick() {
   // Status.json live flags (fuel / hardpoints / flight-assist / night-vision /
   // pips) — fires the co-pilot only on a rising edge; a cheap no-op otherwise.
   try { pollStatus(wstate.journalDir, wstate.deps); } catch (e) { console.error('[Watcher] status error:', e && e.message); }
+
+  // Surface mining reads the same nav lock: a planetary mining site self-identifies in
+  // Status.json's Destination ("$SAA_Unknown_Signal:#type=$PlanetaryMiningLocation_Name;:#index=2;")
+  // the moment you select it in the left panel — from orbit, before any drop. This is what lets
+  // the commander tag what a site holds without flying to it.
+  try { noteMiningLock(getNavLock()); } catch (e) { console.error('[Watcher] surface lock error:', e && e.message); }
+  // Breadcrumb track + steering to the surface-mining target, from the same Status.json read.
+  try { tickCompass(); } catch (e) { console.error('[Watcher] surface compass error:', e && e.message); }
 
   // Mining assist — periodic collection-stall + low-limpet check (a stall is the ABSENCE of events,
   // so it can't live in the journal-event path). No-op unless a mining session is live.

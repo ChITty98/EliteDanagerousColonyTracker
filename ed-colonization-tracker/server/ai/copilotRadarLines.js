@@ -17,10 +17,10 @@ export default {
       "Somebody's pouring foundations {dist} light-years from here. Wave if you see them. Then beat them to the good spots.",
     ],
     'radar-lead': [
-      "Ooh — somebody just charted a world near {system} with the good stuff. Might be worth a look before anyone else gets ideas.",
-      "Fresh scan on the wire, {dist} light-years out, and it matches what you look for. Just saying. It's RIGHT there.",
-      "Someone found something shiny near {system}. It's not ours. It COULD be ours. I'm just the radar guy.",
-      "New chart {dist} light-years away with your kind of atmosphere on it. First one there gets to name the paperwork.",
+      "Ooh — somebody just charted {atmo} near {system}. Might be worth a look before anyone else gets ideas.",
+      "Fresh scan on the wire, {atmo}, {dist} light-years out. Just saying. It's RIGHT there.",
+      "Someone found {atmo} near {system}. It's not ours. It COULD be ours. I'm just the radar.",
+      "New chart {dist} light-years away with {atmo} on it, and no ice in sight. First one there gets to name the paperwork.",
     ],
     'radar-chain': [
       "Somebody's pushed a colony chain further out near {system}, in {region}. That opens up some space, if you're feeling acquisitive.",
@@ -42,10 +42,10 @@ export default {
       "Somebody broke ground near {system}. Noted, logged, and — professionally speaking — worth a glance at the map.",
     ],
     'radar-lead': [
-      "A freshly charted body {dist} light-years out matches your site criteria. Flagging it as a potential target — it's new enough that nobody's planned around it.",
-      "New scan near {system} fits your atmosphere profile. This is the kind of lead that has a shelf life.",
-      "Someone just charted a match for your criteria, {dist} light-years away. First-mover windows don't stay open. Teaching moment over.",
-      "Live discovery near {system} — passes your site test. It wasn't in your data an hour ago. Now it's in your ear.",
+      "{atmo}, {dist} light-years out, freshly charted. Nobody's planned around it yet — I can plot it if you want a look.",
+      "New scan near {system}: {atmo}, landable, and not an ice ball. That's the shortlist. These have a shelf life.",
+      "Atmosphere reads {atmo}, distance {dist} light-years. First-mover windows don't stay open. Teaching moment over.",
+      "Live discovery near {system} — {atmo}. It wasn't in your data an hour ago. Now it's in your ear.",
     ],
     'radar-chain': [
       "Chain Watch update: someone extended a colony chain near {system}, {region}. New space just came into branch range — logged for your planning list.",
@@ -67,9 +67,9 @@ export default {
       "Somebody chose to colonise near {system}. Bold. Inconvenient. Monitoring.",
     ],
     'radar-lead': [
-      "A body {dist} light-years out just matched your criteria. Freshly charted. Unclaimed, probably. Briefly.",
-      "New scan near {system} passes your site test. The odds of it staying unnoticed are poor. Act accordingly.",
-      "Live match on the stream, {dist} light-years away. I would call it luck, but someone else's scanner did the work.",
+      "You will want this one. {atmo}, {dist} light-years out. Freshly charted. Unclaimed, probably. Briefly.",
+      "That is a match. {atmo} near {system}, landable, not icy. The odds of it staying unnoticed are poor. Act accordingly.",
+      "Live {atmo} on the stream, {dist} light-years away. I would call it luck, but someone else's scanner did the work.",
     ],
     'radar-chain': [
       "A colony chain extended near {system}, in {region}. Someone else's logistics just improved your map. Take the win.",

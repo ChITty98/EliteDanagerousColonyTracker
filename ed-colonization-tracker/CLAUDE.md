@@ -151,7 +151,7 @@ Layout constants in `overlayService.ts` (don't overlap):
 ## Git discipline
 
 - **Don't push internal dev notes / plans / handoffs to the public GitHub.** Product documentation (README, FAQ source, PROJECT-HANDOFF.md, CLAUDE.md) is acceptable.
-- Handoff docs belong in the user's memory folder: `C:\Users\Michael\.claude\projects\J--Git-Custom-App-Project\memory\`.
+- Handoff docs belong in the auto-memory folder for this project, under `~/.claude/projects/<project>/memory/`. Never write the absolute path here — this file is public.
 - Sensitive files (backups/, app-icon.ico, personal screenshots) must stay in `.gitignore`.
 - User previously had to force-push history to scrub committed dev artifacts. Don't repeat.
 

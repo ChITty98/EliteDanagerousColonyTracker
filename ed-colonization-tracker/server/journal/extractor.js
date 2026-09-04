@@ -123,6 +123,7 @@ export function readMarketJson(journalDir) {
     nameLocalised: item.Name_Localised,
     buyPrice: item.BuyPrice,
     sellPrice: item.SellPrice,
+    meanPrice: item.MeanPrice, // the galactic average the in-game inventory shows
     stock: item.Stock,
     demand: item.Demand,
     category: item.Category_Localised || item.Category || '',
@@ -766,8 +767,32 @@ const SHIP_NAMES = {
   python_nx: 'Python Mk II', sidewinder: 'Sidewinder', type6: 'Type-6 Transporter', type7: 'Type-7 Transporter',
   type8: 'Type-8 Transporter', type9: 'Type-9 Heavy', type9_military: 'Type-10 Defender', typex: 'Alliance Chieftain',
   typex_2: 'Alliance Crusader', typex_3: 'Alliance Challenger', viper: 'Viper Mk III', viper_mkiv: 'Viper Mk IV', vulture: 'Vulture',
+  // 2025–2026 hulls, named exactly as the commander's own journal localises them (Ship_Localised).
+  corsair: 'Corsair', explorer_nx: 'Caspian Explorer', lakonminer: 'Type-11 Prospector',
+  smallcombat01_nx: 'Kestrel Mk II', mediumtransport01: 'Lynx Highliner',
 };
 export const friendlyShip = (t) => SHIP_NAMES[t] || t;
+
+// Landing-pad size per hull — what decides whether a signal's approach is a problem in THIS ship.
+// Only hulls whose pad size is settled are listed; anything else returns null and the surface-mining
+// page asks the commander once and remembers. Kestrel Mk II and Lynx Highliner take their size from
+// Frontier's own internal ids ("smallcombat01", "mediumtransport01"); the Caspian Explorer and the
+// Type-11 Prospector are deliberately absent — no verified data, so no guess.
+const SHIP_PAD_SIZES = {
+  // small
+  sidewinder: 'S', eagle: 'S', empire_eagle: 'S', hauler: 'S', adder: 'S', viper: 'S', viper_mkiv: 'S',
+  cobramkiii: 'S', cobramkiv: 'S', cobramkv: 'S', diamondback: 'S', diamondbackxl: 'S',
+  empire_courier: 'S', vulture: 'S', dolphin: 'S', smallcombat01_nx: 'S',
+  // medium
+  type6: 'M', asp: 'M', asp_scout: 'M', independant_trader: 'M', federation_dropship: 'M',
+  federation_dropship_mkii: 'M', federation_gunship: 'M', krait_mkii: 'M', krait_light: 'M',
+  python: 'M', python_nx: 'M', ferdelance: 'M', mamba: 'M', typex: 'M', typex_2: 'M', typex_3: 'M',
+  mandalay: 'M', corsair: 'M', type8: 'M', mediumtransport01: 'M',
+  // large
+  type7: 'L', type9: 'L', type9_military: 'L', anaconda: 'L', federation_corvette: 'L', cutter: 'L',
+  orca: 'L', belugaliner: 'L', empire_trader: 'L', panthermkii: 'L',
+};
+export const padSizeFor = (t) => SHIP_PAD_SIZES[String(t || '').toLowerCase()] || null;
 
 // SINGLE SOURCE OF TRUTH for the co-pilot's seat situation — TWO DISTINCT attributes, do not conflate:
 //   - SINGLE_SEAT (crew=1, verified from coriolis-data + INARA; see memory reference_ship_crew_seats):
@@ -834,7 +859,10 @@ export function extractSquadronAndShips(journalDir) {
       if (line.indexOf('"event":"SquadronStartup"') >= 0) {
         try { const e = JSON.parse(line); if (e.SquadronName) squadron = { name: e.SquadronName, rank: e.CurrentRank != null ? e.CurrentRank : null, at: e.timestamp }; } catch { /* skip */ }
       } else if (line.indexOf('"event":"LoadGame"') >= 0 && line.indexOf('"Ship"') >= 0) {
-        try { const e = JSON.parse(line); const sp = norm(e.Ship); if (sp && !/buggy|srv|fighter|test/i.test(sp) && !loadShip) { loadShip = sp; loadName = e.ShipName; } } catch { /* skip */ }
+        // `mev_rhino` (SRV Rhino, 2026-09-02) matches none of buggy/srv/fighter/test, so without
+        // it a login inside the Rhino recorded the SRV as that session's SHIP. Same defect the
+        // SRV_NAMES map in copilotAway.js guards; this path uses a regex instead of that set.
+        try { const e = JSON.parse(line); const sp = norm(e.Ship); if (sp && !/buggy|srv|fighter|test|mev_|rhino/i.test(sp) && !loadShip) { loadShip = sp; loadName = e.ShipName; } } catch { /* skip */ }
       } else if (line.indexOf('"event":"ShipyardSwap"') >= 0) {
         try { const e = JSON.parse(line); if (e.ShipType) swaps.push({ ts: tms(e.timestamp), ship: norm(e.ShipType) }); } catch { /* skip */ }
       }

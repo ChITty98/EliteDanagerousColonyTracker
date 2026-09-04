@@ -15,7 +15,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { exec } from 'node:child_process';
+import { exec, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import {
   resolveJournalDir,
@@ -28,6 +28,7 @@ import { startTickPoll, getTickInfo, getGalaxyTick } from './server/journal/tick
 import { runOnDemand, runNews } from './server/ai/copilot.js';
 import { startNewsRefresh } from './server/ai/copilotNews.js';
 import { buildTriviaRound } from './server/ai/copilotTrivia.js';
+import { registerLine, lookupLine, synthesize, voiceAvailable, PROFILES, DEFAULT_PERSONA } from './server/ai/copilotVoice.js';
 import {
   fetchLatestPositionFromJournal,
   extractLatestCargoCapacity,
@@ -43,6 +44,11 @@ import {
   readNavRouteJson,
   readMarketSnapshot,
 } from './server/journal/extractor.js';
+import { friendlyShip, padSizeFor } from './server/journal/extractor.js';
+import { initMarketMeans, bestSellFromSnapshots } from './server/journal/marketMeans.js';
+import { initMarketHistory, backfillSales, sampleKeys, needsSample, recordArdentSample, historyStats } from './server/journal/marketHistory.js';
+import { buildSellPlan, MAX_REACH_LY } from './server/journal/sellPlan.js';
+import { initCarrierLedger, ensureCarrierLedger, reconcileCarrierMarket, carrierCargoRecord, setCarrierBaseline } from './server/journal/carrierLedger.js';
 import {
   findCommodityByJournalName,
   findCommodityByDisplayName,
@@ -61,19 +67,29 @@ import {
 } from './server/journal/miningLog.js';
 import {
   initRingIndex, buildRingIndex, findRingsForTargets, ringIndexStats, getMaterialCatalog, rankRings,
-  getRingInfo, getUnmappedRings,
+  getRingInfo, getUnmappedRings, getRingsInSystems,
 } from './server/journal/miningIndex.js';
 import {
   scanMiningMissions, getLiveMiningMissions, commodityKey, missionRateFor,
 } from './server/journal/miningMissions.js';
-import { getMiningSnapshot, commodityValueNow, rockValueNow, colonySystemsOf, setInHotspot } from './server/journal/mining.js';
+import {
+  initSurfaceMining, getSurfaceSummary, backfillFromJournals as backfillSurfaceMining, markDeposit,
+  recordSighting, finalizeSurfaceMining, getSurfaceSnapshot, setCurrentSite, recordSiteCount, bodyNameFromLedger,
+  isRecordedScreenshot, retractSighting, recordRating, setHullSize, hullSizeFor, setNavTarget, clearNavTarget,
+  addPin, removePin,
+} from './server/journal/surfaceMining.js';
+// The nav lock names a body by BodyID only; this turns "Body": 14 into "1 a" for the hero band.
+import { resolveBodyNameById } from './server/journal/processors.js';
+import { getMiningSnapshot, commodityValueNow, rockValueNow, colonySystemsOf, setInHotspot, seedRingContext } from './server/journal/mining.js';
 import { initTrophies, computeAggregates, evaluateBadges, badgeStates, getStreak } from './server/journal/miningTrophies.js';
-import { refreshLivePrices, getLivePrice } from './server/journal/livePrices.js';
-import { startEddnListener, recenterRadar } from './server/radar/eddnListener.js';
+import { refreshLivePrices, getLivePrice, ardentJson } from './server/journal/livePrices.js';
+import { startEddnListener, stopEddnListener, recenterRadar } from './server/radar/eddnListener.js';
 import { snapshot as radarSnapshot, setCenterTraffic } from './server/radar/radarState.js';
 import { getEdsmTraffic } from './server/radar/traffic.js';
 import { getJournalStats, refreshJournalStats } from './server/journal/history.js';
 import { initChainWatch, seedChainWatch, snapshotChains, defaultRegions, resolvePendingRegions } from './server/chains/chainWatch.js';
+import { assessThreats } from './server/chains/threatWatch.js';
+import { buildDomainTasks } from './server/journal/domainTasks.js';
 import { refreshLookback } from './server/radar/lookback.js';
 import { searchRingsBySignals } from './server/journal/spansh.js';
 import { initUpdater, getUpdateStatus, checkForUpdate } from './server/update/updater.js';
@@ -202,6 +218,113 @@ function addImageToGalleryKey(key, entry) {
   writeGalleryMeta(meta);
 }
 
+/**
+ * Pull in F10 surface shots the gallery never saw. recordGameScreenshot only runs while the exe is
+ * live, so a marker taken with it closed has coordinates (the journal keeps those) but no picture —
+ * and the picture is the point, since the HUD panel in frame is the only record of a deposit's
+ * commodity, mineral amount and density. Originals stay in ED_Pictures, so they are recoverable.
+ *
+ * Runs at boot as well as on demand: nobody should have to press a button to see their own history.
+ * Idempotent — a shot already in the gallery is skipped by filename.
+ */
+function adoptOrphanSurfaceShots(journalDir) {
+  let adopted = 0;
+  try {
+    const seen = new Set();
+    for (const arr of Object.values(readGalleryMeta())) {
+      for (const e of arr || []) if (e && e.caption) seen.add(e.caption);
+    }
+    for (const file of listJournalFiles(journalDir)) {
+      const p = file.fullPath || file;
+      let text = '';
+      try { text = fs.readFileSync(p, 'utf8'); } catch { continue; }
+      if (!text.includes('"Screenshot"')) continue;
+      for (const line of text.split('\n')) {
+        if (line.indexOf('"event":"Screenshot"') < 0) continue;
+        let ev; try { ev = JSON.parse(line); } catch { continue; }
+        // Same test the marker list uses: Altitude is written only on/near a surface, so a docked
+        // or in-space shot has none and is not a deposit photo.
+        if (ev.Latitude == null || ev.Altitude == null || ev.Altitude >= 200) continue;
+        const base = path.basename(String(ev.Filename || '').split('\\').pop() || '');
+        if (!base || seen.has(base)) continue;
+        seen.add(base);
+        recordGameScreenshot(ev);
+        adopted += 1;
+      }
+    }
+  } catch (e) { console.error('[SurfaceMining] shot adoption:', e && e.message); }
+  return adopted;
+}
+
+/**
+ * Mark a gallery image as a UTILITY shot — taken to document something (a mining deposit's HUD
+ * panel), not as a picture of the place. Representative thumbnails pick the first non-utility
+ * image, so a photo of a rock face never becomes a system's hero shot. Set when an F10 marker is
+ * promoted to a deposit, because that is the moment its purpose is known; at capture time the
+ * same keypress might equally have been a Sights postcard.
+ */
+function flagGalleryUtility(imageId) {
+  if (!imageId) return false;
+  const meta = readGalleryMeta();
+  let hit = false;
+  for (const key of Object.keys(meta)) {
+    const arr = meta[key];
+    if (!Array.isArray(arr)) continue;
+    for (const e of arr) {
+      if (!e || e.id !== imageId) continue;
+      if (!e.utility) { e.utility = true; hit = true; }
+      // A deposit photo is documentation, not a postcard: re-encode the 32MB F10 BMP as JPEG.
+      // Runs for entries flagged earlier but still on .bmp too, so nothing stays huge by accident.
+      if (convertGalleryImageToJpeg(e)) hit = true;
+    }
+  }
+  if (hit) writeGalleryMeta(meta);
+  return hit;
+}
+
+/**
+ * Re-encode a gallery BMP as JPEG (quality 90) in place. F10 always writes BMP — 31.6MB per shot at
+ * 3440x1440 — and deposit-panel shots are taken by the dozen. The commander's decision: Sights
+ * postcards stay BMP; a shot is converted ONLY once it is promoted to a deposit (this is called
+ * from flagGalleryUtility and nowhere else). The original in ED_Pictures is never touched; only the
+ * gallery's copy changes. Uses the same PowerShell/System.Drawing path the voice code already
+ * spawns, so it needs no new dependency inside the SEA exe.
+ */
+function convertGalleryImageToJpeg(entry) {
+  if (!entry || !entry.url || !/\.bmp$/i.test(entry.url)) return false;
+  const base = path.basename(entry.url);
+  const src = path.join(GALLERY_DIR, base);
+  if (!fs.existsSync(src)) return false;
+  const dstName = base.replace(/\.bmp$/i, '.jpg');
+  const dst = path.join(GALLERY_DIR, dstName);
+  const psq = (s) => `'${String(s).replace(/'/g, "''")}'`;
+  const script = [
+    'Add-Type -AssemblyName System.Drawing;',
+    `$img=[System.Drawing.Image]::FromFile(${psq(src)});`,
+    "$enc=[System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' };",
+    '$p=New-Object System.Drawing.Imaging.EncoderParameters(1);',
+    '$p.Param[0]=New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality,[long]90);',
+    `$img.Save(${psq(dst)},$enc,$p); $img.Dispose();`,
+  ].join(' ');
+  let r;
+  try {
+    r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: 30000, windowsHide: true });
+  } catch (e) {
+    console.warn('[Gallery] JPEG conversion failed to start:', e && e.message);
+    return false;
+  }
+  if (r.status !== 0 || !fs.existsSync(dst) || fs.statSync(dst).size < 1024) {
+    console.warn(`[Gallery] JPEG conversion failed for ${base}${r.stderr ? `: ${String(r.stderr).slice(0, 200)}` : ''}`);
+    try { if (fs.existsSync(dst)) fs.unlinkSync(dst); } catch { /* ignore */ }
+    return false;
+  }
+  const before = fs.statSync(src).size;
+  entry.url = `/gallery-images/${dstName}`;
+  try { fs.unlinkSync(src); } catch { /* keep both if the delete fails; the meta already points at the jpg */ }
+  console.log(`[Gallery] ${base} → ${dstName} (${(before / 1048576).toFixed(1)}MB → ${(fs.statSync(dst).size / 1024).toFixed(0)}KB)`);
+  return true;
+}
+
 /** Move an image's meta entry between gallery keys (used when a buffered F10 shot
  *  gets adopted by a sighting recorded moments later). The file itself never moves. */
 function moveGalleryImage(imageId, fromKey, toKey) {
@@ -293,6 +416,13 @@ function broadcastEvent(event) {
       }
     } catch (e) { console.error('[Radar] recenter failed:', e && e.message); }
   }
+  // Speech rides the existing line broadcast, same trick as the radar hook above — one place
+  // instead of the five emit sites in copilot.js. The client then asks for audio by ID, so the
+  // server only ever speaks words it wrote itself.
+  if (event && event.type === 'copilot_line' && event.id && event.line) {
+    try { registerLine(event.id, event.line, event.mood); }
+    catch (e) { console.error('[CopilotVoice] register failed:', e && e.message); }
+  }
   const data = `data: ${JSON.stringify(event)}\n\n`;
   let delivered = 0;
   let dropped = 0;
@@ -306,7 +436,7 @@ function broadcastEvent(event) {
     }
   }
   // Skip noisy heartbeats; log everything else so we can prove broadcasts are firing.
-  if (event && event.type !== 'heartbeat') {
+  if (event && event.type !== 'heartbeat' && !event.quiet) {
     const src = event.source ? ` source=${event.source}` : '';
     console.log(`[SSE] broadcast ${event.type}${src} → ${delivered} client(s)${dropped ? ` (dropped ${dropped} dead)` : ''}`);
   }
@@ -354,6 +484,7 @@ const APPEND_ONLY_KEYS = new Set([
   'stationBodyOverrides',     // user-set body for stations without marketId
   'materialInventory',        // ship engineering mats — derived from journals, hard to re-acquire
   'journalScan',              // squadron name/rank + ship usage (expensive journal scan)
+  'dismissedTasks',           // "I am never doing that" — permanent by design, no un-dismiss path
   'populationOverrides',      // user-edited system populations
   'stationDistOverrides',     // user-edited station distances
 ]);
@@ -721,7 +852,7 @@ function sendOverlayMessage(msg) {
   try {
     const payload = JSON.stringify(msg) + '\n';
     overlaySocket.write(payload);
-    console.log('[Overlay] Sent:', msg.id, msg.text?.substring(0, 60) || '');
+    if (!msg.quiet) console.log('[Overlay] Sent:', msg.id, msg.text?.substring(0, 60) || '');
   } catch (err) {
     console.log(`[Overlay] Send error: ${err.message}`);
   }
@@ -829,7 +960,8 @@ const server = http.createServer((req, res) => {
   // (images + pack picker) stay open, same as gallery images.
   const isCopilotAction = pathname === '/copilot-ask' || pathname === '/copilot-news'
     || pathname === '/copilot-rate' || pathname === '/copilot-answer'
-    || pathname === '/copilot-trivia' || pathname === '/copilot-trivia-result';
+    || pathname === '/copilot-trivia' || pathname === '/copilot-trivia-result'
+    || pathname === '/copilot-voice';
   const needsToken = pathname.startsWith('/api/') || pathname.startsWith('/overlay') || isCopilotAction;
   if (needsToken && !validateToken(req)) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -1347,31 +1479,37 @@ const server = http.createServer((req, res) => {
         else if (squadronCallsigns.includes(market.stationName)) ownerCallsign = market.stationName;
 
         if (ownerCallsign) {
-          const items = (market.items || [])
-            .filter((it) => it.stock > 0)
-            .map((it) => {
-              const def = findCommodityByDisplayName(it.nameLocalised || it.name)
-                || findCommodityByDisplayName(it.name)
-                || findCommodityByJournalName(`$${String(it.name || '').replace(/\s+/g, '').toLowerCase()}_name;`);
-              return {
-                commodityId: (def && def.id) || String(it.name || '').toLowerCase(),
-                name: it.nameLocalised || (def && def.name) || it.name,
-                count: it.stock,
-              };
-            });
-          patch.carrierCargo = {
-            __upsert: {
-              [ownerCallsign]: {
-                items,
-                earliestTransfer: market.timestamp,
-                latestTransfer: market.timestamp,
-                updatedAt: market.timestamp || new Date().toISOString(),
-                isEstimate: false,
-                carrierCallsign: ownerCallsign,
-              },
-            },
-          };
-          marketOutcome = { type: 'fc_cargo', callsign: ownerCallsign, itemCount: items.length };
+          let record;
+          if (ownerCallsign === myCallsign) {
+            // Own carrier: through the ledger — the market read reconciles the sell orders, the
+            // ledger keeps everything else (see carrierLedger.js).
+            try { ensureCarrierLedger({ journalDir, carrierId: myFcMid, callsign: myCallsign }); } catch { /* best-effort */ }
+            reconcileCarrierMarket(market.items || [], market.timestamp || new Date().toISOString());
+            record = carrierCargoRecord();
+          } else {
+            const items = (market.items || [])
+              .filter((it) => it.stock > 0)
+              .map((it) => {
+                const def = findCommodityByDisplayName(it.nameLocalised || it.name)
+                  || findCommodityByDisplayName(it.name)
+                  || findCommodityByJournalName(`$${String(it.name || '').replace(/\s+/g, '').toLowerCase()}_name;`);
+                return {
+                  commodityId: (def && def.id) || String(it.name || '').toLowerCase(),
+                  name: it.nameLocalised || (def && def.name) || it.name,
+                  count: it.stock,
+                };
+              });
+            record = {
+              items,
+              earliestTransfer: market.timestamp,
+              latestTransfer: market.timestamp,
+              updatedAt: market.timestamp || new Date().toISOString(),
+              isEstimate: false,
+              carrierCallsign: ownerCallsign,
+            };
+          }
+          patch.carrierCargo = { __upsert: { [ownerCallsign]: record } };
+          marketOutcome = { type: 'fc_cargo', callsign: ownerCallsign, itemCount: record.items.length };
         } else if (!isEphemeralStation(market.stationName, market.stationType, market.marketId)) {
           const commodities = (market.items || [])
             .filter((it) => it.stock > 0 && it.buyPrice > 0)
@@ -1534,7 +1672,7 @@ const server = http.createServer((req, res) => {
         pacing,
         wingCaveat: 'Estimates assume you mine every tonne yourself — wing contributions are not reported for mining missions.',
         snapshot: getMiningSnapshot(),
-        rateHistory: getRateHistory().slice(0, 60),
+        rateHistory: getRateHistory((k) => commodityValueNow(k, existing)).slice(0, 60),
         locations: getLocationTotals((k) => commodityValueNow(k, existing), (rec) => rockValueNow(rec, existing)),
         unmapped: { mine: unmappedMine, counts: { mine: unmappedMine.length, total: unmappedTotal } },
         // Distribution board data — same stats the catch card ranks against, served standing.
@@ -1640,16 +1778,425 @@ const server = http.createServer((req, res) => {
   }
 
   // Prospected-rock log. Append-only and uncapped, so reads are explicitly paginated.
+  // Carrier baseline — the commander's own count for one commodity, from the carrier's inventory
+  // screen. Anchors what the journal cannot count; a dated transaction, never an overwrite.
+  if (pathname === '/api/carrier/baseline' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const input = body ? JSON.parse(body) : {};
+        const existing = readStateFile();
+        const settings = existing.settings || {};
+        if (!settings.myFleetCarrier) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'no carrier set in Settings' })); return; }
+        try { ensureCarrierLedger({ journalDir: resolveJournalDir(settings.journalDirOverride), carrierId: settings.myFleetCarrierMarketId || null, callsign: settings.myFleetCarrier }); } catch { /* best-effort */ }
+        const item = setCarrierBaseline(input.commodity, input.tonnes, new Date().toISOString(), input.name || null);
+        if (!item) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'commodity and a whole number of tonnes (0–25000) required' })); return; }
+        const record = carrierCargoRecord();
+        const merged = mergeStatePatch(existing, { carrierCargo: { __upsert: { [settings.myFleetCarrier]: record } } });
+        writeStateDebounced(merged);
+        broadcastEvent({ type: 'state_updated', source: 'carrier-baseline', timestamp: new Date().toISOString() });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, item, ledger: record.ledger }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message || String(e) }));
+      }
+    });
+    return;
+  }
+
+  // Sell Cargo — hold + carrier priced here / locally / across the galaxy, trade nearby, history.
+  if (pathname === '/api/sell/plan' && req.method === 'GET') {
+    (async () => {
+      try {
+        const existing = readStateFile();
+        const journalDir = resolveJournalDir((existing.settings || {}).journalDirOverride);
+        const params = new URL(req.url, 'http://localhost').searchParams;
+        const range = Math.min(500, Math.max(5, Number(params.get('range')) || 50));
+        let searched = [];
+        try { searched = JSON.parse(params.get('searched') || '[]'); } catch { searched = []; }
+        try { backfillSales(journalDir); } catch { /* best-effort */ }
+        const plan = await buildSellPlan({
+          state: existing, journalDir, rangeLy: range,
+          searched: Array.isArray(searched) ? searched.slice(0, 20) : [],
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(plan));
+      } catch (e) {
+        console.error('[Sell] plan failed:', e);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message || String(e) }));
+      }
+    })();
+    return;
+  }
+
+  // Surface (Rhino) mining — opportunities per body + measured results per deposit.
+  if (pathname === '/api/surface-mining/summary' && req.method === 'GET') {
+    try {
+      const existing = readStateFile();
+      // Same pricing path the rock log uses: the commander's own market snapshots. The 2026-09-02
+      // commodities (Helium, Olivine, Ruby, …) are not in any price source yet, so priceFn returns
+      // 0 and the UI shows tonnes without a credits column rather than a fabricated value.
+      const summary = getSurfaceSummary(
+        (key) => {
+          const v = commodityValueNow(key, existing);
+          return v && v.cr > 0 ? v.cr : 0;
+        },
+        // Nav locks name bodies by BodyID; scans made before the ledger stored ids resolve here.
+        (systemAddress, bodyId) => resolveBodyNameById(existing, systemAddress, bodyId),
+        // Best sell among the commander's own visited markets — where a station pays 185% of mean.
+        (name) => bestSellFromSnapshots(existing, name),
+      );
+
+      // Attach each F10 marker to the shot that produced it. recordGameScreenshot already copied
+      // the image into the gallery, so the picture of the deposit panel — the one thing that
+      // actually states commodity / mineral amount / density — is on disk and addressable. The
+      // commander tags from the photo instead of remembering.
+      const meta = readGalleryMeta();
+      const attachImage = (m) => {
+        if (!m.body || !m.system) return m;
+        const entries = meta[galleryKeyFor(m.system, m.body)];
+        if (!Array.isArray(entries) || !entries.length) return m;
+        // Filename first; it is exact. A deposit may carry several (every F10 taken inside its
+        // cluster); a lone marker carries one. Time proximity is only a fallback, and only within
+        // two minutes — and it compares against addedAt, which for a shot adopted at boot is the
+        // adoption time, not the shot time, so it is deliberately the last resort.
+        const files = Array.isArray(m.files) && m.files.length ? m.files : (m.file ? [m.file] : []);
+        let hit = null;
+        for (const f of files) {
+          const base = path.basename(String(f || '').replace(/\\/g, '/'));
+          hit = base ? entries.find((e) => e.caption === base) : null;
+          if (hit) break;
+        }
+        if (!hit) {
+          const at = Date.parse(m.at || m.firstAt);
+          if (Number.isFinite(at)) hit = entries.find((e) => Math.abs(Date.parse(e.addedAt) - at) <= 120000) || null;
+        }
+        if (!hit) return m;
+        // A photo inside a WORKED deposit is deposit documentation by construction — it sits within
+        // 300m of a rig you emptied. Flag it utility so it stays out of the place galleries, the
+        // same as a promoted marker. Idempotent, so repeating it on every read costs nothing.
+        if ((m.tonnes || 0) > 0 && (!hit.utility || /\.bmp$/i.test(hit.url || ''))) flagGalleryUtility(hit.id);
+        return { ...m, imageUrl: hit.url, imageId: hit.id };
+      };
+      summary.marks = (summary.marks || []).map(attachImage);
+      summary.deposits = (summary.deposits || []).map(attachImage);
+
+      // The hull you are flying, for the landing ratings: the journal's Loadout, named from the ship
+      // table, pad size from the table or the commander's one-time answer. Never typed, never guessed.
+      const cs = existing.currentShip || null;
+      const csType = cs && cs.type ? String(cs.type).toLowerCase() : null;
+      summary.ship = csType
+        ? { type: csType, name: friendlyShip(csType), size: padSizeFor(csType) || hullSizeFor(csType) || null }
+        : null;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(summary));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e && e.message }));
+    }
+    return;
+  }
+
+  // Deposit tagging — MINERAL AMOUNT / DENSITY exist only on the in-game HUD, so the commander
+  // supplies them. Same ground-truth pattern as the ring hotspot marks.
+  if (pathname === '/api/surface-mining/annotate' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const input = body ? JSON.parse(body) : {};
+        if (!input.id) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'id required' }));
+          return;
+        }
+        const marks = markDeposit(String(input.id), input);
+        // Naming what a marker yields declares it a deposit photo, so it stops being a candidate
+        // for the system's representative image.
+        const flagged = input.commodity && input.imageId ? flagGalleryUtility(String(input.imageId)) : false;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, marks, imageFlagged: flagged }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message || String(e) }));
+      }
+    });
+    return;
+  }
+
+  // "I targeted it, read Uranium, decided not to drive to it." The panel names the commodity at
+  // targeting range (amount and density only up close), so a sighting is real information — and
+  // without it the ledger records only what was mined, implying a body carries whatever you
+  // happened to work first.
+  // Live state for the hero band and the target strip — polled every few seconds, so it stays
+  // cheap: no ledger read, just module state plus one Status.json read. The nav lock's BodyID is
+  // resolved to a name here because the page needs "Site 4 of 9 · 1 a", not "Body 14".
+  if (pathname === '/api/surface-mining/snapshot' && req.method === 'GET') {
+    try {
+      const snap = getSurfaceSnapshot();
+      if (snap.lock && snap.lock.bodyId != null) {
+        const existing = readStateFile();
+        // A copy — snap.lock IS the module's live lock object. Writing the name into it made it
+        // "stick" only until the next site replaced the object, and the summary's own snapshot
+        // never had it, so the page flipped between "1 a" and "Body 14".
+        snap.lock = {
+          ...snap.lock,
+          body: bodyNameFromLedger(snap.lock.systemAddress, snap.lock.bodyId)
+            || resolveBodyNameById(existing, snap.lock.systemAddress, snap.lock.bodyId) || null,
+        };
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(snap));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message || String(e) }));
+    }
+    return;
+  }
+
+  // "I know where I am." Sets the current site by hand when the game did not say — a drop without
+  // a nav lock, or made while the exe was closed. Writes a manual drop record, so tonnage already
+  // pulled this visit re-files under the site as well as everything that follows.
+  if (pathname === '/api/surface-mining/site' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const input = body ? JSON.parse(body) : {};
+        const rec = setCurrentSite(input);
+        if (!rec) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'siteIndex (a number) and a body are required — the body comes from Status.json if you are on one' }));
+          return;
+        }
+        broadcastEvent({ type: 'surface_drop', timestamp: rec.at, body: rec.body, bodyId: rec.bodyId, siteIndex: rec.siteIndex, label: rec.navLabel, lat: rec.lat, lon: rec.lon, manual: true });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, drop: rec }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message || String(e) }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/surface-mining/sight' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const input = body ? JSON.parse(body) : {};
+        const ok = recordSighting(input);
+        res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
+        // exists: already tagged or already pulled at that site — nothing written, and the page says so.
+        res.end(JSON.stringify(ok ? { ok: true, exists: ok === 'exists' } : { error: 'body and commodity required' }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message || String(e) }));
+      }
+    });
+    return;
+  }
+
+  // Site count typed from the system map — the number the journal withholds until a DSS.
+  if (pathname === '/api/surface-mining/site-count' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const input = body ? JSON.parse(body) : {};
+        const ok = recordSiteCount(input);
+        res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(ok ? { ok: true } : { error: 'body and a site count required' }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message || String(e) }));
+      }
+    });
+    return;
+  }
+
+  // Remove a deposit photo once its information has been logged. The gallery copy always goes; the
+  // original F10 screenshot in the game's folder only when asked, and only a file a marker record
+  // named (the gallery caption is that filename) — never an arbitrary path. The ledger keeps the
+  // position, site, commodity, amount, density and the marker's filename as provenance.
+  if (pathname === '/api/surface-mining/photo/delete' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const input = body ? JSON.parse(body) : {};
+        const imageId = String(input.imageId || '');
+        if (!imageId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'imageId required' }));
+          return;
+        }
+        const meta = readGalleryMeta();
+        let entry = null;
+        for (const key of Object.keys(meta)) {
+          const arr = meta[key];
+          if (!Array.isArray(arr)) continue;
+          const i = arr.findIndex((e) => e && e.id === imageId);
+          if (i >= 0) { entry = arr[i]; arr.splice(i, 1); if (!arr.length) delete meta[key]; }
+        }
+        const removed = { gallery: false, original: false };
+        if (entry) {
+          writeGalleryMeta(meta);
+          const file = entry.url ? path.basename(String(entry.url)) : null;
+          if (file) { try { fs.unlinkSync(path.join(GALLERY_DIR, file)); removed.gallery = true; } catch { /* already gone */ } }
+          if (input.original) {
+            const base = entry.caption ? path.basename(String(entry.caption).replace(/\\/g, '/')) : '';
+            if (base && isRecordedScreenshot(base)) {
+              try { fs.unlinkSync(path.join(ED_PICTURES_DIR, base)); removed.original = true; } catch { /* already gone */ }
+            }
+          }
+        }
+        res.writeHead(entry ? 200 : 404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(entry ? { ok: true, removed } : { error: 'no such photo' }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message || String(e) }));
+      }
+    });
+    return;
+  }
+
+  // The compass target: a deposit, the ship, a recall spot — or clear it. Steering happens on the
+  // watcher tick (tickCompass) and reaches the overlay, the page and the Companion.
+  if (pathname === '/api/surface-mining/target' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const input = body ? JSON.parse(body) : {};
+        if (input.clear) {
+          clearNavTarget();
+          broadcastEvent({ type: 'surface_compass', timestamp: new Date().toISOString(), cleared: true });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, cleared: true }));
+          return;
+        }
+        const t = setNavTarget(input);
+        res.writeHead(t ? 200 : 400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(t ? { ok: true, target: t } : { error: 'lat and lon (numbers) required' }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message || String(e) }));
+      }
+    });
+    return;
+  }
+
+  // A named point at the commander's own position (a brain-tree grove, a hazard, anything the game
+  // never writes) — or remove one.
+  if (pathname === '/api/surface-mining/pin' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const input = body ? JSON.parse(body) : {};
+        if (input.remove) {
+          removePin(String(input.remove));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        const pin = addPin(input);
+        res.writeHead(pin ? 200 : 400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(pin ? { ok: true, pin } : { error: 'lat, lon and body required — stand on the surface first' }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message || String(e) }));
+      }
+    });
+    return;
+  }
+
+  // Pad size for a hull the ship table does not know — the commander's one-time answer.
+  if (pathname === '/api/surface-mining/hull-size' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const input = body ? JSON.parse(body) : {};
+        const ok = setHullSize(input.shipType, input.size);
+        res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(ok ? { ok: true } : { error: 'shipType and size S/M/L required' }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message || String(e) }));
+      }
+    });
+    return;
+  }
+
+  // Take a tag back (append-only retraction) / rate a signal (landing in a hull, driving).
+  if ((pathname === '/api/surface-mining/unsight' || pathname === '/api/surface-mining/rate') && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const input = body ? JSON.parse(body) : {};
+        if (pathname.endsWith('/rate')) {
+          // The hull is the journal's, never typed: name from the ship table, pad size from the
+          // table or the commander's one-time answer for hulls the table does not know.
+          const shipType = input.shipType ? String(input.shipType).toLowerCase() : null;
+          input.ship = shipType ? friendlyShip(shipType) : null;
+          input.size = shipType ? (padSizeFor(shipType) || hullSizeFor(shipType) || null) : null;
+        }
+        const ok = pathname.endsWith('/rate') ? recordRating(input) : retractSighting(input);
+        res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(ok ? { ok: true } : { error: pathname.endsWith('/rate') ? 'body, siteIndex and a landing or driving score 1-5 required' : 'body, siteIndex and commodity required' }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message || String(e) }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/surface-mining/backfill' && req.method === 'POST') {
+    try {
+      const st = readStateFile();
+      const jd = resolveJournalDir((st.settings || {}).journalDirOverride);
+      const out = backfillSurfaceMining(jd, listJournalFiles);
+      const adopted = adoptOrphanSurfaceShots(jd);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, ...out, adopted }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e && e.message }));
+    }
+    return;
+  }
+
   if (pathname === '/api/mining-log' && req.method === 'GET') {
     try {
       flushMiningLog();
       const limit = Math.min(parseInt(url.searchParams.get('limit') || '200', 10) || 200, 2000);
       const ring = url.searchParams.get('ring');
+      const existing = readStateFile();
       let rows = readRocks();
       if (ring) rows = rows.filter((r) => r.ring === ring);
       const total = rows.length;
+      // Re-price both columns at today's market before serving. estValue and gotValue were written
+      // at prospect/refine time, and rows logged before 2026-08-28 have a live MISSION rate baked
+      // in (~136k/t Bromellite against ~36k at market) — so serving them raw puts two currencies in
+      // one table and makes the history incomparable. Purely a currency conversion: the stored
+      // tonnes are untouched, only the price applied to them changes. Copied, never mutated in
+      // place, because readRocks() hands back its own cache.
+      const priced = rows.slice(-limit).reverse().map((r) => ({
+        ...r,
+        estValue: (r.mats || []).reduce((a, m) => a + (m.est || 0) * commodityValueNow(m.k, existing), 0),
+        gotValue: Object.entries(r.got || {}).reduce((a, [k, t]) => a + commodityValueNow(k, existing) * t, 0),
+      }));
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ total, returned: Math.min(limit, total), rocks: rows.slice(-limit).reverse() }));
+      res.end(JSON.stringify({ total, returned: priced.length, rocks: priced }));
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: e.message || String(e) }));
@@ -1973,6 +2520,184 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Worth doing HERE — scoped to the system the commander is standing in, ordered by distance from
+  // the arrival star. Domain-wide this list is 60+ entries and unreadable on a second screen.
+  if (pathname === '/api/domain/tasks' && req.method === 'GET') {
+    try {
+      const st = readStateFile();
+      const system = url.searchParams.get('system') || st.commanderPosition?.systemName || '';
+      const rings = getUnmappedRings(colonySystemsOf(st));
+      const out = buildDomainTasks(st, rings, readGalleryMeta(), { system });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(out));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message || String(e) }));
+    }
+    return;
+  }
+
+  // Dismissal is PERMANENT and one-way. There is no un-dismiss endpoint by design: "I may never do
+  // them" was the requirement, so a dismissed task must never resurface on a rescan or a rebuild.
+  if (pathname === '/api/domain/tasks/dismiss' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const { id } = JSON.parse(body || '{}');
+        const clean = String(id || '').trim();
+        if (!clean) throw new Error('Task id required');
+        applyStatePatch({ dismissedTasks: { __upsert: { [clean]: { at: new Date().toISOString() } } } });
+        console.log(`[DomainTasks] Dismissed ${clean}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ dismissed: clean }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  // What the ground you hold actually yields. Domain systems only — galaxy-wide ring hunting is
+  // the mining page's ring finder, and a better ring elsewhere is not an answer to this question.
+  if (pathname === '/api/domain/rings' && req.method === 'GET') {
+    try {
+      const st = readStateFile();
+      const rings = getRingsInSystems(colonySystemsOf(st));
+      const stats = ringIndexStats();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        rings,
+        // Stated, not hidden: a thin sample is a fact about the survey, not about the ground.
+        mappedInDomain: rings.length,
+        mappedTotal: stats.rings,
+        unmappedInDomain: getUnmappedRings(colonySystemsOf(st)).length,
+      }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message || String(e) }));
+    }
+    return;
+  }
+
+  // ---- Colonization Threats -------------------------------------------------------------
+  // Systems the commander flagged as theirs to lose, and what is being colonised within 50 ly of
+  // each. Flags are cheap to recreate (a name), so watchedSystems is deliberately NOT append-only:
+  // unflagging has to actually work.
+
+  if (pathname === '/api/threats' && req.method === 'GET') {
+    const st = readStateFile();
+    const watched = Object.values(st.watchedSystems || {})
+      .filter(Boolean)
+      // Worst first: taken, then closest threat, then everything quiet.
+      .sort((a, b) => {
+        const rank = (w) => (w.status === 'taken' ? 0 : w.status === 'threatened' ? 1 : 2);
+        return rank(a) - rank(b) || (a.nearestLy ?? 1e9) - (b.nearestLy ?? 1e9);
+      });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ watched, radiusLy: 50 }));
+    return;
+  }
+
+  // Flag a system. Carries the commander's own score across from scoutedSystems when they have
+  // one, so the list reads in their terms rather than as bare names.
+  if (pathname === '/api/threats' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const { name, note } = JSON.parse(body || '{}');
+        const clean = String(name || '').trim();
+        if (!clean) throw new Error('System name required');
+        const st = readStateFile();
+        const already = Object.values(st.watchedSystems || {})
+          .find((w) => w && String(w.name).toLowerCase() === clean.toLowerCase());
+        if (already) throw new Error(`${clean} is already flagged`);
+
+        const scouted = Object.values(st.scoutedSystems || {})
+          .find((s) => s && String(s.name).toLowerCase() === clean.toLowerCase());
+        const rec = {
+          id: `watch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          name: scouted ? scouted.name : clean, // prefer the canonical casing on file
+          score: scouted?.score?.total ?? null,
+          coordinates: scouted?.coordinates ?? null,
+          note: typeof note === 'string' && note.trim() ? note.trim().slice(0, 300) : undefined,
+          addedAt: new Date().toISOString(),
+          status: 'unchecked',
+          nearestLy: null,
+          nearestName: null,
+          threatCount: 0,
+        };
+        applyStatePatch({ watchedSystems: { __upsert: { [rec.id]: rec } } });
+        console.log(`[Threats] Flagged ${rec.name}${rec.score != null ? ` (score ${rec.score})` : ''}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(rec));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/threats' && req.method === 'DELETE') {
+    const id = url.searchParams.get('id');
+    if (!id) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'id required' }));
+      return;
+    }
+    applyStatePatch({ watchedSystems: { __remove: [id] } });
+    console.log(`[Threats] Unflagged ${id}`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ removed: id }));
+    return;
+  }
+
+  // Re-check every flag against Spansh. Alerts describe what CHANGED, so a quiet galaxy is silent.
+  if (pathname === '/api/threats/refresh' && req.method === 'POST') {
+    (async () => {
+      try {
+        const st = readStateFile();
+        // Backfill coordinates from the scouted pool. A flag may predate scouting the system, or
+        // have been typed in by hand — and coordinates are what let the check work at all for
+        // systems Spansh's search index does not carry.
+        const scoutedByName = new Map();
+        for (const s of Object.values(st.scoutedSystems || {})) {
+          if (s && s.name) scoutedByName.set(String(s.name).toLowerCase(), s);
+        }
+        const watched = Object.values(st.watchedSystems || {}).filter(Boolean).map((w) => {
+          if (w.coordinates || !w.name) return w;
+          const s = scoutedByName.get(String(w.name).toLowerCase());
+          if (!s || !s.coordinates) return w;
+          return { ...w, coordinates: s.coordinates, score: w.score ?? s.score?.total ?? null };
+        });
+        if (!watched.length) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ watched: [], alerts: [], checked: 0 }));
+          return;
+        }
+        const { report, alerts } = await assessThreats(watched, colonySystemsOf(st));
+        const upsert = {};
+        for (const r of report) if (r && r.id) upsert[r.id] = r;
+        if (Object.keys(upsert).length) applyStatePatch({ watchedSystems: { __upsert: upsert } });
+
+        for (const a of alerts) {
+          broadcastEvent({ type: 'colonization_threat', ...a, timestamp: new Date().toISOString() });
+          const where = a.nearest ? ` — ${a.nearest} at ${a.distanceLy?.toFixed(1)} ly (~${a.hops} hop${a.hops === 1 ? '' : 's'})` : '';
+          console.log(`[Threats] ${a.kind.toUpperCase()} ${a.system}${where}`);
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ watched: report, alerts, checked: report.length }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message || String(e) }));
+      }
+    })();
+    return;
+  }
+
   // Sightings: GET list (newest first)
   if (pathname === '/api/sightings' && req.method === 'GET') {
     const st = readStateFile();
@@ -2170,11 +2895,24 @@ const server = http.createServer((req, res) => {
   if (pathname.startsWith('/copilot-art/')) {
     const rel = pathname.slice('/copilot-art/'.length).split('/').filter(Boolean).map((s) => path.basename(s));
     const filePath = path.join(COPILOT_DIR, ...rel);
+    // Portraits get REPLACED in place (a new mood, a recast character), and a plain max-age meant
+    // a device kept serving the old face for an hour — closing the browser does not help, which is
+    // how a replaced Wren stayed male on the iPad. Revalidate instead: the ETag is mtime+size, so
+    // an unchanged file still costs one 304 and no download, and a changed one appears at once.
+    let st = null;
+    try { st = fs.statSync(filePath); } catch { res.writeHead(404); res.end('Not found'); return; }
+    const etag = `"${st.mtimeMs.toString(36)}-${st.size.toString(36)}"`;
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, { ETag: etag, 'Cache-Control': 'no-cache' });
+      res.end();
+      return;
+    }
     fs.readFile(filePath, (err, data) => {
       if (err) { res.writeHead(404); res.end('Not found'); return; }
       const ext = path.extname(filePath).toLowerCase();
       const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'image/png';
-      res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'public, max-age=3600' });
+      // 'no-cache' means revalidate before reuse — NOT "do not store".
+      res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'no-cache', ETag: etag });
       res.end(data);
     });
     return;
@@ -2251,6 +2989,42 @@ const server = http.createServer((req, res) => {
     try { round = buildTriviaRound(readStateFile(), 6); } catch (e) { console.error('[Copilot] trivia:', e && e.message); }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ questions: round, history: getQuizHistory() }));
+    return;
+  }
+
+  // Speak a line the co-pilot already said. Addressed by ID — never by text — so a LAN device
+  // cannot hand the synthesiser arbitrary words. 404 when the line has aged out of the register
+  // or speech isn't available on this machine; the client just stays quiet either way.
+  if (pathname === '/copilot-voice' && req.method === 'GET') {
+    const id = url.searchParams.get('id');
+    const asked = url.searchParams.get('persona');
+    const persona = Object.prototype.hasOwnProperty.call(PROFILES, asked) ? asked : DEFAULT_PERSONA;
+    const entry = id ? lookupLine(id) : null;
+    if (!voiceAvailable() || !entry) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'no audio for that line' }));
+      return;
+    }
+    synthesize(entry.line, persona, entry.mood).then((out) => {
+      if (!out) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'synthesis unavailable' }));
+        return;
+      }
+      res.writeHead(200, {
+        'Content-Type': 'audio/wav',
+        'Content-Length': out.wav.length,
+        'Cache-Control': 'no-store',
+        // How to play it: the tape-speed shift, and whether this persona is on a mic.
+        'X-Voice-Playback-Rate': String(out.playbackRate),
+        'X-Voice-Filter': out.filter ? '1' : '0',
+      });
+      res.end(out.wav);
+    }).catch((e) => {
+      console.error('[CopilotVoice] synthesis error:', e && e.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'synthesis failed' }));
+    });
     return;
   }
 
@@ -2411,6 +3185,39 @@ server.listen(PORT, '0.0.0.0', () => {
     initTrophies(APP_DIR);
     const st = readStateFile();
     const jd = resolveJournalDir((st.settings || {}).journalDirOverride);
+    // Surface mining needs the journal dir too: lat/lon comes from Status.json, which is the only
+    // place a surface position exists (never archived, so it must be sampled live).
+    initSurfaceMining(APP_DIR, jd);
+    initMarketMeans(APP_DIR);
+// Carrier cargo ledger beside the exe: balances rebuilt from the file now, journals replayed on the
+// first companion-file tick (that is where the journal dir and the carrier's identity are known).
+{
+  const c = initCarrierLedger(APP_DIR);
+  console.log(`[CarrierLedger] ${c.records} records on file`);
+}
+// Price history beside the exe: every market read, a daily Ardent sample, the commander's own
+// sales. The journal backfill runs on the first Sell-page request (it needs the journal dir).
+{
+  const h = initMarketHistory(APP_DIR);
+  console.log(`[MarketHistory] ${h.records} records on file${h.pruned ? `, ${h.pruned} older than a year pruned` : ''}`);
+}
+async function sampleMarketHistory() {
+  // Colonia's boards are not the commander's galaxy: sample only within reach of where they are.
+  let reach = null;
+  try {
+    const pos = (readStateFile() || {}).commanderPosition;
+    if (pos && pos.coordinates) reach = { origin: pos.coordinates, maxLy: MAX_REACH_LY };
+  } catch { reach = null; }
+  for (const k of sampleKeys()) {
+    if (!needsSample(k)) continue;
+    const rows = await ardentJson(`/commodity/name/${encodeURIComponent(k)}/imports?fleetCarriers=false`, 6 * 3600e3);
+    if (Array.isArray(rows)) recordArdentSample(k, rows, Date.now(), reach);
+  }
+  const s = historyStats();
+  console.log(`[MarketHistory] sampled — ${s.a} Ardent samples, ${s.m} market rows, ${s.s} own sales across ${s.keys} commodities`);
+}
+setTimeout(() => { sampleMarketHistory().catch(() => {}); }, 90_000).unref();
+setInterval(() => { sampleMarketHistory().catch(() => {}); }, 6 * 3600e3).unref(); // galactic averages from Market.json, kept beside the exe
     // Deferred: the first ring-index build sweeps every journal, so keep it off the boot path.
     setTimeout(() => {
       try {
@@ -2421,7 +3228,21 @@ server.listen(PORT, '0.0.0.0', () => {
         console.log(`[Mining] Ring index ready: ${s.rings} mapped, ${s.ringsSeen - s.rings} seen-unmapped (${gapMine} in your systems)`);
         const bf = backfillFromJournals(jd, listJournalFiles, getRingInfo);
         if (bf.backfilled) console.log(`[Mining] Backfilled ${bf.backfilled} historical rock(s) — yield table seeded`);
+        // Restarting the exe while parked in a ring used to orphan every subsequent rock (45 of
+        // them historically). Runs after the index so the ring's class and reserve resolve.
+        seedRingContext(jd);
       } catch (e) { console.error('[Mining] index build failed:', e && e.message); }
+
+      // Surface mining rebuilds itself the same way ring mining does — the commander should never
+      // have to press a button to see their own history. Idempotent (records dedupe by kind), and
+      // ~1s for 221 journals, so it runs every boot and simply finds nothing new when there is
+      // nothing new. The manual button stays for forcing a re-read after an import.
+      try {
+        const sm = backfillSurfaceMining(jd, listJournalFiles);
+        if (sm.added) console.log(`[SurfaceMining] Backfilled ${sm.added} record(s) from ${sm.files} journal(s)`);
+        const shots = adoptOrphanSurfaceShots(jd);
+        if (shots) console.log(`[SurfaceMining] Adopted ${shots} F10 surface shot(s) the gallery had never seen`);
+      } catch (e) { console.error('[SurfaceMining] boot rebuild failed:', e && e.message); }
     }, 4000).unref?.();
   } catch (e) {
     console.error('[Mining] init failed:', e && e.message);
@@ -2436,17 +3257,26 @@ server.listen(PORT, '0.0.0.0', () => {
       getEdsmTraffic(p0.systemName).then((tr) => setCenterTraffic(p0.systemName, tr)).catch(() => {});
       void refreshLookback(st0, p0.systemName, [p0.coordinates.x, p0.coordinates.y, p0.coordinates.z]);
     }
-    startEddnListener({ broadcastEvent });
+    // The EDDN firehose is the exe's one greedy feed — measured 2026-09-04 at 23 msg/s, 21.6 KB/s,
+    // about 1.8 GB a day inbound, whether or not the Radar page is ever opened. Settings →
+    // radarEnabled (default on) gates it, and the setting is re-read every minute so a flip takes
+    // effect without a restart. Chain Watch rides the same socket, so it follows the same switch.
+    const radarOn = () => ((readStateFile() || {}).settings || {}).radarEnabled !== false;
+    if (radarOn()) startEddnListener({ broadcastEvent });
+    else console.log('[Radar] off in Settings — EDDN listener and chain watch not started');
+    setInterval(() => {
+      try { if (radarOn()) startEddnListener({ broadcastEvent }); else stopEddnListener(); } catch { /* best-effort */ }
+    }, 60_000).unref?.();
     // Chain Watch — persistent frontier ledger; first run seeds from Spansh (bounded),
     // then EDDN keeps it live. Region drip-resolver runs quietly for live-found anchors.
     const cw = initChainWatch(CHAIN_WATCH_FILE);
-    if (!Object.keys(cw.seedInfo || {}).filter((k) => k !== 'coloniaRegion').length) {
+    if (radarOn() && !Object.keys(cw.seedInfo || {}).filter((k) => k !== 'coloniaRegion').length) {
       defaultRegions().then((regions) => {
         console.log('[ChainWatch] first run — seeding regions:', regions.join(', '));
         return seedChainWatch(regions);
       }).catch((e) => console.error('[ChainWatch] seed failed:', e && e.message));
     }
-    setInterval(() => { resolvePendingRegions().catch(() => {}); }, 60_000);
+    setInterval(() => { if (radarOn()) resolvePendingRegions().catch(() => {}); }, 60_000);
   } catch (e) { console.error('[Radar] start failed:', e && e.message); }
 
   // Self-update — checks GitHub Releases on boot and every 6h. Best-effort: a
@@ -2470,12 +3300,20 @@ server.listen(PORT, '0.0.0.0', () => {
 });
 
 // Graceful shutdown on Ctrl+C so the watcher's intervals and file handles close cleanly
+// A surface-mining collection commits 60s after its last refine, so a burst can still be open when
+// the exe closes — without this, the tonnes from the last rig you emptied are simply lost.
+function flushOnExit() {
+  try { stopServerWatcher(); } catch { /* ignore */ }
+  try { finalizeSurfaceMining(); } catch { /* ignore */ }
+  try { flushMiningLog(); } catch { /* ignore */ }
+}
 process.on('SIGINT', () => {
   console.log('\nShutting down...');
-  try { stopServerWatcher(); } catch { /* ignore */ }
+  flushOnExit();
   process.exit(0);
 });
 process.on('SIGTERM', () => {
-  try { stopServerWatcher(); } catch { /* ignore */ }
+  flushOnExit();
   process.exit(0);
 });
+process.on('beforeExit', flushOnExit);

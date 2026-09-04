@@ -293,6 +293,43 @@ export function getRingInfo(ringName) {
 }
 
 /**
+ * DSS-mapped rings inside the given systems, richest first.
+ *
+ * Deliberately scoped to the commander's OWN systems: hunting a ring to mine is already served by
+ * the ring finder on the mining page, which searches the galaxy. This answers a different question —
+ * what does the ground I hold actually contain — so a better ring two hundred light years away is
+ * not an answer, it is a distraction.
+ *
+ * Ranked on total hotspot count, then variety, because a ring concentrating one material and a ring
+ * spreading five are worth different things and the count alone would flatten them.
+ */
+export function getRingsInSystems(systemsLower) {
+  const want = systemsLower instanceof Set ? systemsLower : new Set(systemsLower || []);
+  if (!want.size) return [];
+  const out = [];
+  for (const r of Object.values(index.rings || {})) {
+    const sys = String(r.systemName || '').toLowerCase();
+    if (!sys || !want.has(sys)) continue;
+    const signals = Object.values(r.signals || {})
+      .map((s) => ({ label: s.label || '', count: Number(s.count) || 0 }))
+      .filter((s) => s.count > 0)
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+    out.push({
+      name: r.name,
+      systemName: r.systemName || '',
+      ringClass: String(r.ringClass || '').replace(/^eRingClass_/, ''),
+      reserve: r.reserve || '',
+      depthLs: r.depthLs ?? null,
+      signals,
+      hotspots: signals.reduce((a, s) => a + s.count, 0),
+      kinds: signals.length,
+      mappedAt: r.mappedAt || '',
+    });
+  }
+  return out.sort((a, b) => b.hotspots - a.hotspots || b.kinds - a.kinds || a.name.localeCompare(b.name));
+}
+
+/**
  * Evidence-derived minable materials for the target picker.
  * `laserProven` marks materials actually seen in a ProspectedAsteroid Materials list. Hotspot-only
  * entries are surfaced but sorted below, because a commander without a seismic charge launcher

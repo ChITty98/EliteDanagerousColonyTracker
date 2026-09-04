@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { findCommodityPrice } from '@/data/commodityPrices';
 import { Link } from 'react-router-dom';
 import { useAppStore } from '@/store';
 import { useGalleryStore, galleryKey } from '@/store/galleryStore';
@@ -20,6 +21,7 @@ import {
   type DomainData,
   type Showpiece,
   computeDomainRecords,
+  type DomainRecord,
 } from './domainHelpers';
 
 // ─── Sub-components ──────────────────────────────────────────────────
@@ -74,8 +76,9 @@ function ExpandableRow({ icon, label, count, badge, colorClass, children }: {
 
 function GalleryThumb({ gKey }: { gKey: string }) {
   const galleryImages = useGalleryStore((s) => s.images) || {};
-  const images = galleryImages[gKey];
-  if (!images || images.length === 0) return null;
+  // Skip utility shots — an F10 taken to document a mining deposit is not a portrait of the place.
+  const images = (galleryImages[gKey] || []).filter((i) => !i.utility);
+  if (images.length === 0) return null;
   return <img src={images[0].url} className="w-10 h-10 rounded object-cover shrink-0" loading="lazy" />;
 }
 
@@ -153,12 +156,11 @@ function groupBySystem<T extends { systemName: string }>(items: T[]): [string, T
 // ===== Main Page =====
 
 /**
- * Squadron Season comparison. Your colonisation contribution comes from your
- * journal (the Statistics event's Squadron group); a squadron-mate's number is
- * NOT journaled by ED, so it's entered manually (read off the in-game squadron
- * leaderboard). Shows the head-to-head gap for the current season.
+ * REMOVED FROM THIS PAGE 2026-08-28 — the commander found a squadron leaderboard
+ * jarring on a page about their own territory. Kept out of the render tree rather
+ * than deleted outright: if it earns a home elsewhere, it is whole and ready.
  */
-function SquadronSeasonPanel() {
+export function SquadronSeasonPanel() {
   const journalStats = useAppStore((s) => s.journalStats);
   const journalScan = useAppStore((s) => s.journalScan);
   const settings = useAppStore((s) => s.settings);
@@ -218,6 +220,24 @@ function SquadronSeasonPanel() {
   );
 }
 
+/** Rings inside the domain, from the server's journal-built ring index. */
+interface DomainRing {
+  name: string;
+  systemName: string;
+  ringClass: string;
+  reserve: string;
+  depthLs: number | null;
+  signals: { label: string; count: number }[];
+  hotspots: number;
+  kinds: number;
+}
+interface DomainRingsResponse {
+  rings: DomainRing[];
+  mappedInDomain: number;
+  mappedTotal: number;
+  unmappedInDomain: number;
+}
+
 export function ArchitectDomainPage() {
   const projects = useAppStore((s) => s.projects);
   const manualColonizedSystems = useAppStore((s) => s.manualColonizedSystems);
@@ -258,6 +278,147 @@ export function ArchitectDomainPage() {
     [settings.domainHighlightStations],
   );
 
+  // Notable Surface — things standing ON a body in the domain, as opposed to orbiting it.
+  //
+  // Brain trees are the only kind today, read from bodyFlags. Kept as a general category on
+  // purpose: Planetary Mining Deposits are the obvious second tenant once the Rhino lands, and
+  // both answer the same question — what is worth going down to the surface for.
+  //
+  // Sites outside the domain are counted, not listed. This page is about the commander's own
+  // ground, but silently dropping a confirmed find would be worse than mentioning it.
+  //
+  // Two sources, because a find reaches the app two ways: the flag set by hand on the System
+  // Bodies tab, and the groves on the Surface Mining page — a "grove here" pin or a Codex brain-tree
+  // entry, in the surface ledger. Tonight's trees on 2 b came in as a pin and never set a flag.
+  const bodyFlags = useAppStore((s) => s.bodyFlags);
+  const [surfaceGroves, setSurfaceGroves] = useState<SurfaceGrove[]>([]);
+  const notableSurface = useMemo(() => {
+    type Site = { system: string; body: string; shortBody: string; label: string; detail: string | null };
+    const byBody = new Map<string, Site>();
+    let outside = 0;
+    const shortOf = (system: string, body: string) => (
+      // The system name is already on the chip — no need to repeat it inside the body name.
+      body.toLowerCase().startsWith(system.toLowerCase()) ? body.slice(system.length).trim() || body : body
+    );
+    for (const [key, flag] of Object.entries(bodyFlags)) {
+      if (!flag?.brainTrees) continue;
+      const i = key.indexOf('|');
+      const system = i >= 0 ? key.slice(0, i) : key;
+      const body = i >= 0 ? key.slice(i + 1) : '';
+      if (!colonyNames.has(system.toLowerCase())) { outside++; continue; }
+      byBody.set(`${system.toLowerCase()}|${body.toLowerCase()}`, { system, body, shortBody: shortOf(system, body), label: 'Brain Trees', detail: null });
+    }
+    const groveCount = new Map<string, { groves: number; units: number }>();
+    for (const g of surfaceGroves) {
+      if (!g || !g.body || !g.system) continue;
+      if (!colonyNames.has(g.system.toLowerCase())) { outside++; continue; }
+      const k = `${g.system.toLowerCase()}|${g.body.toLowerCase()}`;
+      const c = groveCount.get(k) ?? { groves: 0, units: 0 };
+      c.groves += 1; c.units += g.harvest?.units ?? 0;
+      groveCount.set(k, c);
+      if (!byBody.has(k)) byBody.set(k, { system: g.system, body: g.body, shortBody: shortOf(g.system, g.body), label: 'Brain Trees', detail: null });
+    }
+    for (const [k, c] of groveCount) {
+      const s = byBody.get(k);
+      if (s) s.detail = `${c.groves} grove${c.groves === 1 ? '' : 's'}${c.units ? ` · ${c.units} units` : ''}`;
+    }
+    const sites = [...byBody.values()].sort((a, b) => a.system.localeCompare(b.system) || a.shortBody.localeCompare(b.shortBody));
+    return { sites, outside };
+  }, [bodyFlags, colonyNames, surfaceGroves]);
+
+  // What the ground yields — DSS-mapped rings inside the domain, richest first. Server-side because
+  // the ring index is built from the journals and never reaches the client store.
+  const [domainRings, setDomainRings] = useState<DomainRingsResponse | null>(null);
+  useEffect(() => {
+    let t: string | null = null;
+    try { t = sessionStorage.getItem('colony-token') || localStorage.getItem('colony-token'); } catch { /* no storage */ }
+    fetch(t ? `/api/domain/rings?token=${t}` : '/api/domain/rings')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d && Array.isArray(d.rings)) setDomainRings(d); })
+      .catch(() => { /* the section simply doesn't render */ });
+  }, []);
+
+  // Planetary mining signals — two records about what the ground HOLDS, not what the commander
+  // chose to pull: the body with the most signals, and the body whose signals promise the most
+  // (one deposit of each commodity per signal, at galactic average). Same source as the
+  // Surface Mining page.
+  interface SurfaceGrove { body: string; system: string | null; label?: string | null; source?: string; harvest?: { units: number } | null }
+  interface SurfaceBodyRow {
+    body: string; system: string | null; sitesKnown: number | null; sitesManual?: boolean;
+    siteRows: { index: number; expected: string[]; commodities: Record<string, number> }[];
+    drive?: { highest: { alt: number; how: string } | null } | null;
+  }
+  const [surfaceBodies, setSurfaceBodies] = useState<SurfaceBodyRow[]>([]);
+  useEffect(() => {
+    let t: string | null = null;
+    try { t = sessionStorage.getItem('colony-token') || localStorage.getItem('colony-token'); } catch { /* no storage */ }
+    fetch(t ? `/api/surface-mining/summary?token=${t}` : '/api/surface-mining/summary')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && Array.isArray(d.bodies)) setSurfaceBodies(d.bodies as SurfaceBodyRow[]);
+        if (d && Array.isArray(d.groves)) setSurfaceGroves(d.groves as SurfaceGrove[]);
+      })
+      .catch(() => { /* no records, nothing else changes */ });
+  }, []);
+  const surfaceRecords = useMemo((): DomainRecord[] => {
+    const inDomain = surfaceBodies.filter((b) => b.system && colonyNames.has(b.system.toLowerCase()));
+    const out: DomainRecord[] = [];
+    const withCount = inDomain.filter((b) => (b.sitesKnown ?? 0) > 0);
+    if (withCount.length) {
+      const most = withCount.reduce((a, b) => ((b.sitesKnown ?? 0) > (a.sitesKnown ?? 0) ? b : a));
+      out.push({
+        label: 'Most Mining Signals', icon: '\u{1F6F0}\u{FE0F}', bodyName: most.body, systemName: most.system!,
+        value: `${most.sitesKnown} signals${most.sitesManual ? ' (from the map)' : ''}`, rawValue: most.sitesKnown ?? 0,
+      });
+    }
+    const price = (c: string) => { const p = findCommodityPrice(c); return p && p.avgSell > 0 ? p.avgSell : 0; };
+    const nameOf = (c: string) => findCommodityPrice(c)?.name ?? c;
+    // Per signal, its three highest-priced commodities — the Rhino's refinery holds three, so
+    // a six-commodity signal is worked as its best three.
+    const scored = inDomain.map((b) => {
+      let total = 0; let signals = 0;
+      for (const r of b.siteRows) {
+        const names = new Set([...r.expected, ...Object.keys(r.commodities || {})].map(nameOf));
+        if (!names.size) continue;
+        signals += 1;
+        total += [...names].map(price).sort((x, y) => y - x).slice(0, 3).reduce((t, p) => t + p, 0);
+      }
+      return { b, total, signals };
+    }).filter((x) => x.total > 0);
+    if (scored.length) {
+      const best = scored.reduce((a, x) => (x.total > a.total ? x : a));
+      const fmt = best.total >= 1e6 ? `${(best.total / 1e6).toFixed(1)}M` : `${Math.round(best.total / 1000)}k`;
+      out.push({
+        label: 'Richest Signals', icon: '\u{1F48E}', bodyName: best.b.body, systemName: best.b.system!,
+        value: `~${fmt} expected \u{B7} ${best.signals} signal${best.signals === 1 ? '' : 's'} tagged`, rawValue: best.total,
+      });
+    }
+    // Highest ground reached on any body in the domain — on foot, landed, or in the SRV on the
+    // ground; jumps are filtered out server-side.
+    const withHigh = inDomain.filter((b) => b.drive && b.drive.highest);
+    if (withHigh.length) {
+      const top = withHigh.reduce((a, b) => (b.drive!.highest!.alt > a.drive!.highest!.alt ? b : a));
+      out.push({
+        label: 'Highest Ground Reached', icon: '\u{26F0}\u{FE0F}', bodyName: top.body, systemName: top.system!,
+        value: `${top.drive!.highest!.alt.toLocaleString()} m \u{B7} ${top.drive!.highest!.how}`, rawValue: top.drive!.highest!.alt,
+      });
+    }
+    return out;
+  }, [surfaceBodies, colonyNames]);
+  // The ring with the most hotspots — what the ground holds, from your own DSS scans. The panel
+  // below ranks all of them; this is the one-card answer.
+  const ringRecords = useMemo((): DomainRecord[] => {
+    const rings = (domainRings?.rings ?? []).filter((r) => r.hotspots > 0);
+    if (!rings.length) return [];
+    const top = rings.reduce((a, r) => (r.hotspots > a.hotspots ? r : a));
+    const mats = [...top.signals].sort((a, b) => b.count - a.count).slice(0, 3).map((s) => `${s.label}${s.count > 1 ? ` ×${s.count}` : ''}`).join(' · ');
+    return [{
+      label: 'Most Hotspots', icon: '\u{1FA90}', bodyName: top.name, systemName: top.systemName,
+      value: `${top.hotspots} hotspot${top.hotspots === 1 ? '' : 's'}${mats ? ` · ${mats}` : ''}${top.reserve ? ` · ${top.reserve}` : ''}`, rawValue: top.hotspots,
+    }];
+  }, [domainRings]);
+  const allRecords = useMemo(() => [...domainRecords, ...surfaceRecords, ...ringRecords], [domainRecords, surfaceRecords, ringRecords]);
+
   // Sorted star entries
   const sortedStars = useMemo(() => {
     const entries = [...domain.starsByType.entries()];
@@ -297,8 +458,6 @@ export function ArchitectDomainPage() {
         {domain.totalPopulation > 0 && ` Population: ${Math.round(domain.totalPopulation / 1_000_000)}M.`}
       </p>
 
-      <SquadronSeasonPanel />
-
       {/* Showpieces — Domain Highlights */}
       {domain.showpieces.length > 0 && (
         <div className="bg-gradient-to-r from-card to-muted/30 border border-yellow-500/20 rounded-lg p-4 mb-6">
@@ -312,11 +471,11 @@ export function ArchitectDomainPage() {
       )}
 
       {/* Records */}
-      {domainRecords.length > 0 && (
+      {allRecords.length > 0 && (
         <div className="bg-gradient-to-r from-card to-muted/30 border border-amber-500/20 rounded-lg p-4 mb-6">
           <h3 className="text-xs font-semibold text-amber-400/80 uppercase tracking-wider mb-3">{'\u{1F3C6}'} Domain Records</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-            {domainRecords.map((rec, i) => (
+            {allRecords.map((rec, i) => (
               <div key={i} className="flex items-center gap-2 bg-background/40 rounded-md px-3 py-2">
                 <span className="text-lg">{rec.icon}</span>
                 <div className="min-w-0 flex-1">
@@ -332,6 +491,79 @@ export function ArchitectDomainPage() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Notable Surface \u2014 what is on the ground, as opposed to what orbits it.
+          Brain Trees today; Planetary Mining Deposits will join them here once the Rhino ships
+          (2 Sept), which is why this is a CATEGORY rather than a brain-tree panel. */}
+      {notableSurface.sites.length > 0 && (
+        <div className="bg-gradient-to-r from-card to-muted/30 border border-purple-500/25 rounded-lg p-4 mb-6">
+          <h3 className="text-xs font-semibold text-purple-300/80 uppercase tracking-wider mb-3">
+            {'\u{1F9E0}'} Notable Surface
+          </h3>
+          <div className="flex flex-wrap gap-2">
+            {notableSurface.sites.map((s) => (
+              <Link
+                key={`${s.system}|${s.body}`}
+                to={`/systems/${encodeURIComponent(s.system)}`}
+                className="text-xs rounded bg-purple-500/10 border border-purple-500/25 px-2.5 py-1.5 text-purple-100 hover:border-purple-400/50"
+              >
+                <span className="font-medium">{s.label}</span>
+                <span className="text-purple-200/60 ml-1.5">{s.shortBody}</span>
+                {s.detail && <span className="text-purple-200/50 ml-1.5">{s.detail}</span>}
+                <span className="text-muted-foreground/60 ml-1.5">{s.system}</span>
+              </Link>
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] text-muted-foreground/60">
+            Brain trees are a raw-material farm on ground you already hold
+            {notableSurface.outside > 0 && ` \u00b7 ${notableSurface.outside} more outside your systems`}
+          </p>
+        </div>
+      )}
+
+      {/* What the ground yields \u2014 domain rings by hotspot count */}
+      {domainRings && domainRings.rings.length > 0 && (
+        <div className="bg-gradient-to-r from-card to-muted/30 border border-cyan-500/20 rounded-lg p-4 mb-6">
+          <h3 className="text-xs font-semibold text-cyan-400/80 uppercase tracking-wider mb-3">
+            {'\u{1F48E}'} What Your Ground Yields
+          </h3>
+          <div className="space-y-1.5">
+            {domainRings.rings.slice(0, 8).map((r, i) => (
+              <div key={r.name} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 bg-background/40 rounded-md px-3 py-2">
+                <span className={`font-mono text-sm tabular-nums shrink-0 ${i === 0 ? 'text-cyan-300 font-bold' : 'text-muted-foreground'}`}>
+                  {r.hotspots}
+                </span>
+                <Link
+                  to={`/systems/${encodeURIComponent(r.systemName)}`}
+                  className="text-sm font-medium text-foreground hover:text-primary truncate"
+                >
+                  {r.name.startsWith(r.systemName) ? r.name.slice(r.systemName.length).trim() : r.name}
+                </Link>
+                <span className="text-[11px] font-mono text-muted-foreground/70 shrink-0">
+                  {r.systemName}
+                </span>
+                {r.reserve && (
+                  <span className={`text-[10px] font-mono uppercase tracking-wider px-1.5 rounded border ${
+                    r.reserve === 'Pristine'
+                      ? 'text-emerald-400 border-emerald-500/40'
+                      : 'text-muted-foreground border-border'
+                  }`}>
+                    {r.reserve}
+                  </span>
+                )}
+                <span className="w-full text-[11px] text-muted-foreground truncate">
+                  {r.signals.map((s) => `${s.label}${s.count > 1 ? ` \u00D7${s.count}` : ''}`).join(' \u00B7 ')}
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] text-muted-foreground/60">
+            {domainRings.mappedInDomain} ring{domainRings.mappedInDomain === 1 ? '' : 's'} mapped across your systems
+            {domainRings.unmappedInDomain > 0 && ` \u00B7 ${domainRings.unmappedInDomain} seen but never DSS-scanned`}
+            {' \u00B7 hotspot counts from your own scans'}
+          </p>
         </div>
       )}
 
@@ -543,8 +775,9 @@ function ShowpieceCard({ sp }: { sp: Showpiece }) {
 
 function GalleryThumbOrIcon({ gKey, fallbackIcon }: { gKey: string; fallbackIcon: string }) {
   const galleryImages = useGalleryStore((s) => s.images) || {};
-  const images = galleryImages[gKey];
-  if (images && images.length > 0) {
+  // Skip utility shots — an F10 taken to document a mining deposit is not a portrait of the place.
+  const images = (galleryImages[gKey] || []).filter((i) => !i.utility);
+  if (images.length > 0) {
     return <img src={images[0].url} className="w-10 h-10 rounded object-cover shrink-0" loading="lazy" />;
   }
   return <span className="text-2xl shrink-0">{fallbackIcon}</span>;

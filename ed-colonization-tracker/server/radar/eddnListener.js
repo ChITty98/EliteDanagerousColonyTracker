@@ -21,7 +21,7 @@ import {
   addBuild, addAtmoLead, addScannedBody, addConflict, addPower, isNewToYou, isKnownPopulated,
   noteSystemVisitor,
 } from './radarState.js';
-import { isColonisableAtmosphere } from '../journal/scorer.js';
+import { isColonisableAtmosphere, ICY_SUBTYPES } from '../journal/scorer.js';
 import { pushRadarBeat } from '../ai/copilotRadar.js';
 import { noteColonisationEvent } from '../chains/chainWatch.js';
 
@@ -35,24 +35,73 @@ const BUILD_EVENTS = new Set([
 ]);
 const CONFLICT_STATES = new Set(['War', 'CivilWar', 'Civil war', 'Election']);
 
+// What the commander actually flies to see. `isColonisableAtmosphere` answers a DIFFERENT
+// question — whether a body can be built on — and says yes to carbon dioxide and methane, which
+// is right for the scorer and useless as an alert. These two are the ones worth an interrupt,
+// ammonia ranking above water, and ice balls are out even when they carry an atmosphere.
+const NOTABLE_ATMOS = ['oxygen', 'ammonia'];
+
+// How far out the VOICE is allowed to care. The screen is a 200 ly ambient scope
+// (RADAR_RANGE_LY) and that is right for a scope — but the co-pilot inherited it, so a rival
+// build 165 ly away got spoken aloud as a warning. Nothing at that range is actionable:
+// colonisation spreads by ~15 ly claim hops, making 50 ly about three hops of runway. That
+// figure is not new here — threatWatch.js already records it as the commander's stated
+// warning radius. Screen keeps everything; only the interrupt narrows.
+const VOICE_MAX_LY = 50;
+const withinVoiceRange = (distLy) => typeof distLy === 'number' && Number.isFinite(distLy) && distLy <= VOICE_MAX_LY;
+
+function isInterestingLead(atmo, planetClass) {
+  if (ICY_SUBTYPES.has(planetClass)) return false;
+  const a = String(atmo).toLowerCase();
+  return NOTABLE_ATMOS.some((n) => a.includes(n));
+}
+
+/** "Thin Oxygen" / "Hot thick Ammonia" -> "oxygen" — the type, never the composition. */
+function shortAtmo(atmo) {
+  const a = String(atmo).toLowerCase();
+  const hit = NOTABLE_ATMOS.find((n) => a.includes(n));
+  return hit || a.replace(/\s*atmosphere\s*/g, '').trim();
+}
+
 let client = null;
 let deps = null;
+
+// What the firehose costs, stated hourly so a metered connection is never a surprise: measured
+// 2026-09-04 at 23 msg/s and 21.6 KB/s compressed — about 1.8 GB a day.
+const volume = { msgs: 0, bytes: 0, hourMsgs: 0, hourBytes: 0, since: 0 };
+let volumeTimer = null;
+const mb = (b) => (b / 1048576).toFixed(1);
+function reportVolume() {
+  if (!volume.hourMsgs) return;
+  const hours = Math.max(1 / 60, (Date.now() - volume.since) / 3600e3);
+  console.log(`[Radar] EDDN this hour: ${volume.hourMsgs} msgs, ${mb(volume.hourBytes)} MB · since start ${mb(volume.bytes)} MB over ${hours.toFixed(1)} h (${mb(volume.bytes / hours * 24)} MB/day pace)`);
+  volume.hourMsgs = 0; volume.hourBytes = 0;
+}
+export function eddnVolume() { return { ...volume }; }
 
 export function startEddnListener(injected) {
   if (client) return;
   deps = injected || {};
+  if (!volume.since) volume.since = Date.now();
   client = connectSub(EDDN_HOST, EDDN_PORT, onRaw, (s) => {
     setEddnConnected(s === 'subscribed' ? true : (s === 'closed' || s.startsWith('error') ? false : undefined));
     if (s === 'subscribed' || s === 'closed' || s.startsWith('silence')) console.log(`[Radar] EDDN ${s}`);
   });
+  if (!volumeTimer) { volumeTimer = setInterval(reportVolume, 3600e3); if (volumeTimer.unref) volumeTimer.unref(); }
   console.log('[Radar] EDDN listener starting');
 }
 
 export function stopEddnListener() {
-  if (client) { client.stop(); client = null; }
+  if (client) {
+    client.stop(); client = null;
+    setEddnConnected(false);
+    reportVolume();
+    console.log(`[Radar] EDDN listener stopped (Settings) — ${mb(volume.bytes)} MB received this run`);
+  }
 }
 
 function onRaw(body) {
+  volume.msgs += 1; volume.bytes += body.length; volume.hourMsgs += 1; volume.hourBytes += body.length;
   let j;
   try {
     j = JSON.parse(zlib.inflateSync(body).toString('utf8'));
@@ -97,8 +146,8 @@ function onRaw(body) {
       distLy: Math.round(distLyFrom(pos) ?? 0),
     };
     addBuild(rec);
-    emitPing('build', rec);
-    pushRadarBeat('build', { distLy: rec.distLy, sys });
+    emitPing('build', rec); // the screen shows every build in the 200 ly scope
+    if (withinVoiceRange(rec.distLy)) pushRadarBeat('build', { distLy: rec.distLy, sys });
     return;
   }
 
@@ -109,14 +158,25 @@ function onRaw(body) {
     const entry = addScannedBody(sys, pos, m, false);
     const atmo = m.AtmosphereType || m.Atmosphere || '';
     if (atmo && isColonisableAtmosphere(atmo) && m.Landable) {
+      const planetClass = m.PlanetClass || '';
       const lead = {
-        sys, body: m.BodyName, atmo, pos, at: Date.now(),
+        sys, body: m.BodyName, atmo, planetClass, pos, at: Date.now(),
+        icy: ICY_SUBTYPES.has(planetClass),
+        interesting: isInterestingLead(atmo, planetClass),
         newToYou: isNewToYou(sys), live: true,
         distLy: Math.round(distLyFrom(pos) ?? 0),
       };
       addAtmoLead(lead);
       emitPing('lead', lead);
-      if (lead.newToYou) pushRadarBeat('lead', { distLy: lead.distLy, sys, body: m.BodyName });
+      // The SCREEN keeps every atmospheric lead; the VOICE only interrupts for oxygen or ammonia
+      // on a non-icy body. Before this it spoke for any atmosphere at all — a methane ice ball
+      // 152 ly out read identically to the thing actually worth flying to.
+      if (lead.newToYou && lead.interesting && withinVoiceRange(lead.distLy)) {
+        pushRadarBeat('lead', {
+          distLy: lead.distLy, sys, body: m.BodyName,
+          atmo: shortAtmo(atmo), planetClass,
+        });
+      }
     } else if (entry && entry.score && (entry.score.total ?? 0) > 0) {
       emitPing('scan', { sys, pos, at: Date.now() });
     }

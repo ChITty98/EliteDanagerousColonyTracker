@@ -149,11 +149,12 @@ function searchLocalJournal(
 }
 
 /**
- * Global roll-up of confirmed Brain Tree sites across every system (colony or
- * scouted), read straight from bodyFlags. Domain-agnostic on purpose — brain
- * trees aren't only in your colonies. Hidden when there are none.
+ * MOVED 2026-08-28 — this roll-up now lives on Architect's Domain under "Notable Surface", where
+ * it sits alongside the other things worth landing for. Exported rather than deleted because the
+ * domain version is scoped to the commander's own systems, and this one deliberately is not; if a
+ * galaxy-wide view is ever wanted again, it is intact.
  */
-function BrainTreeSitesPanel() {
+export function BrainTreeSitesPanel() {
   const bodyFlags = useAppStore((s) => s.bodyFlags);
   const sites = Object.entries(bodyFlags)
     .filter(([, f]) => f?.brainTrees)
@@ -662,6 +663,47 @@ export function ScoutingPage() {
     }
   }, [upsertScoutedSystem, systems, colonizedSystems, scoutedSystems, journalExplorationCache]);
 
+  // --- Encroachment watch list (server-side, shared with the Threats page) ---
+  // Held here as name -> flag id so the shield can render filled and unflag in one click.
+  const [watchedIds, setWatchedIds] = useState<Record<string, string>>({});
+  const watchedNames = useMemo(() => new Set(Object.keys(watchedIds)), [watchedIds]);
+
+  const threatUrl = useCallback((p: string) => {
+    let t: string | null = null;
+    try { t = sessionStorage.getItem('colony-token') || localStorage.getItem('colony-token'); } catch { /* no storage */ }
+    return t ? `${p}${p.includes('?') ? '&' : '?'}token=${t}` : p;
+  }, []);
+
+  const loadWatched = useCallback(() => {
+    fetch(threatUrl('/api/threats'))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        const map: Record<string, string> = {};
+        for (const w of d.watched || []) if (w?.name) map[String(w.name).toLowerCase()] = w.id;
+        setWatchedIds(map);
+      })
+      .catch(() => { /* the shield just stays hollow */ });
+  }, [threatUrl]);
+
+  useEffect(() => { loadWatched(); }, [loadWatched]);
+
+  const toggleWatch = useCallback(async (name: string) => {
+    const key = name.toLowerCase();
+    const existing = watchedIds[key];
+    try {
+      if (existing) {
+        await fetch(threatUrl(`/api/threats?id=${encodeURIComponent(existing)}`), { method: 'DELETE' });
+      } else {
+        await fetch(threatUrl('/api/threats'), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+      }
+    } catch { /* surfaced on the Threats page, not worth a toast here */ }
+    loadWatched();
+  }, [watchedIds, threatUrl, loadWatched]);
+
   // --- Toggle favorite on a scouted system ---
   const toggleFavorite = useCallback((id64: number) => {
     const existing = scoutedSystems[id64];
@@ -1024,7 +1066,9 @@ export function ScoutingPage() {
         </div>
       </div>
 
-      <BrainTreeSitesPanel />
+      {/* Brain Tree sites moved to Architect's Domain (Notable Surface) 2026-08-28 — this page is
+          about finding NEW systems, and a roll-up of confirmed sites you already hold sat oddly at
+          the top of it. */}
 
       {/* Comparison bar — sticky when systems selected */}
       {compareIds.length > 0 && (
@@ -2019,6 +2063,24 @@ export function ScoutingPage() {
                       title={isFav ? 'Remove from favorites' : 'Add to favorites'}
                     >
                       {isFav ? '\u2605' : '\u2606'}
+                    </button>
+
+                    {/* Encroachment watch \u2014 distinct from a favourite. A star says "interesting";
+                        this says "mine to lose", and puts a 50 ly threat radius around it. */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleWatch(sys.search.name); }}
+                      className={`text-sm shrink-0 transition-colors ${
+                        watchedNames.has(sys.search.name.toLowerCase())
+                          ? 'text-sky-400 hover:text-sky-200'
+                          : 'text-muted-foreground/25 hover:text-sky-400'
+                      }`}
+                      title={
+                        watchedNames.has(sys.search.name.toLowerCase())
+                          ? 'Watched for encroachment \u2014 click to stop watching'
+                          : 'Watch for encroachment within 50 ly'
+                      }
+                    >
+                      {'\u{1F6E1}\u{FE0F}'}
                     </button>
 
                     {/* Compare toggle */}

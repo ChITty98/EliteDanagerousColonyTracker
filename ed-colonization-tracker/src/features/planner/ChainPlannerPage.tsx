@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/store';
 import { searchNearbySystems } from '@/services/spanshApi';
 import {
@@ -28,6 +29,15 @@ export function ChainPlannerPage() {
 
   // Input state
   const [targetName, setTargetName] = useState('');
+
+  // Prefilled from ?target= — lets a flagged system on the Threats page hand straight over to route
+  // planning. Applied once on mount only, so it never fights the user's own typing afterwards.
+  const [searchParams] = useSearchParams();
+  useEffect(() => {
+    const t = searchParams.get('target');
+    if (t) setTargetName(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [startSystemId, setStartSystemId] = useState<string>('auto');
   const [customStartName, setCustomStartName] = useState('');
   const [maxHops, setMaxHops] = useState(3);
@@ -944,6 +954,18 @@ function NodeDetail({ node, prevNode, hopIndex }: { node: ChainNode; prevNode?: 
           {hopDist > 0 && (
             <span className="text-xs text-muted-foreground">{hopDist.toFixed(1)}ly</span>
           )}
+          {/* A name and a score are not enough to judge a hop. New tab deliberately: an in-tab
+              navigation would throw away the route you just spent a search building. */}
+          <a
+            href={`/system-view?system=${encodeURIComponent(node.name)}`}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-[10px] text-cyan-400 hover:text-cyan-300 border border-cyan-500/30 rounded px-1.5 py-0.5"
+            title={`Open ${node.name} in System View`}
+          >
+            {'\u{1F50D}'} view
+          </a>
           {node.score && (
             <span className={`text-xs font-bold ${
               node.score.total >= 100 ? 'text-yellow-300' :

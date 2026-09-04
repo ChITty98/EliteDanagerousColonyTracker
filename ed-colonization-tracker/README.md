@@ -4,6 +4,8 @@ A comprehensive companion app for **Elite Dangerous** colonization gameplay. Tra
 
 Built with React, TypeScript, and Node.js. Runs as a standalone Windows `.exe` — no install required.
 
+**Current release: 1.57.0** — see [CHANGELOG.md](CHANGELOG.md) for what changed and when. The app follows a journal-first rule: everything below works from the game's own journal files; external services only add to it.
+
 ---
 
 ## Features
@@ -75,6 +77,27 @@ Deep-dive into any system with three tabs:
 - **Bodies** — full body tree with star/planet hierarchy, atmosphere classification, gravity, rings, volcanism. Supports journal scans and Spansh data. "Prime" indicators for high-value colonization targets.
 - **Nearby Candidates** — expansion scouting from this system
 
+### Asteroid Mining
+A mining assist for ring mining, built only from measured data. Every prospected rock gets an expected credit total, not just a material list: proportion → tonnes through a per-material yield table calibrated from your own log, tonnes → credits at the best live non-carrier buyer within 500 ly (Ardent) or your own visited-market average. "Worth it" is the median rock of the ring you are in, from your own history, never a fixed number. Target hits fire regardless of value, stalls are reported as facts (silence, limpets, last collector launch) rather than guessed causes, and hold warnings use effective ore space. Hotspots are attributed from the nav lock, rings are indexed from your DSS scans, and trophies and streaks accumulate per session.
+
+### Surface Mining
+The Rhino's page: bodies → signals → deposits, in the order you navigate. Nav-lock a "Planetary Mining Location Signal (N)" before you drop and the visit is filed under it; a login on the surface starts a new visit. Live hero with this visit's tonnes, value and pace; a compass to any deposit, the ship or a recall spot; a signal map from the breadcrumb track with driven distance, climb and speed; F10 screenshots become deposit markers; tags from orbit, landing and driving ratings per signal, rigs per deposit (a full rig is 12 t since the 4 September 2026 patch), brain-tree groves and harvests, and "Where to go back" ranked by credits per hour of being there. One price rules the page: your best market in the last 30 days within 10,000 ly, else the game's own galactic average.
+
+### Sell Cargo
+Your ship's hold and your carrier's cargo, priced three ways with a place for each: **here** (the station you are docked at), **local** (the best of your own market records and Ardent's buyers within 20/50/100/500 ly), and **galaxy** (one carrier jump out, or the overall top of book). Tonnes × price on every line, a sell-everything total per column, any of 335 commodities searchable, a "trade nearby" board of lowest buy → highest sell pairs per load of your ship, and a year of price history per commodity: every market you open, a daily galaxy sample, and your own sales. A buyer showing 999,999 demand is tagged as a Community Goal.
+
+### Fleet Carrier ledger
+Carrier cargo is tracked transactionally: every transfer while docked at your carrier, your own buys and sells against its market, and tritium to the tank, replayed from the journals since the carrier was bought. That is exact for ore and anything without a trade order; sell orders are reconciled from the carrier's market read, the game's CarrierStats total is the check, and the remainder is shown as "not itemised". A baseline typed from the carrier's inventory screen anchors what the journal cannot count.
+
+### Co-pilot
+A voiced co-pilot with three personas — Wren, Tycho and K2 — that react to what you are doing: jumps, docks, scans, hauling, mining, threats, GalNet news. Lines come from a curated canned corpus or, when the local Claude command line is available, live generation with a breaker that falls back to canned. Humour and honesty are dials in Settings; the voice runs through the app's own speech path (Wren through a comms filter, the machines dry).
+
+### Proximity Radar, Chain Watch and Threats
+The radar listens to the EDDN firehose and shows what tool-running commanders are doing within 200 ly: builds, atmospheric leads, scans, conflicts. Chain Watch turns colonisation events and Spansh records into named chains near your regions. Threats watches a 50 ly sphere around systems you have flagged as yours to lose. All of it is off with one switch in Settings, because the EDDN feed is about 1.8 GB a day inbound.
+
+### Rewards, Materials, Sights, System View and Wiki
+**Rewards** states facts about mission and reward options, never a verdict. **Materials** shows your engineering material inventory from the journal, trader yields and blueprint capacity. **Sights** is the postcard ledger of places you have been, with photos per location. **System View** is an orrery of the current system. The **Wiki** holds the author's scouting reference — mass codes, atmosphere rarity, dramatic skies — and the journal facts behind surface mining and selling.
+
 ---
 
 ## Architecture
@@ -112,14 +135,19 @@ Any device on your local network can access the app at `http://<your-pc>:5173?to
 
 iPad, iPhone, Surface, any Firefox or Safari browser gets full functionality — including Sync All, FC cargo refresh, and project management. The File System Access API is no longer required (server owns journal access).
 
-### External API Integrations
-| API | Purpose | Proxy Route |
-|-----|---------|-------------|
-| [Spansh](https://spansh.co.uk) | System dumps, body data, nearby search | `/spansh-api/*` |
-| [EDSM](https://www.edsm.net) | System coordinates, traffic data | `/edsm-api/*` |
-| [Ardent Insight](https://ardent-insight.com) | Live commodity prices and stock | `/ardent-api/*` |
+### External Services
+| Service | Used for | How often | Without it |
+|---------|----------|-----------|------------|
+| [Spansh](https://spansh.co.uk) | Scouting, threats, chain watch seed, radar lookback, War & Peace | User-driven at 1.1 s spacing; chain seed once; lookback at most every 5 min; War & Peace cached until the weekly tick | Scouting, threats and lookback stop |
+| [EDSM](https://www.edsm.net) | Arrival traffic, factions, colony watch | Once per jump (10 min cache); at most 5 calls per dock | Arrival overlays lose the traffic line |
+| [Ardent Insight](https://ardent-insight.com) | Live commodity buyers and prices (EDDN-fed) | Hourly per commodity, cached; Sell page lookups cached an hour; a daily history sample | Prices fall back to your own markets, then the galactic average |
+| EDDN firehose (`eddn.edcd.io:9500`) | Proximity radar and chain watch | Always on while enabled — about 1.8 GB a day inbound | Radar and chain watch dormant. Switch in Settings |
+| GalNet CMS | Co-pilot news beat | Every 30 min | No news lines |
+| BGS tick service | Tick awareness | Every 15 min | Tick features dormant |
+| GitHub Releases | Update banner | On boot and every 6 h | No update banner |
+| Local `claude` command | Co-pilot live lines | One at a time, 20 s timeout, breaker | Canned lines |
 
-All API calls are proxied through the server to avoid CORS issues. The app follows a **journal-first philosophy** — every feature must work without external APIs. APIs supplement journal data, never replace it.
+Browser-side calls are proxied through the server (`/spansh-api/*`, `/edsm-api/*`, `/ardent-api/*`) to avoid CORS. Nothing the journals feed needs the network; every external call fails quiet with a fallback.
 
 ### Gallery
 Screenshots stored server-side in `colony-images/` folder. Upload from any device including iOS camera. Images associated with systems and displayed on system detail pages, dashboard cards, and Architect's Domain.
@@ -176,9 +204,9 @@ npm install
 npm run build:exe
 
 # Run it
-./ed-colony-tracker.exe
+./ed-colony-architect.exe
 ```
-The build produces two artifacts: `ed-colony-tracker.exe` (standalone — bundles Node.js, no install needed) and `ed-colony-tracker.bat` (a fallback launcher that requires Node.js installed on the machine). Use the .exe when available.
+The build produces two artifacts: `ed-colony-architect.exe` (standalone — bundles Node.js, carries the app icon and version info, no install needed) and a `.bat` fallback launcher that requires Node.js installed on the machine. Use the .exe when available.
 
 **Option 2: Development Mode**
 ```bash
@@ -197,11 +225,9 @@ npm start          # Serves built files + API
 
 ### First Launch
 1. The app opens Chrome automatically at `http://localhost:5173`
-2. Go to **Settings** → click **Select Journal Folder**
-3. Navigate to `C:\Users\<You>\Saved Games\Frontier Developments\Elite Dangerous`
-4. Grant read permission when prompted
-5. Go to **Dashboard** → click **Import from Journal** to detect existing colonies
-6. Start a play session and the journal watcher will track everything automatically
+2. The journal folder is auto-detected (`C:\Users\<You>\Saved Games\Frontier Developments\Elite Dangerous`); set an override in **Settings** only if yours lives elsewhere
+3. Go to **Dashboard** → click **Sync All from Journal** to detect existing colonies and build the knowledge base
+4. Play. The server-side journal reader tracks everything from then on; the mining and carrier ledgers backfill themselves from your journal history on first run
 
 ### Network Access (iPad/Phone)
 The console shows a URL like:
@@ -222,6 +248,9 @@ Open this on any device on the same network. Bookmark it on your iPad for quick 
 - **Squadron Carriers** — track multiple fleet carriers
 - **Domain Highlights** — configure which star types, atmosphere types, and station types appear as showpieces
 - **Overlay** — enable/disable, connection status, test button
+- **Co-pilot** — persona (Wren, Tycho, K2), humour and honesty dials, voice
+- **Proximity radar** — the EDDN feed on or off (default on); a flip takes effect within a minute
+- **Journal folder** — auto-detected; an override field for a non-standard location
 - **Data Management** — export/import JSON backups, reset
 
 ### Domain Highlights
@@ -234,14 +263,23 @@ Toggleable chips for each category:
 
 ## Data Files
 
-| File | Purpose | Auto-created |
-|------|---------|-------------|
-| `colony-data.json` | All app state (projects, systems, settings, sessions) | Yes |
-| `colony-token.txt` | Auth token for network access | Yes |
-| `colony-gallery.json` | Image metadata | Yes |
-| `colony-images/` | Screenshot files | Yes |
+| File | Purpose |
+|------|---------|
+| `colony-data.json` | All app state (projects, systems, settings, sessions, market snapshots, carrier record) |
+| `colony-token.txt` | Auth token for network access |
+| `colony-gallery.json`, `colony-images/` | Screenshot metadata and files |
+| `backups/` | Timestamped recovery snapshots of the state file |
+| `mining-log.jsonl` | Append-only rock log for asteroid mining |
+| `mining-rings.json`, `mining-trophies.json`, `mining-annotations.json` | Ring and hotspot index from your scans, trophies and streaks, your notes |
+| `surface-mining-log.jsonl`, `surface-mining-annotations.json`, `surface-track.jsonl` | Surface mining ledger, your tags and ratings, the breadcrumb track |
+| `market-means.json` | The game's galactic averages, from every market you open |
+| `market-history.jsonl` | A year of price history: market reads, daily Ardent samples, your own sales |
+| `carrier-ledger.jsonl` | The carrier cargo transaction ledger |
+| `journal-stats.json` | Lifetime statistics from the journal |
+| `chain-watch.json` | The chain-watch frontier ledger |
+| `copilot-memory.json`, `copilot-captures.jsonl`, `copilot-characters/` | Co-pilot memory, captured lines and ratings, persona portraits |
 
-All files live next to the executable. Back up `colony-data.json` to preserve your data.
+All files are created automatically, live next to the executable, and are ignored by git. Back up `colony-data.json` and the `.jsonl` ledgers to preserve your data.
 
 ---
 
@@ -254,25 +292,43 @@ ed-colonization-tracker/
 │   ├── components/             # Shared UI components
 │   ├── data/                   # Static datasets (commodities, station types, installations)
 │   ├── features/
-│   │   ├── carrier/            # Fleet carrier page
+│   │   ├── carrier/            # Fleet carrier page (transaction ledger, baselines)
+│   │   ├── chains/             # Chain Watch
 │   │   ├── companion/          # iPad companion page
+│   │   ├── copilot/            # Co-pilot page and persona picker
 │   │   ├── dashboard/          # Dashboard, tier utils, system cards
 │   │   ├── domain/             # Architect's Domain page + helpers
-│   │   ├── faq/                # FAQ & Help page
+│   │   ├── faq/, wiki/         # FAQ & Help, the reference wiki
 │   │   ├── journal-stats/      # Journal history scanner
-│   │   ├── map/                # Colony map (SVG)
+│   │   ├── map/, system-view/  # Colony map (SVG), orrery
+│   │   ├── materials/          # Engineering materials
+│   │   ├── mining/             # Asteroid mining page and HUD
 │   │   ├── planner/            # Chain route planner
 │   │   ├── projects/           # Project CRUD pages
-│   │   ├── scouting/           # Expansion scouting
+│   │   ├── radar/, threats/    # Proximity radar, threat watch
+│   │   ├── rewards/            # Reward decision support
+│   │   ├── scouting/           # Expansion scouting, scout map
+│   │   ├── sell/               # Sell Cargo
 │   │   ├── sessions/           # Play session tracking
 │   │   ├── settings/           # Settings page
+│   │   ├── sights/             # Postcard ledger
 │   │   ├── sources/            # Commodity source finder
-│   │   └── systems/            # System detail, bodies tab, nearby tab
+│   │   ├── surface-mining/     # Surface (Rhino) mining page
+│   │   ├── systems/            # System detail, bodies tab, nearby tab
+│   │   └── war-peace/          # BGS conflicts
 │   ├── lib/                    # Core algorithms (pathfinder, scorer, utils)
 │   ├── services/               # External integrations (journal, overlay, APIs)
 │   ├── store/                  # Zustand store, types, gallery store
 │   └── styles/                 # Global CSS
-├── build-exe.mjs               # Standalone exe builder
+├── server/
+│   ├── ai/                     # Co-pilot: personas, beats, arbiter, voice, canned corpus
+│   ├── chains/                 # Chain watch and threat watch
+│   ├── journal/                # Journal reader, processors, mining, surface mining, ledgers, prices
+│   ├── radar/                  # EDDN listener (hand-rolled ZMTP), radar state
+│   └── update/                 # Self-update check
+├── tests/                      # Vitest suites (run with `npm test`)
+├── scripts/, tools/            # Generators (price mirror) and repair tools
+├── build-exe.mjs               # Standalone exe builder (esbuild bundle → Node SEA → icon)
 ├── server.mjs                  # Dev/production server
 ├── vite.config.ts              # Vite configuration
 └── package.json
@@ -284,11 +340,13 @@ ed-colonization-tracker/
 
 The app reads and processes these Elite Dangerous journal events:
 
-**Navigation**: FSDJump, Location, SupercruiseEntry, Docked
-**Exploration**: FSSDiscoveryScan, Scan, SAAScanComplete, FSSAllBodiesFound
-**Colonization**: ColonisationSystemClaim, ColonisationBeaconPlaced, ColonisationConstructionDepot, ColonisationContribution
-**Ship**: Loadout, ShipyardSwap, Cargo.json, Market.json
-**Fleet Carrier**: CarrierJump, CarrierStats, CarrierDepositFuel
+**Navigation**: FSDJump, Location, SupercruiseEntry, SupercruiseExit, Docked, Undocked, Status.json (position, heading, altitude, nav lock)
+**Exploration**: FSSDiscoveryScan, Scan, SAAScanComplete, SAASignalsFound, FSSAllBodiesFound, CodexEntry, Screenshot
+**Colonization**: ColonisationSystemClaim, ColonisationBeaconDeployed, ColonisationConstructionDepot, ColonisationContribution
+**Ship**: Loadout, ShipyardSwap, Cargo.json, Market.json (including MeanPrice), MarketBuy, MarketSell
+**Mining**: ProspectedAsteroid, MiningRefined, LaunchSRV, DockSRV, Cargo (Vessel SRV), CargoTransfer
+**Fleet Carrier**: CarrierBuy, CarrierJump, CarrierStats, CarrierDepositFuel, CarrierTradeOrder, CargoTransfer
+**Materials**: Materials, MaterialCollected
 
 ---
 

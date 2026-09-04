@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useAppStore } from '@/store';
 import { selectJournalFolder, isFileSystemAccessSupported, getJournalFolderHandle } from '@/services/journalReader';
+import { ensureAudio } from '@/services/copilotVoice';
 import {
   ALL_STAR_TYPES,
   ALL_ATMO_TYPES,
@@ -196,7 +197,7 @@ export function SettingsPage() {
                 value={settings.myFleetCarrier}
                 onChange={(e) => updateSettings({ myFleetCarrier: e.target.value.toUpperCase() })}
                 className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-primary font-mono"
-                placeholder="e.g. Q8W-T6Z"
+                placeholder="e.g. K7X-2QT"
                 maxLength={7}
               />
               <p className="text-xs text-muted-foreground mt-1">
@@ -647,6 +648,24 @@ function OverlaySection({
 
   return (
     <div className="border-t border-border pt-6">
+      {/* Proximity radar — the one feed that costs real bandwidth. Default on; a flip reaches the
+          exe within a minute (it re-reads the setting) and stops the EDDN socket and chain watch. */}
+      <h3 className="text-sm font-semibold text-foreground mb-4">{'\u{1F4E1}'} Proximity Radar</h3>
+      <div className="space-y-2 mb-8">
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={settings.radarEnabled !== false}
+            onChange={(e) => updateSettings({ radarEnabled: e.target.checked })}
+            className="w-4 h-4 accent-primary"
+          />
+          <span className="text-sm text-foreground">Proximity radar and chain watch (EDDN live feed)</span>
+        </label>
+        <p className="text-xs text-muted-foreground ml-7">
+          Subscribes to the EDDN firehose the whole time the exe runs — about 1.8 GB a day inbound, whether or not the Radar page is open. Turn it off on a metered connection; the exe notices within a minute, and everything else keeps working. The log reports the hourly volume while it is on.
+        </p>
+      </div>
+
       <h3 className="text-sm font-semibold text-foreground mb-4">{'\u{1F3AE}'} In-Game Overlay</h3>
 
       <div className="space-y-4">
@@ -699,6 +718,39 @@ function OverlaySection({
             className="w-4 h-4 accent-primary"
           />
           <span className="text-sm text-foreground">Co-pilot pop-up (portrait + line on any tab when they speak)</span>
+        </label>
+
+        {/* Live generation on/off. ON by default. Off runs the co-pilot from the canned +
+            promoted pools alone — instant and free. It is also the way back when the `claude`
+            CLI wedges: a blocked credential read makes it HANG rather than fail, so every beat
+            sits out the 60-second timeout and the co-pilot reads as dead. */}
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={settings.copilotLiveEnabled !== false}
+            onChange={(e) => updateSettings({ copilotLiveEnabled: e.target.checked })}
+            className="w-4 h-4 accent-primary"
+          />
+          <span className="text-sm text-foreground">
+            Co-pilot live generation (uses the local <code className="text-xs">claude</code> CLI)
+            <span className="text-muted-foreground"> — off = canned lines only, instant and free</span>
+          </span>
+        </label>
+
+        {/* Spoken lines. Off by default. ensureAudio() rides THIS click because it is a real
+            user gesture — browsers refuse to start an AudioContext without one, and if the
+            commander only ever enables voice from here the Cockpit toggle may never be pressed. */}
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={settings.copilotVoiceEnabled === true}
+            onChange={(e) => { ensureAudio(); updateSettings({ copilotVoiceEnabled: e.target.checked }); }}
+            className="w-4 h-4 accent-primary"
+          />
+          <span className="text-sm text-foreground">
+            Co-pilot voice (speak lines aloud)
+            <span className="text-muted-foreground"> — Windows only; silent on other machines</span>
+          </span>
         </label>
 
         {/* Connection status */}

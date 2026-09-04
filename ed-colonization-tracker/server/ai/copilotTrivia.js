@@ -1,10 +1,10 @@
 // server/ai/copilotTrivia.js
 //
-// TARS's trivia game — multiple-choice, hosted by TARS. Two kinds of question:
+// Tycho's trivia game — multiple-choice, hosted by Tycho. Two kinds of question:
 //   1. PERSONAL — computed from the commander's OWN data (most-docked station, largest
 //      colony, …). Right answer AND distractors are pulled from real data. ANTI-INVENTION:
 //      a generator returns null when the data can't truthfully answer it.
-//   2. ASTRONOMY — a curated bank of REAL space science (TARS's teacher domain).
+//   2. ASTRONOMY — a curated bank of REAL space science (Tycho's teacher domain).
 // buildTriviaRound() mixes them into a shuffled round. See [[reference_tars_persona_spec]].
 
 function shuffle(a) {

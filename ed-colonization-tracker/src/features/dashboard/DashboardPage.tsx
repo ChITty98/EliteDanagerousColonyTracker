@@ -262,6 +262,21 @@ export function DashboardPage() {
   const [scoringProgress, setScoringProgress] = useState<{ done: number; total: number } | null>(null);
   const scoringAbortRef = useRef(false);
 
+  // Lifetime mission rewards. Comes from the server's journal scan rather than the store, because
+  // the store's journalStats is the game's Statistics snapshot and does not carry it.
+  const [missionEarnings, setMissionEarnings] = useState(0);
+  useEffect(() => {
+    let t: string | null = null;
+    try { t = sessionStorage.getItem('colony-token') || localStorage.getItem('colony-token'); } catch { /* no storage */ }
+    fetch(t ? `/api/journal-stats?token=${t}` : '/api/journal-stats')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const cr = d?.stats?.missionEarnings;
+        if (typeof cr === 'number' && cr > 0) setMissionEarnings(cr);
+      })
+      .catch(() => { /* the stat just stays hidden */ });
+  }, []);
+
   // --- Summary stats ---
   const summaryStats = useMemo(() => {
     const sessionStats = aggregateSessionStats(sessions);
@@ -827,6 +842,7 @@ export function DashboardPage() {
         totalPopulation={totalPopulation}
         totalTonnage={summaryStats.totalTonnage}
         totalHours={summaryStats.totalHours}
+        missionEarnings={missionEarnings}
         activeBuilds={activeProjects.length}
       />
 

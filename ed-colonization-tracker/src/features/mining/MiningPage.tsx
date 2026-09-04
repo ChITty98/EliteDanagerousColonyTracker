@@ -12,6 +12,7 @@
  * the commander mines every tonne alone.
  */
 import { useEffect, useMemo, useState, useCallback } from 'react';
+import { formatRingName } from '@/lib/ringNames';
 import { useAppStore } from '@/store';
 import { sseSubscribe } from '@/services/sseBus';
 import {
@@ -312,7 +313,7 @@ export function MiningPage() {
                       {r.prospects > 1 && <span className="ml-1" title="re-prospected">×{r.prospects}</span>}
                     </td>
                     <td className="px-3 py-2 text-xs">
-                      <div>{r.hotspot && <span className="mr-1 text-amber-400" title="mined in a hotspot">{'◉'}</span>}{r.ring || r.sys || '—'}</div>
+                      <div>{r.hotspot && <span className="mr-1 text-amber-400" title="mined in a hotspot">{'◉'}</span>}{formatRingName(r.ring) || r.sys || '—'}</div>
                       <div className="text-muted-foreground">{[ringClassText(r.ringClass), r.reserve, r.content].filter(Boolean).join(' · ')}</div>
                     </td>
                     <td className="px-3 py-2">
@@ -465,7 +466,7 @@ export function MiningPage() {
                   <span className={`text-[10px] font-bold tracking-widest ${i === 0 ? 'text-amber-300' : 'text-muted-foreground'}`}>#{i + 1}{i === 0 ? ' · BEST BET' : ''}</span>
                   <span className="text-[10px] text-muted-foreground">{r.source === 'journal' ? 'your map' : 'spansh'}</span>
                 </div>
-                <div className="mt-1 text-sm font-semibold leading-tight">{r.ring}</div>
+                <div className="mt-1 text-sm font-semibold leading-tight">{formatRingName(r.ring)}</div>
                 <div className="mt-1 text-xs text-muted-foreground whitespace-nowrap">
                   {r.ringClass ? ringClassText(r.ringClass) : ''} <span className={RESERVE_TONE[r.reserve] ?? ''}>{r.reserve}</span>
                 </div>
@@ -505,7 +506,7 @@ export function MiningPage() {
                 {rings.map((r) => (
                   <tr key={`${r.source}:${r.ring}`} className="border-t border-border/60">
                     <td className="px-3 py-2">
-                      <div className="font-medium">{r.ring}</div>
+                      <div className="font-medium">{formatRingName(r.ring)}</div>
                       <div className="text-xs text-muted-foreground">
                         {r.source === 'journal' ? 'your map' : 'spansh'}
                         {r.measuredTph != null && (

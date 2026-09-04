@@ -2,6 +2,145 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.57.0] — 2026-09-04
+
+### Added
+- **Sell Cargo — a page for the other half of mining.** Your ship's hold (Cargo.json) and your carrier's goods at the top; below them one row per commodity with three prices, each with a place: **here** (the station you're docked at, from its snapshot), **local** (the best of your own markets and Ardent's buyers within 20/50/100/500 ly) and **galaxy** (Ardent within one carrier jump, or the overall top of book when it beats that, with its distance). Tonnes × price on every cell and a *sell everything* total per column. A buyer whose demand can't take your load is skipped. Your own records beat Ardent when newer and add the stations nobody uploads — marked *only in your records*. Search any of 335 commodities to price one you don't hold, with a tonnage of your choosing.
+- **Trade nearby.** Lowest buy with stock for a load → highest sell with demand for it, within the same range, from Ardent's per-system boards for the populated systems you know plus your own records, ranked by profit per load of the ship you're in. Freshness on both legs, because a stale leg is how arbitrage goes wrong.
+- **Price history, from today.** Nobody keeps one — Ardent has no time series and its summary report is 16 months stale and blind to the 2026 commodities — so the app now records every market you open (movers and first-of-day only), a daily galaxy-wide sample from Ardent's live buyers for the surface commodities and anything you hold or searched, and your own sales from the last year of journals. Sparkline under each commodity; tap the name for the 12-month chart. A year of retention, pruned on load. Ask "is 240k an aberration?" again in a few weeks.
+- **The exe has an icon.** The build sets the app icon and Windows version info (file description, product name, version from package.json) on the Node binary before the app is injected — it wore Node's icon and said "Node.js" in Task Manager until now.
+- **Docs refreshed.** Both READMEs describe every page as of 1.57.0, list every data file the exe writes, and carry the external-services table with cadences and fallbacks; the FAQ gained Asteroid Mining, Materials and Architect's Domain entries; the wiki's stale dictated-prices and 9/9 lines are gone, the co-pilot cast is Wren, Tycho and K2, and the scouting reference now says whose home colony it is about.
+- **A signal is worth its best three.** "Rank by expected value" and the Domain page's Richest Signals now sum a signal's three highest-priced expected commodities, not all six — the Rhino's refinery holds three.
+- **Community goals on the Sell page.** A buyer showing demand of 999,999 is a Community Goal market (Metz Enterprise in Ega, September 2026, paying 8× the galactic average for the surface commodities); it is tagged *community goal · limited time* rather than treated as a normal buyer.
+- **Radar switch.** The proximity radar's EDDN firehose is the exe's one greedy feed — measured at 23 messages and 21.6 KB a second, about 1.8 GB a day inbound, running whether or not the Radar page is opened. Settings → *Proximity radar* (default on) now gates it and the chain watch; a flip takes effect within a minute, and the log reports the hourly volume.
+- **Carrier cargo, transactionally.** The journal records every move you make at your own carrier — transfers while docked at it, your buys and sells against its market, tritium to the tank — so a replay from CarrierBuy is exact for anything nobody else can touch: mined ore, goods without an order (verified on the commander's carrier: Rhodplumsite 159 = 203 mined − 44 on the ship). It is blind to visitors trading against your orders, so the carrier's own market read is the truth for sell orders (each correction is a *reconcile* line) and CarrierStats, written at every dock and jump, is the total. The Fleet Carrier page shows tonnes aboard per the game, tonnes itemised, and the remainder as *not itemised* instead of hiding it; recent transactions listed; the Sell page's carrier card uses the same figures. `carrier-ledger.jsonl` beside the exe. This replaces "only goods with a sell order are visible." Anything that was ever on a sell order and has not been anchored by a market read is named, not counted — a visitor could have taken any of it — and a **baseline** typed from the carrier's inventory screen (or *none*) anchors it as a dated transaction.
+- **Notable Surface sees the groves.** The Domain page's brain-tree panel read only the flag set by hand on the System Bodies tab, so a grove pinned from the Surface Mining page (2 b, tonight) never appeared. It now unions the surface ledger's groves — pins and Codex sites — with grove counts and harvested units. And a **Most Hotspots** record card, from your own DSS scans, next to Most Mining Signals.
+- **A login on the surface is a visit boundary.** Logging out on a body and back in writes no supercruise drop, so 1 b's Signal 7 — worked across two evenings, 230 t, the most valuable visit on file — read as one 20-hour visit at 2.5 M/h and sat eighth on *Where to go back*. The journal's Location event at login now becomes a resumed drop inheriting the signal, live and from the backfill, so each evening keeps its own clock and the card shows the visits.
+- **A full rig is 12 t** since Frontier's patch of 4 September 2026 (02:00 Central); collections before it still divide by 9. The number is fixed in the app now — the `full rig =` control is gone, because Frontier sets it, not the commander.
+- The 2026 commodities are unknown to Ardent's summaries but present in its live listings; today's top buyers of Thortveitite, Periclase Dunite and Iridium pay 1.5–3.7× Atmo Sky Cairn's 240k. **Colonia is ignored** — anything beyond 10,000 ly of you is not your galaxy, for the top of book and for the history sample alike (and from Colonia, the bubble is what gets ignored).
+
+## [1.56.0] — 2026-09-03
+
+### Added
+- **Surface Mining — a page for the Rhino, to the standard of the asteroid page.** Its own ledger (`surface-mining-log.jsonl`), separate from the rock log, because surface mining has no rock: it is a fixed deposit at a latitude and longitude, found under a *signal* — the game's "Planetary Mining Location Signal (N)" — and emptied in bursts. Bodies → signals → deposits, in the order you navigate. Live hero with this visit's tonnes, value and pace; the nav-locked signal from orbit with a one-line tagger; Needs a DSS grouped by system with planet class and ice greyed; Where to go back ranked by credits per hour per signal; measured yield charts; surface materials with grade and room.
+- **The signal is the game's own index.** Nav-lock it before you drop and the visit is filed under Signal N via the Status.json token, exactly as ring hotspots are attributed. No lock: type the number (Enter = this visit is really Signal N; *moved here* = new visit from now). Drops the exe missed are restored from the journal at boot.
+- **Signal counts you can see but the journal withholds.** Only a DSS writes the count (verified across 582 journal files: no other event ever carries it), so the Needs-a-DSS card takes the number from the system map; a DSS replaces it, an empty Enter clears it.
+- **Tagging from orbit, built for the iPad.** Chips from what this body and this system have already shown; *edit* / *done* keep rows compact; six commodities per signal (the commander's observation); × retracts a mistaken tag append-only; pulled commodities count as expected and cannot be re-tagged. **Find** chips filter every signal by what it holds; **rank by expected value** orders them by one-deposit-of-each price.
+- **F10 shots become deposits.** A surface screenshot is a marker until it is named — from the signal's own chips or typed — then a deposit, re-encoded from a 31 MB BMP to JPEG, hidden from the place galleries, removable once logged (original only if ticked).
+- **Landing and driving ratings per signal**, 1 easy to 5 brutal. Landing is filed under the hull from the journal with its pad size; the Caspian Explorer and the Type-11 Prospector ask for a size once and remember it. Shown on rows and on the go-back cards.
+- **Prices you dictate.** A server-side mirror of the price table (generated, drift-tested) feeds the overlay and the page from one place. Ruby 74,000 · Thortveitite 130,000 · Rhodplumsite 171,300 · Grandidierite 185,000 · Periclase Dunite 129,000 · Magnesite 31,985 · Deuterium 34,000 · Olivine 26,242 · Sapphire 81,044 · Helium 73,920 · Bastnasite 66,401.
+- **Two overlay lines of its own.** Per tonne: `⛏ Thortveitite +1t @ 130k · 12t this collection · Signal 7`. When a collection ends: the visit total. The visit figure no longer rides every tonne, where a Deuterium tonne read as if it were worth 22 M.
+- **A compass.** *Steer here* on a deposit, a signal's recall spot, or *back to the ship* sets one target; every Status tick gives distance, bearing and turn on the overlay, in the hero and on a big Companion card for the iPad. Within 50 m it says you're there and clears. Third-party apps track your coordinates the same way — from Status.json — but none can see what you target from the SRV (verified live: `Destination` stays null), so the target is yours to set.
+- **Signal maps and recall spots.** Each signal panel draws local metres around the signal: deposits sized by tonnage and coloured by commodity, the ship's landing, your live position and heading, and your drive as a line (a breadcrumb track, recorded from this build on). The recall spot is the tonnage-weighted least-total-driving point among the signal's worked deposits — stated with its distance to each; terrain is the commander's call.
+- **Trips and the hold.** A trip is one Rhino hold cycle, closed by a transfer to the ship or by boarding; the hero shows this trip and the hold out of 72, the visits table counts trips, and the overlay speaks at drop-off (`Dropped off 33t Bastnasite = 2.2M · visit 53t / ~3.5M`) instead of at every rig emptying. Trips are restored from the journal at boot. The hero stays ACTIVE through a drive to the ship.
+- **Rigs per deposit** (1 by default, up to 4), on the row and on the go-back cards — with an *estimate* from the largest single collection (a full rig is 9 t, the HUD's 9/9; the figure is dated and editable, `full rig = 9 t`, for the day Frontier raises it). Confirm with one tap; a count you set is never overwritten. Per rig, every deposit yields the same ~8 t per collection; the two three-rig deposits were both tagged *density low* — spread out, not poor.
+- **Odometer, climb, speed, highest ground.** The breadcrumb track now gives km driven, metres climbed, average moving speed and peak per visit, per signal and per body, and a *Driving rating vs the track* line so the 1–5 score can be checked against the numbers. Highest ground reached is jump-proof: on foot, landed, or an SRV point no higher than its neighbours. Also a Domain Record.
+- **Pins and brain-tree groves.** `pin here` saves a named point at your position — the manual nav lock for things the game never writes. A grove is a site like a deposit, only its yield is materials: pinned by you or restored from codex entries, every pickup inside 300 m of it is a harvest, with units by grade and units per hour. Steerable, on the map.
+- **Galactic averages from the game itself.** Market.json carries `MeanPrice` for every commodity — the number the in-game inventory shows — and now every market you open updates a small file beside the exe that the page, the overlay and the co-pilot read before the baked table. The typed-in-price era is over; the table was corrected to the game's exact means (Thortveitite and Periclase Dunite 129,763, LTDs 96,438, Ruby 73,655, Grandidierite 184,576 …).
+- **One price, and it is what your best market pays.** Every chip, deposit and "Where to go back" figure is priced at the best sell among the markets you have opened in the last 30 days — any station, anywhere, never a carrier — and at the galactic average when nothing that fresh is on file. Atmo Sky Cairn pays 240,547 for Thortveitite and Periclase Dunite against a 129,763 average, which is why "skip Thortveitite" was the wrong call on the average alone. Hover a price for where it came from.
+- **The map's ground is the body's colour**, sampled from a deposit photo's terrain.
+- **Domain Records** gain Most Mining Signals and Richest Signals — about what the ground holds, not what the commander chose to pull.
+- **A collection also ends on a move of 300 m**, so scooting between rigs no longer files the second rig's tonnes at the first.
+- **FAQ and wiki** cover surface mining, the co-pilot cast, radar and threats, and reward info.
+
+### Changed
+- **Terminology: signals, not sites** — the game's word, everywhere the page speaks.
+- **The asteroid module ignores refines made in the SRV** (Status bit 26). Its overlay, session tally, streaks and rock log never see surface tonnes again; the SRV's hold no longer reads as the ship's.
+- **Co-pilot hauling talk is gated on the Start Session button**, never on a guess. Off-session, a dock is flavour. Lines are first person, always. Radar chatter is voiced only within 50 ly.
+- **Commodity names lose their diacritics** (Bastnäsite → Bastnasite), and matching strips them on both sides, so any spelling the game or a finger produces still finds its price.
+- Bodies list in natural order like the system map; the "everywhere" scope is gone.
+
+### Fixed
+- **Summary reads sliced live collections.** The page's poll ran the shutdown finaliser, cutting one rig emptying into 3 t / 6 t / 1 t records. Reads are read-only now, and sliced history is re-joined at read time.
+- Two snapshot sources disagreed on the locked body ("1 a" vs "Body 14"), flipping the targeting strip and disabling Add after every tag on the iPad. One resolution, on a copy of the live lock.
+- A site count typed once could not be corrected; a tag added by mistake could not be removed; a moved rig showed the previous signal after a restart. All three have explicit controls now.
+- HIP 47126 population override re-stamped on every blur; five stale overrides dropped.
+
+## [1.55.0] — 2026-08-28
+
+### Added
+- **"Notable Surface" on Architect's Domain** — things standing *on* your ground rather than orbiting it. Brain Trees today; Planetary Mining Deposits are the obvious second tenant once the Rhino lands, which is why it is a category and not a brain-tree panel. Sites outside your systems are counted rather than listed — this page is about your own ground, but silently dropping a confirmed find would be worse than mentioning it.
+- **A "view" button on every route member in the planner.** A name and a score are not enough to judge a hop, and copying the name out to look it up elsewhere is not a workflow. Opens System View in a new tab, deliberately — an in-tab jump would throw away the route you just spent a search building.
+
+### Changed
+- **The installations table filters by landing pad, not by settlement.** Hiding a settlement answers nothing; the question actually being asked is "can I bring the big ship here". The Pad column now shows only the **largest pad** — `L`, `M` or `S` — because small-pad counts are irrelevant and the number of large pads changes no decision. A station with no recorded pads reads as no, since guessing yes on missing data would send you somewhere you cannot set down.
+- **Last Visit is months, not a date.** "14 mo" says a station has gone cold; a date makes you do the arithmetic every time. Anything over a year is tinted, and the exact date stays in the tooltip.
+- **Brain Trees are off the Expansion page.** That page is for finding *new* systems; a roll-up of confirmed sites you already hold sat oddly at the top of it.
+- **The montage now sorts by importance, not by name.** Stars first — it is the first thing you see arriving — then oxygen worlds, then other atmospheric worlds, then significant builds. Airless rocks sort last, below even a minor outpost: a 0.024 M⊕ bare moon was leading the montage purely because "1" sorts before "2". Icy bodies are excluded from "of note" even when they carry an atmosphere.
+
+## [1.54.0] — 2026-08-28
+
+### Added
+- **The montage is ordered by what matters, not by insertion.** Oxygen worlds lead — the rarest thing a system can hold — then the rest of the landscape, then the real ports, then everything else. A minor outpost was appearing ahead of a system's oxygen twins and its main port purely because of the order things happened to be stored in.
+- **Body names lose the system prefix in the installations table.** It is the context of the entire page; repeating it on every row is noise. The full name stays in the tooltip.
+- **"Photographed here" on a system page with no system shot of its own.** The pictures were already on file against individual bodies and stations, but the page only ever looked at the system-level key — so a system with a dozen body shots and no portrait of itself appeared to have no pictures at all. Now it shows them as a labelled montage. Systems that do have their own screenshot are untouched.
+
+### Fixed
+- **Hero images have never appeared on any dashboard card.** The lookup built its key from the raw system name while the gallery stores every key lowercased, so `system:HIP 47126` could never match `system:hip 47126`. Fixed — and where a system has no portrait of its own, the card now tiles up to four of the subjects photographed there instead of showing nothing.
+- **Station distances lost their spurious decimals.** 2,025.523615 Ls rendered as `2025.5`; it now reads `2.0k`.
+- **The station-category chips are gone from the system hero.** They counted how a station is *classified* — "3 Installations" on a system holding seventeen — which is meaningless and reads like an achievement figure. What you built and what is still going up is the whole story now.
+
+## [1.53.0] — 2026-08-28
+
+### Added
+- **A system page now leads with what you built there.** It used to show a taxonomy of station categories — "3 Installations" — which names how a thing is classified, not that you raised it. HIP 47126 has 17 stations, but seven are construction depots and one is the colonisation ship; **nine are real**. That number is the headline now, with the categories kept underneath as detail.
+- **Mission income per system**, beside population. A single system had quietly paid out 1.91 billion across 43 missions and nothing in the app said so. Attributed by where the mission was delivered, which for the mining and collection contracts that dominate here is the station it was accepted at.
+- **"Plan route" on every flagged system**, handing the name straight to the planner as a prefilled target.
+- **"Not on Spansh" badge** on flagged systems Spansh has never indexed. That is a fact worth seeing rather than hiding — it means nobody has reported the system, and it is why the check falls back to coordinates. A failed lookup shows nothing rather than claiming "not registered".
+
+## [1.52.0] — 2026-08-28
+
+### Added
+- **"Worth doing here" on the 2nd screen** — what is left undone in the system you just jumped into, when it is one you hold. Rings you have seen but never deep-scanned, systems where the FSS sweep never finished, and systems you have never photographed. Silent everywhere else, so it only speaks on your own ground.
+- **Ordered by distance from the arrival star.** The 43 Ls ring leads; the 300,000 Ls iceball sinks to the bottom on its own. Nothing is hidden for being far — it just stops competing for attention.
+- **Dismissal is permanent, and there is no undo.** A task you are never going to do should never ask again, so dismissals are append-only server state that survives rescans, restarts and index rebuilds. Ids are derived from what a task *is* rather than where it sat in a list, because an id that drifts would silently un-dismiss the thing it named.
+- Scoped to the current system on purpose: across the whole domain this list is sixty-odd entries, which is unreadable on a second screen and answers a question you were not asking.
+
+## [1.51.0] — 2026-08-28
+
+### Added
+- **Lifetime mission earnings on the dashboard**, beside population and tonnage where the other activity figures live. The journal has always tracked the total and never showed it.
+
+### Fixed
+- **Threat checks now anchor on coordinates, so a system Spansh has never indexed can still be watched.** Col 173 Sector YI-V c17-29 — the highest-scoring system on the whole list at 117 — sat permanently "unknown" because Spansh's search has no record of the name, and the radius query needs a reference it can resolve. Your scouted records carry coordinates regardless, and with them that system turns out to have **four claims within 50 ly**, the nearest 23.4 ly out. It was never clear; it was unmeasurable.
+- Flags made before a system was scouted, or typed in by hand, have their coordinates backfilled from the scouted pool at check time.
+- Guarded against a Spansh quirk that would have been worse than an error: `reference_coords` as an array, and `reference_x/y/z`, both return **HTTP 200 with results silently anchored at Sol** — perfectly plausible data for entirely the wrong place. Only the object form is used.
+
+## [1.50.0] — 2026-08-28
+
+### Added
+- **"What Your Ground Yields" on Architect's Domain** — the rings inside your own systems, ranked by hotspot count, with materials, reserve level and the ring's name. Scoped to your systems on purpose: hunting a ring to mine is what the ring finder on the mining page is for, and a richer ring two hundred light years away is not an answer to what your own ground holds. Ranks on total hotspots then variety, since a ring concentrating one material and a ring spreading five are worth different things.
+- The footer states how many of your rings are mapped and how many were seen but never DSS-scanned — a thin sample is a fact about the survey, not about the ground.
+
+## [1.49.1] — 2026-08-28
+
+### Fixed
+- **The stations you built were the only ones that could never be highlighted.** A station discovered through the journal carries a journal type and resolves to a "… Station" label; a station you *raised* is stored with its Raven build id and resolves to "… Starport", or "Large Planetary Port". The Domain highlight lists only ever held the first spelling — so Chitty City and Atmo Sky Cairn Asc, both Tier 3 Large Planetary Ports, were invisible on a page about your own territory, while stations you merely flew past showed up fine. Both vocabularies are now recognised, for Coriolis, Orbis, Ocellus, Asteroid and Planetary ports alike.
+- Existing highlight settings are migrated rather than reset: the build-side spelling is added only where the discovered spelling was already switched on, so anything you deliberately turned off stays off.
+
+## [1.49.0] — 2026-08-28
+
+### Added
+- **Colonization Threats — a new page that warns you before you lose ground, not after.** Flag the systems you actually intend to hold, from the Threats page or with the shield on Expansion, and the app watches **50 ly around each one**. Colonization spreads in claim hops of roughly 15 ly, so that radius is about three hops of warning — enough to see a chain bridging toward your ground while you can still take it. Watching the system itself would only ever report the loss.
+- Each flag shows the nearest foreign claim, its distance, and how many hops away it is. Alerts fire on the 2nd screen when a claim first appears inside the radius, when it moves **closer**, or when the flagged system is itself taken — and stay silent when nothing changed.
+- **Your own systems are excluded.** Spansh reports your active builds as being colonised too; unfiltered, the first thing this feature would have done is alarm you about your own construction.
+- A failed lookup reports **unknown**, never "clear". A false all-clear is the one answer this must not give.
+- **Mission earnings are now recorded per system.** The journal tracked a lifetime total and threw the location away, which hid the fact that a single system had paid out 1.91 billion across 43 missions. Ranked by credits, never by mission count — 364 missions in one system were worth a fiftieth of 43 in another.
+
+### Fixed
+- **Restarting while parked in a ring no longer orphans every rock after it.** The current ring was held only in memory, with no way to recover it until you flew out and came back, so a mid-session restart logged the rest of that ring's rocks with no location at all — 45 of them historically, including the single best rock in the log, which also silently detached it from its hotspot mark. The ring is now re-derived from the journals at startup.
+
+### Changed
+- **The squadron leaderboard is off Architect's Domain.** A comparison against someone else sat oddly on a page about your own territory.
+
+## [1.48.0] — 2026-08-28
+
+### Changed
+- **Every rock is now valued at market, never at a mission rate.** A tonne pulled under a 136k/t contract used to be logged at 136k/t forever, while the same tonne mined a week later logged at ~36k — two currencies in one table, so the history could not be compared with itself. Mission pricing is out of every valuation: records, badges, catch tiers, the worth-it line, session credits and the rock log all price refined tonnage at today's market. Expect your all-time totals to drop sharply and the personal-best order to reshuffle; that is the correction landing, not a regression.
+- Historical rows keep their original numbers on disk — the log is append-only — and are re-priced when read, so nothing is rewritten and nothing is lost.
+- **Mission targeting is untouched.** Mission materials still light up as targets and the 3% floor still fires on exactly the rocks it did before. Only the price attached to them changed.
+- **"Sessions" is now "Hauling".** The whole app is about colonization, so that word never told you which sessions these were — and now that mining has sessions of its own, the distinction matters.
+
 ## [1.47.0] — 2026-08-28
 
 ### Added

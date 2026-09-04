@@ -10,7 +10,7 @@ import { copilotComplete } from './copilotProvider.js';
 import { COPILOT_RULES, buildPersonalityPreamble, matchBeat, IDLE_INTENTS } from './copilotRules.js';
 import { awayProcess, awayContextFact, awayState, isSrvType } from './copilotAway.js';
 import { friendlyShip } from '../journal/extractor.js';
-import { buildSnapshot, eventDetail, decorateScan, detectCompletion, detectBuildComplete, detectInferredDamage, detectAutopilot, detectDockComplete, detectDockInfo, detectNpcThreat, detectAtmo, detectCrew, detectPilotBanter, detectSessionStart, detectGrudge, detectSystemChange, detectQuestion, detectDockFlavor, detectArrival, detectCargoBayGripe, detectSrvReturn, detectDamageSeverity, detectPaceNudge, detectCarrierFuel, getCrewNames, ingestWorld } from './copilotContext.js';
+import { buildSnapshot, eventDetail, decorateScan, detectCompletion, detectBuildComplete, detectInferredDamage, detectAutopilot, detectDockComplete, detectDockInfo, detectNpcThreat, detectAtmo, detectCrew, detectPilotBanter, detectSessionStart, detectGrudge, detectSystemChange, detectQuestion, detectDockFlavor, detectArrival, detectCargoBayGripe, detectSrvReturn, detectDamageSeverity, detectPaceNudge, detectCarrierFuel, getCrewNames, ingestWorld , isHaulSessionActive } from './copilotContext.js';
 import { isCannedScenario, pickCanned } from './copilotCanned.js';
 import { detectTarsLore } from './copilotTars.js';
 import { detectMiningBeat } from './copilotMining.js';
@@ -18,13 +18,25 @@ import { detectRadarBeat } from './copilotRadar.js';
 import { fetchGalNet, getLatestNews } from './copilotNews.js';
 import { arbitrate, recordSpoken } from './copilotArbiter.js';
 import { detectAffinityBeat } from './copilotAffinity.js';
-import { getActiveProject } from '../journal/overlay.js';
+
 import { detectQuirk } from './copilotQuirks.js';
 import { onSessionAndPresence, onDock, detectColonyWatch, detectAreaActivity } from './copilotColonyWatch.js';
 
 const RECENT_MAX = 8;
 const RECENCY_MS = 120000; // events older than this are a re-sync replay, not live play
-const MAX_IDLE_STREAK = 2; // stop ambient chatter after this many with no real activity between (don't blather to an absent commander). A real beat re-arms it.
+// Ambient chatter pauses after this many idle lines with no real activity between them (don't
+// blather to an absent commander); a real beat re-arms it. SCALED BY THE CHATTINESS SLIDER —
+// as a flat 2 it was the one thing the slider didn't touch, so Chatty and Quiet both went silent
+// after two lines and Chatty never felt chatty on a long quiet cruise leg.
+//   Chatty (60s) -> 5   ·   Normal (120s) -> 3   ·   Quiet (240s) -> 2
+//
+// TUNED DOWN from 480 after measuring the result: at a cap of 8, ambient chatter was 60% of
+// everything said (idle-joke 27 / idle-observe 24 / idle-fact 21 out of 120 lines). There are only
+// three idle scenarios and ~22 lines each per persona, so a Chatty session ran the whole ambient
+// corpus and started to feel repetitive even though few lines literally repeated. The cap governs
+// how many idle lines may run BACK TO BACK before she waits for something real to happen, so it is
+// the lever that controls how much of her talking is filler.
+const maxIdleStreakFor = (idleGapSec) => Math.max(2, Math.round(300 / idleGapSec));
 
 const recentLines = []; // rolling anti-repeat memory (fed back into each prompt)
 let offeredHeadline = ''; // a GalNet headline is OFFERED to idle exactly once ("5TH MESSAGE ON THAT ITEM" 👎)
@@ -103,7 +115,7 @@ export async function runCopilot(parsed, state, deps) {
   // matched event beat, and — unless we're AFK-capped — an idle candidate. The
   // arbiter scores them all and returns at most one winner (or null = stay quiet).
   const persona = settings.copilotPersonality || 'wash';
-  const hauling = !!getActiveProject(state); // mid-haul → mute station flavour, focus the job
+  const hauling = isHaulSessionActive(state); // declared run (Start Session) → mute station flavour, focus the job
   const candidates = [];
   const completion = detectCompletion(parsed, state);
   if (completion) candidates.push({ beat: completion, ev: null, synthetic: true, place: placeFor(state, null) });
@@ -175,18 +187,21 @@ export async function runCopilot(parsed, state, deps) {
   }
   const hasRealBeat = candidates.length > 0;
 
+  // The chattiness slider scales everything: at Chatty we react to ~every event
+  // (tiny spacing, no repeat-suppression); at Quiet it's sparse. Read BEFORE the idle
+  // candidate below, which now scales its own cap off the same figure.
+  const idleGapSec = Math.max(30, settings.copilotIdleGapSec ?? 120);
+  const chattyFactor = Math.max(0.15, Math.min(1, (idleGapSec - 60) / 180)); // 0.15 floor trims Chatty's lowest-value chatter ~15%; full at Quiet
+  const maxIdleStreak = maxIdleStreakFor(idleGapSec);
+
   // Idle is a low-priority candidate — the arbiter only lets it win during a
   // genuine lull (staleness lifts it over the decaying threshold). Capped so it
   // doesn't chatter into the void while you're AFK.
-  if (idleStreak < MAX_IDLE_STREAK) {
+  if (idleStreak < maxIdleStreak) {
     const idle = peekIdle();
     candidates.push({ beat: { key: idle.key, priority: 16, interrupt: false, mood: idle.mood, _idle: true, intent: idle.intent, model: idle.model }, ev: null, place: null });
   }
 
-  // The chattiness slider scales everything: at Chatty we react to ~every event
-  // (tiny spacing, no repeat-suppression); at Quiet it's sparse.
-  const idleGapSec = Math.max(30, settings.copilotIdleGapSec ?? 120);
-  const chattyFactor = Math.max(0.15, Math.min(1, (idleGapSec - 60) / 180)); // 0.15 floor trims Chatty's lowest-value chatter ~15%; full at Quiet
   const winner = arbitrate(candidates, {
     now,
     lastSpokeAt,
@@ -196,8 +211,8 @@ export async function runCopilot(parsed, state, deps) {
   });
 
   if (!winner) {
-    if (!hasRealBeat && idleStreak >= MAX_IDLE_STREAK && !_idleQuietLogged) {
-      console.log('[Copilot] no recent activity — ambient chatter paused'); _idleQuietLogged = true;
+    if (!hasRealBeat && idleStreak >= maxIdleStreak && !_idleQuietLogged) {
+      console.log(`[Copilot] no recent activity — ambient chatter paused after ${idleStreak} idle lines (cap ${maxIdleStreak})`); _idleQuietLogged = true;
     }
     return;
   }
@@ -339,7 +354,7 @@ function captureTrigger(winner, state) {
   } else if (winner && winner.beat && winner.beat._idle) t = 'idle-timer';
   else t = winner && winner.synthetic ? `synthetic:${winner.beat.key}` : 'event';
   const s = state || {};
-  const tags = [(s.currentDock && s.currentDock.stationName) ? 'docked' : '', getActiveProject(s) ? 'mid-haul' : ''].filter(Boolean);
+  const tags = [(s.currentDock && s.currentDock.stationName) ? 'docked' : '', isHaulSessionActive(s) ? 'mid-haul' : ''].filter(Boolean);
   return tags.length ? `${t} | ${tags.join(' ')}` : t;
 }
 
@@ -458,6 +473,16 @@ function captureInputsForEvent(ev) {
 }
 
 async function speak(state, settings, deps, { key, intent, model, mood, detail, inputs, fallback }) {
+  // Live generation switched off in Settings — take the canned pool instead of the CLI. This is
+  // the same route a CLI failure takes below, minus the 60s wait: when the `claude` credential
+  // read blocks, it hangs silently rather than erroring, so every beat stalls out its timeout and
+  // the co-pilot reads as dead. This is the way back without an env var or a rebuild.
+  if (settings.copilotLiveEnabled === false) {
+    if (fallback) {
+      try { fallback(); } catch { /* best-effort, same as the failure path */ }
+    }
+    return;
+  }
   inFlight = true;
   // Default sonnet for voice quality — haiku reads flat for character work. settings.copilotModel
   // still overrides (per-beat `model` is intentionally bypassed: the commander wants sonnet everywhere).
@@ -467,13 +492,13 @@ async function speak(state, settings, deps, { key, intent, model, mood, detail, 
     const dial = { humor: settings.copilotTarsHumor ?? 60, honesty: settings.copilotTarsHonesty ?? 80 };
     const system = `${COPILOT_RULES}\n\n${buildPersonalityPreamble(settings.copilotPersonality, dial)}`;
     const recent = recentLines.length
-      ? `Your recent lines (do NOT echo their wording or theme):\n${recentLines.map((l) => `- ${l}`).join('\n')}`
+      ? `Your recent lines — HISTORY, not facts. Do NOT echo their wording or theme, and do NOT treat anything in them as true right now: the station, body, ship and numbers they mention are where the commander WAS, not where they are. Only the Situation block above is current:\n${recentLines.map((l) => `- ${l}`).join('\n')}`
       : '';
     // The situation lives in the USER message; the persona is the (stable, cacheable) system prompt.
     // The guard is REQUIRED: moving the persona to --system-prompt drops Claude Code's default
-    // "answer directly" framing, so without it sonnet roleplays (emits "TARS:" labels + meta +
+    // "answer directly" framing, so without it sonnet roleplays (emits "Tycho:" labels + meta +
     // markdown). As the LAST line, this keeps the output to one clean spoken line (verified).
-    const OUTPUT_GUARD = 'Output ONLY the spoken dialogue itself (your 1–3 short sentences) — no speaker name or label, no asterisks or markdown, no surrounding quotation marks, no notes or meta-commentary. Just the words said aloud.';
+    const OUTPUT_GUARD = 'Output ONLY the spoken dialogue itself (your 1–3 short sentences) — no speaker name or label, no asterisks or markdown, no surrounding quotation marks, no notes or meta-commentary. Just the words said aloud. Speak as YOURSELF, in the first person: "I", never your own name and never he/she/they about yourself.';
     const userMessage = [`This moment: ${intent}`, buildSnapshot(state), detail, recent, OUTPUT_GUARD].filter(Boolean).join('\n\n');
 
     const result = await copilotComplete({ model: chosenModel, system, userMessage });
@@ -497,7 +522,7 @@ async function speak(state, settings, deps, { key, intent, model, mood, detail, 
     // No claude CLI on this host, or a model error — surfaced so it's not silent.
     console.error('[Copilot] generation FAILED:', err && err.message);
     // Last resort: the canned pool speaks so a CLI failure never means dead air
-    // ("I enabled TARS and he's not saying anything"). False when the pool has
+    // ("I enabled Tycho and he's not saying anything"). False when the pool has
     // nothing for this beat — then quiet is honest.
     if (fallback) {
       try {

@@ -19,7 +19,7 @@ function defaults() {
     grudges: {},   // { [marketId]: { stationName, at } } — places that clipped us on the approach
     systems: {},   // { [systemName]: { factionState, population, at } } — last-known, for change-awareness
     qa: { durable: {}, session: {}, goal: {} }, // Q&A answers by memory layer (durable = forever, asked once)
-    quizHistory: [], // [{ at, score, total }] — finished TARS trivia rounds (newest last), for comparison
+    quizHistory: [], // [{ at, score, total }] — finished Tycho trivia rounds (newest last), for comparison
     ships: {},      // { [type]: { name, firstSeenAt } } — named ships for callback on return
     milestones: {}, // { [key]: { firstAt, count, lastAt, lastSystem } } — notable firsts
     colonyWatch: {},// { [colonySystem]: { snapshotAt, coords, colonyName, systems } } — area snapshot for the session diff

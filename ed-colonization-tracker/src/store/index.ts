@@ -190,6 +190,8 @@ const MERGE_STRATEGIES: Record<string, MergeStrategy> = {
   stationTravelTimes: { kind: 'map' },
   // Material inventory — server is sole writer, every update is a complete snapshot
   materialInventory: { kind: 'replace' },
+  // Server-written from EngineerProgress; whole-map replace, never merged per-engineer.
+  engineers: { kind: 'replace' },
   // Current dock — server is sole writer, replace strategy (null when undocked)
   currentDock: { kind: 'replace' },
   // Journal lifetime stats snapshot (game Statistics event) — server-written, replace
@@ -317,7 +319,7 @@ const serverStorage: StateStorage = {
       }
       // Capture baseline so subsequent setItem calls can diff against it.
       setBaseline(data);
-      return JSON.stringify({ state: data, version: 20 });
+      return JSON.stringify({ state: data, version: 21 });
     } catch {
       hydrationComplete = true;
       return null;
@@ -741,6 +743,8 @@ interface AppState {
 
   // Ship-engineering material inventory — server-derived, replace strategy.
   materialInventory: import('./types').MaterialInventory | null;
+  /** Engineer unlock states, written server-side from the journal's EngineerProgress event. */
+  engineers: import('./types').EngineerProgressMap;
   setMaterialInventory: (inv: import('./types').MaterialInventory) => void;
 
   // Journal lifetime stats snapshot (game Statistics event) — server-written.
@@ -803,7 +807,17 @@ const DEFAULT_SETTINGS: AppSettings = {
   targetPopupEnabled: true,
   domainHighlightStars: ['Black Hole', 'Neutron Star', 'Wolf-Rayet', 'White Dwarf', 'O-class', 'Carbon Star'],
   domainHighlightAtmos: ['Oxygen'],
-  domainHighlightStations: ['Dodec Spaceport', 'Coriolis Station', 'Orbis Station', 'Ocellus Station', 'Asteroid Base', 'Planetary Port'],
+  // Both spellings: journal-discovered stations resolve to "… Station", the commander's OWN builds
+  // resolve through their Raven id to "… Starport". Only listing one meant self-built ports never
+  // highlighted. See STATION_SORT_ORDER in domainHelpers.
+  domainHighlightStations: [
+    'Dodec Spaceport',
+    'Coriolis Station', 'Coriolis Starport',
+    'Orbis Station', 'Orbis Starport',
+    'Ocellus Station', 'Ocellus Starport',
+    'Asteroid Base', 'Asteroid Starport',
+    'Planetary Port', 'Large Planetary Port',
+  ],
 };
 
 export const useAppStore = create<AppState>()(
@@ -1633,6 +1647,7 @@ export const useAppStore = create<AppState>()(
 
       // Material inventory (ship engineering mats)
       materialInventory: null,
+      engineers: {},
       setMaterialInventory: (inv) => set({ materialInventory: inv }),
 
       // Journal lifetime stats snapshot (game Statistics event)
@@ -1681,7 +1696,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'ed-colonization-tracker',
-      version: 20,
+      version: 21,
       storage: createJSONStorage(() => serverStorage),
       onRehydrateStorage: () => {
         return (_state, error) => {
@@ -1727,6 +1742,7 @@ export const useAppStore = create<AppState>()(
         lastSessionSummaryShown: state.lastSessionSummaryShown,
         stationBodyOverrides: state.stationBodyOverrides,
         materialInventory: state.materialInventory,
+        engineers: state.engineers,
         journalStats: state.journalStats,
         journalScan: state.journalScan,
         currentDock: state.currentDock,
@@ -1906,6 +1922,34 @@ export const useAppStore = create<AppState>()(
           const settings = state.settings as AppSettings;
           if (settings) {
             settings.fcModulesCapacity = settings.fcModulesCapacity ?? 0;
+          }
+        }
+
+        if (version < 21) {
+          // v20 → v21: Teach the station highlights the commander's OWN build vocabulary.
+          //
+          // A station DISCOVERED via the journal carries a journal type and resolves to a
+          // "… Station" label. A station the commander BUILT is stored with its Raven build id and
+          // resolves to a "… Starport" label — or "Large Planetary Port". Only the first spelling
+          // was ever in the highlight list, so self-built ports were silently excluded: two Tier 3
+          // Large Planetary Ports (Chitty City, Atmo Sky Cairn Asc) never appeared on the Domain
+          // page at all. Merged in rather than reset, so any hand-tuned choices survive.
+          const settings = state.settings as AppSettings;
+          if (settings) {
+            const have = new Set(settings.domainHighlightStations ?? []);
+            const pairs: [string, string][] = [
+              ['Coriolis Station', 'Coriolis Starport'],
+              ['Orbis Station', 'Orbis Starport'],
+              ['Ocellus Station', 'Ocellus Starport'],
+              ['Asteroid Base', 'Asteroid Starport'],
+              ['Planetary Port', 'Large Planetary Port'],
+            ];
+            // Only add the build-side spelling where they already wanted the discovered one, so a
+            // type they deliberately turned off stays off.
+            for (const [discovered, built] of pairs) {
+              if (have.has(discovered)) have.add(built);
+            }
+            settings.domainHighlightStations = [...have];
           }
         }
 

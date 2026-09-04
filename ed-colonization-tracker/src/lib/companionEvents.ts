@@ -49,6 +49,7 @@ export function eventIcon(type: string): string {
     case 'nav_route_cleared': return '❌'; // red x
     case 'station_dock_summary': return '\u{1F3DB}'; // classical building
     case 'npc_threat': return '\u{1F6A8}'; // rotating red siren
+    case 'colonization_threat': return '\u{1F6E1}\u{FE0F}'; // shield — encroachment on flagged ground
     case 'supercruise_exit': return '\u{1F6F0}️'; // satellite
     case 'map_worthy': return '\u{1F6F0}\u{FE0F}'; // worth probes (credits)
     case 'sighting_recorded': return '\u{1F4F8}'; // postcard recorded
@@ -86,6 +87,7 @@ export function eventColor(type: string): string {
     case 'nav_route_cleared': return 'text-slate-400';
     case 'station_dock_summary': return 'text-blue-300';
     case 'npc_threat': return 'text-red-400';
+    case 'colonization_threat': return 'text-amber-400';
     case 'supercruise_exit': return 'text-cyan-400';
     default: return 'text-muted-foreground';
   }
@@ -185,6 +187,15 @@ export function eventSummary(ev: CompanionEvent): string {
     case 'screenshot_saved':
       if (ev.skipped) return `Hi-res shot NOT attached (${ev.sizeMB} MB) — left in Pictures, attach manually if wanted`;
       return `F10 shot saved — ${ev.body || ev.system}${ev.attached ? ' (attached to sighting)' : ''}`;
+    case 'colonization_threat': {
+      // Says how close, in claim hops, because that is the number that decides whether to fly.
+      const score = ev.score != null ? ` (${ev.score})` : '';
+      const hops = ev.hops ? `~${ev.hops} hop${Number(ev.hops) === 1 ? '' : 's'}` : '';
+      const dist = typeof ev.distanceLy === 'number' ? `${ev.distanceLy.toFixed(1)} ly` : '';
+      if (ev.kind === 'taken') return `LOST — ${ev.system}${score} is being colonised`;
+      if (ev.kind === 'closing') return `Closing on ${ev.system}${score} — ${ev.nearest} now ${dist}, ${hops}`;
+      return `Claim near ${ev.system}${score} — ${ev.nearest} at ${dist}, ${hops}`;
+    }
     case 'heartbeat':
       return '';
     default:

@@ -7,15 +7,17 @@
  * ticker own the right), on whatever tab is open.
  *
  * Art comes from the same packs the Cockpit uses — /copilot-art/<persona>/<mood>.png with a
- * calm.png fallback — so TARS goes hyped for catches and proud for records at zero extra cost.
+ * calm.png fallback — so Tycho goes hyped for catches and proud for records at zero extra cost.
  * Suppressed on the Cockpit page itself (it already shows the line, bigger).
  */
 import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAppStore } from '@/store';
 import { sseSubscribe } from '@/services/sseBus';
+import { playVoice } from '@/services/copilotVoice';
 
 interface CopilotLineEvent {
+  id?: string;
   line?: string;
   beat?: string;
   mood?: string;
@@ -23,7 +25,9 @@ interface CopilotLineEvent {
 }
 
 const HOLD_MS = 22000;
-const PERSONA_NAMES: Record<string, string> = { wash: 'Wash', tars: 'TARS', k2: 'K2' };
+// Display names only — the persona KEYS stay as they are, since renaming one would orphan the
+// stored setting, the canned pools and every rated capture that references it.
+const PERSONA_NAMES: Record<string, string> = { wash: 'Wren', tars: 'Tycho', k2: 'K2' };
 
 export function CopilotPopup() {
   const enabled = useAppStore((s) => s.settings.copilotPopupEnabled) !== false;
@@ -37,6 +41,16 @@ export function CopilotPopup() {
     const off = sseSubscribe('copilot_line', (raw) => {
       const e = raw as CopilotLineEvent;
       if (!e.line) return;
+      // Speech is driven from HERE and nowhere else. This component is mounted app-wide in
+      // Layout, so its subscription is the one that fires on every page — including /copilot,
+      // where the bubble hides itself but the effect still runs. Playing from the Cockpit page
+      // as well would speak every line twice.
+      // Read settings live: the handler is registered once and would otherwise close over
+      // whatever the toggles were at mount.
+      const s = useAppStore.getState().settings;
+      if (s.copilotVoiceEnabled && s.copilotEnabled && e.id) {
+        void playVoice(e.id, s.copilotPersonality ?? 'wash');
+      }
       setEv(e);
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => setEv(null), HOLD_MS);

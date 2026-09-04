@@ -1,5 +1,6 @@
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { useGalleryStore } from '@/store/galleryStore';
+import { useGalleryStore, type GalleryImage } from '@/store/galleryStore';
 import { getSystemTierFromPoints, getTierProgressFromPoints, formatPopulation, type TierInfo } from './tierUtils';
 
 interface InstallationCounts {
@@ -79,15 +80,33 @@ export function SystemAdvancementCard({ system, tonnage, bodyCount, distFromSol,
   const progress = getTierProgressFromPoints(system.totalInstalled, system.t2Points, system.t3Points);
   const popBadge = populationBadge(system.population);
 
-  // Hero image from gallery (first image for this system — check all keys starting with "system:Name")
+  // Hero imagery.
+  //
+  // BUG FIXED 2026-08-28: the prefix was built from the raw system name while galleryKey() writes
+  // every key lowercased, so `system:HIP 47126` never matched the stored `system:hip 47126` and NO
+  // card has ever shown a hero image.
+  //
+  // A real system-level shot wins outright. Failing that, tile the primary image from each entity
+  // photographed here — the pictures exist, they were just never used when the system itself had
+  // no portrait.
   const galleryImages = useGalleryStore((s) => s.images);
-  const heroImage = (() => {
-    const prefix = `system:${system.systemName}`;
+  const heroImages = useMemo(() => {
+    const base = `system:${system.systemName.toLowerCase()}`;
+    // Utility shots (deposit-panel documentation) are never a system portrait.
+    const notUtility = (arr: GalleryImage[] | undefined): GalleryImage[] =>
+      (arr ?? []).filter((i) => !i.utility);
+    const exact = notUtility(galleryImages[base]);
+    if (exact.length > 0) return [exact[0]];
+
+    const tiles: GalleryImage[] = [];
     for (const [key, imgs] of Object.entries(galleryImages)) {
-      if (key.startsWith(prefix) && imgs.length > 0) return imgs[0];
+      const usable = notUtility(imgs);
+      if (!key.startsWith(`${base}:`) || usable.length === 0) continue;
+      tiles.push(usable[0]);
+      if (tiles.length >= 4) break;
     }
-    return null;
-  })();
+    return tiles;
+  }, [galleryImages, system.systemName]);
 
   return (
     <Link
@@ -95,12 +114,25 @@ export function SystemAdvancementCard({ system, tonnage, bodyCount, distFromSol,
       className={`block rounded-xl border-2 ${tier.borderClass} ${tier.bgGradient} p-4 hover:brightness-110 transition-all group relative overflow-hidden`}
       style={tierGlowStyle(tier.tier)}
     >
-      {/* Hero image background */}
-      {heroImage && (
+      {/* Hero image background — one shot, or a tiled composite of what was photographed here */}
+      {heroImages.length > 0 && (
         <div
-          className="absolute inset-0 opacity-15 bg-cover bg-center pointer-events-none"
-          style={{ backgroundImage: `url(${heroImage.url || `/api/images/${heroImage.id}`})` }}
-        />
+          className={`absolute inset-0 opacity-15 pointer-events-none grid gap-px ${
+            heroImages.length === 1 ? '' : heroImages.length === 2 ? 'grid-cols-2' : 'grid-cols-2 grid-rows-2'
+          }`}
+        >
+          {heroImages.map((img, i) => (
+            <div
+              key={img.id}
+              className="bg-cover bg-center"
+              // With three tiles the first spans the top row, so the grid never shows a blank cell.
+              style={{
+                backgroundImage: `url(${img.url || `/api/images/${img.id}`})`,
+                ...(heroImages.length === 3 && i === 0 ? { gridColumn: 'span 2' } : {}),
+              }}
+            />
+          ))}
+        </div>
       )}
 
       {/* Header: tier badge + name + score */}

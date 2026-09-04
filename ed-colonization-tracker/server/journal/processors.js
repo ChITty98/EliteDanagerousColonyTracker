@@ -41,6 +41,9 @@ import {
   readShipCargo,
   resourceToCommodity,
 } from './extractor.js';
+import { noteMarketMeans } from './marketMeans.js';
+import { recordMarketRead } from './marketHistory.js';
+import { ensureCarrierLedger, noteCarrierEvent, reconcileCarrierMarket, carrierCargoRecord } from './carrierLedger.js';
 import {
   isFleetCarrier,
   isFleetCarrierCallsign,
@@ -52,6 +55,7 @@ import {
 } from './util.js';
 import { findCommodityByJournalName, findCommodityByDisplayName } from './commodities.js';
 import { applyMaterialDeltaEvent } from './materials.js';
+import { applyEngineerEvents } from './engineers.js';
 import {
   handleFSDJumpOverlay,
   handleDockedOverlay,
@@ -68,6 +72,7 @@ import {
 import { processChatCommands } from './chat.js';
 import { runCopilot } from '../ai/copilot.js';
 import { processMiningEvents } from './mining.js';
+import { ingestSurfaceMining } from './surfaceMining.js';
 import { noteOwnEvents as radarNoteOwnEvents } from '../radar/radarState.js';
 import { getEdsmTraffic } from '../radar/traffic.js';
 import { checklistProcess, checklistSnapshot } from './checklist.js';
@@ -126,6 +131,7 @@ export function processNewEvents(parsed, deps) {
   processDockEvents(parsed, existing, patch, extraEvents, deps);
   processNpcThreat(parsed, extraEvents, deps);
   processMaterialEvents(parsed, existing, patch, extraEvents);
+  processEngineerEvents(parsed, existing, patch);
   processStatisticsEvents(parsed, existing, patch);
   processCodexEvents(parsed, existing, patch);
   processSurfaceEvents(parsed, existing, deps);
@@ -184,6 +190,20 @@ export function processNewEvents(parsed, deps) {
   // hotspot scans and the rock log, all of which must stay current whether or not EDMC is connected.
   try { processMiningEvents(parsed, existing, deps); } catch (e) { console.error('[Mining] event error:', e && e.message); }
 
+  // Surface (Rhino / SRV) mining — a separate ledger from the rock log. Shares MiningRefined with
+  // ring mining and nothing else, so it discriminates on the live Status "in SRV" flag rather than
+  // on the event. Also the only consumer of the PlanetaryMiningLocation DSS signal.
+  try {
+    const pos = existing.commanderPosition || {};
+    const rawHeld = (existing.materialInventory || {}).raw || {};
+    ingestSurfaceMining(parsed, {
+      system: pos.systemName || pos.name || pos.system || existing.currentSystem || null,
+      systemAddress: pos.systemAddress ?? null,
+      // Live stock, so the pickup overlay can say 37/150 rather than just naming the grade.
+      materialCount: (id) => (typeof rawHeld[id] === 'number' ? rawHeld[id] : null),
+    }, deps);
+  } catch (e) { console.error('[SurfaceMining] event error:', e && e.message); }
+
   // FSDTarget (galaxy-map target alert) — async Spansh name check if uncached.
   // Always fires regardless of overlay enable (this is a Companion-only event).
   if (parsed.fsdTargetEvents.length > 0) {
@@ -202,10 +222,6 @@ export function processNewEvents(parsed, deps) {
     }
   }
 
-  // AI co-pilot — reacts to this tick's live events in character. Companion-only,
-  // gated by settings.copilotEnabled, and silent without the local claude CLI.
-  runCopilot(parsed, existing, deps).catch((e) => console.error('[Copilot]', e && e.message));
-
   // !colony chat commands (SendText with `!colony` prefix). Works even when
   // sendOverlay is null — the response may also be broadcast as a Companion
   // SSE event for iPad.
@@ -219,36 +235,36 @@ export function processNewEvents(parsed, deps) {
     console.error('[Chat] processChatCommands error:', e && e.message);
   }
 
-  // Keep the FC's stored cargo (carrierCargo, otherwise only refreshed when you OPEN the FC market)
-  // in sync with cargo TRANSFERS while docked at it. Without this the co-pilot kept telling the
-  // commander to "load steel/composite off the carrier" they had already moved to the ship — the
-  // single loudest source of 👎. Marks the result an estimate until the next real Market.json read.
-  if (parsed.cargoTransferEvents && parsed.cargoTransferEvents.length > 0) {
+  // Carrier cargo — the transactional ledger (carrierLedger.js). Every event this tick goes through
+  // it; it keeps the ones that move cargo at YOUR carrier (transfers while docked there, your own
+  // buys and sells against its market, tritium to the tank, CarrierStats) and re-publishes the
+  // carrier record when a balance moved. This replaced the transfer-delta estimate that only lived
+  // between two market reads, each of which wiped everything without a sell order.
+  try {
     const fcCallsign = (existing.settings || {}).myFleetCarrier;
-    const fcMarketId = (existing.settings || {}).myFleetCarrierMarketId;
-    const dock = existing.currentDock;
-    const atFc = !!fcCallsign && !!dock && ((fcMarketId != null && dock.marketId === fcMarketId) || dock.stationName === fcCallsign);
-    const cargo = atFc ? (existing.carrierCargo || {})[fcCallsign] : null;
-    if (cargo && Array.isArray(cargo.items)) {
-      const items = cargo.items.map((it) => ({ ...it }));
-      const byId = {};
-      for (const it of items) byId[String(it.commodityId).toLowerCase()] = it;
-      for (const ev of parsed.cargoTransferEvents) {
-        for (const t of (ev.Transfers || [])) {
-          const id = String(t.Type || '').toLowerCase();
-          const delta = t.Direction === 'toship' ? -(t.Count || 0) : (t.Count || 0); // toship leaves the carrier
-          const it = byId[id];
-          if (it) it.count = Math.max(0, (it.count || 0) + delta);
-          else if (delta > 0) { const ni = { commodityId: id, name: t.Type_Localised || t.Type, count: delta }; items.push(ni); byId[id] = ni; }
-        }
-      }
-      patch.carrierCargo = { __upsert: { [fcCallsign]: { ...cargo, items: items.filter((it) => it.count > 0), isEstimate: true, updatedAt: new Date().toISOString() } } };
+    if (fcCallsign && Array.isArray(parsed.allEvents) && parsed.allEvents.length) {
+      let moved = false;
+      for (const ev of parsed.allEvents) if (noteCarrierEvent(ev)) moved = true;
+      if (moved) patch.carrierCargo = { __upsert: { [fcCallsign]: carrierCargoRecord() } };
     }
-  }
+  } catch (e) { console.error('[CarrierLedger] event tick:', e && e.message); }
 
   if (Object.keys(patch).length > 0) {
     deps.applyStatePatch(patch);
   }
+
+  // AI co-pilot — reacts to this tick's live events in character. Companion-only,
+  // gated by settings.copilotEnabled, and silent without the local claude CLI.
+  //
+  // MUST RUN AFTER applyStatePatch. It reads state for place / ship / needs context, so
+  // running it above (before the patch was committed) handed every beat the PREVIOUS
+  // tick's location. On the tick you undock, `patch.currentDock = null` had not landed
+  // yet, buildSnapshot still reported "Docked at <station>", and the co-pilot talked
+  // about the station just left as though sitting on its pad. Nothing here diffs against
+  // a previous state — the beats that need history (fuel level, dock, haul pace) keep
+  // their own module-level memory — so reading committed state is strictly correct.
+  runCopilot(parsed, deps.readState(), deps).catch((e) => console.error('[Copilot]', e && e.message));
+
   for (const evt of extraEvents) deps.broadcastEvent(evt);
 }
 
@@ -279,7 +295,7 @@ function processStatisticsEvents(parsed, existing, patch) {
 // Resolve a CodexEntry's BodyID to a body name via cached body data. The
 // per-body flag is keyed "systemName|bodyName" (matching the client), so we need
 // the name, not the numeric id.
-function resolveBodyNameById(existing, systemAddress, bodyId) {
+export function resolveBodyNameById(existing, systemAddress, bodyId) {
   if (typeof bodyId !== 'number') return null;
   const key = String(systemAddress);
   const sc = existing.scoutedSystems && existing.scoutedSystems[key];
@@ -1431,6 +1447,13 @@ function processNpcThreat(parsed, extraEvents, deps) {
 // memory, then patch the new snapshot back. Replace strategy — entire
 // inventory is rewritten each tick (cheap, server is sole writer).
 
+// Engineer unlock states. Read off allEvents rather than a dedicated parser array —
+// EngineerProgress fires a handful of times per session, so it isn't worth its own bucket.
+function processEngineerEvents(parsed, existing, patch) {
+  const next = applyEngineerEvents(parsed.allEvents || [], existing.engineers);
+  if (next) patch.engineers = next;
+}
+
 function processMaterialEvents(parsed, existing, patch, extraEvents) {
   const matEvents = [
     ...(parsed.materialsEvents || []),
@@ -1513,6 +1536,18 @@ export function pollCompanionFiles(journalDir, deps) {
     extra.push({ type: 'ship_cargo', cargo: shipCargo, timestamp: new Date().toISOString() });
   }
 
+  // The commander's own carrier: replay the journals once (then only new files) so the ledger is
+  // current before any market read reconciles against it. No-op after the first pass.
+  if (settings.myFleetCarrier) {
+    try {
+      const r = ensureCarrierLedger({ journalDir, carrierId: settings.myFleetCarrierMarketId || null, callsign: settings.myFleetCarrier });
+      if (r && r.files) {
+        console.log(`[CarrierLedger] ${settings.myFleetCarrier}: ${r.txs} transactions after reading ${r.files} journal file(s)`);
+        patch.carrierCargo = { __upsert: { [settings.myFleetCarrier]: carrierCargoRecord() } };
+      }
+    } catch (e) { console.error('[CarrierLedger] replay:', e && e.message); }
+  }
+
   const market = readMarketJson(journalDir);
   if (market && market.marketId) {
     const myCallsign = settings.myFleetCarrier || '';
@@ -1527,30 +1562,37 @@ export function pollCompanionFiles(journalDir, deps) {
     else if (squadronCallsigns.includes(market.stationName)) ownerCallsign = market.stationName;
 
     if (ownerCallsign) {
-      const items = market.items
-        .filter((it) => it.stock > 0)
-        .map((it) => {
-          const def = findCommodityByDisplayName(it.nameLocalised || it.name)
-            || findCommodityByDisplayName(it.name)
-            || findCommodityByJournalName(`$${String(it.name || '').replace(/\s+/g, '').toLowerCase()}_name;`);
-          return {
-            commodityId: (def && def.id) || String(it.name || '').toLowerCase(),
-            name: it.nameLocalised || (def && def.name) || it.name,
-            count: it.stock,
-          };
-        });
-      patch.carrierCargo = {
-        __upsert: {
-          [ownerCallsign]: {
-            items,
-            earliestTransfer: market.timestamp,
-            latestTransfer: market.timestamp,
-            updatedAt: market.timestamp || new Date().toISOString(),
-            isEstimate: false,
-            carrierCallsign: ownerCallsign,
-          },
-        },
-      };
+      let record;
+      if (ownerCallsign === myCallsign) {
+        // Own carrier: the market read is the truth for what is on a sell order; everything else
+        // the ledger already knows. The record carries the game's total and what is not itemised.
+        reconcileCarrierMarket(market.items, market.timestamp || new Date().toISOString());
+        record = carrierCargoRecord();
+      } else {
+        // A squadron carrier: only its sell orders are visible, as before.
+        const items = market.items
+          .filter((it) => it.stock > 0)
+          .map((it) => {
+            const def = findCommodityByDisplayName(it.nameLocalised || it.name)
+              || findCommodityByDisplayName(it.name)
+              || findCommodityByJournalName(`$${String(it.name || '').replace(/\s+/g, '').toLowerCase()}_name;`);
+            return {
+              commodityId: (def && def.id) || String(it.name || '').toLowerCase(),
+              name: it.nameLocalised || (def && def.name) || it.name,
+              count: it.stock,
+            };
+          });
+        record = {
+          items,
+          earliestTransfer: market.timestamp,
+          latestTransfer: market.timestamp,
+          updatedAt: market.timestamp || new Date().toISOString(),
+          isEstimate: false,
+          carrierCallsign: ownerCallsign,
+        };
+      }
+      const items = record.items;
+      patch.carrierCargo = { __upsert: { [ownerCallsign]: record } };
       outcome = {
         kind: 'fc_cargo',
         callsign: ownerCallsign,
@@ -1576,6 +1618,10 @@ export function pollCompanionFiles(journalDir, deps) {
         });
       }
     } else if (!isEphemeralStation(market.stationName, market.stationType, market.marketId)) {
+      // Galactic averages ride every market read — the game's MeanPrice, not a typed number.
+      try { noteMarketMeans(market.items, market); } catch (e) { console.error('[Market] means:', e && e.message); }
+      // Price history: movers and first-of-day rows only, so a station opened all evening costs one line.
+      try { recordMarketRead(market); } catch (e) { console.error('[Market] history:', e && e.message); }
       // Capture every item Market.json lists (sell-side + buy-side). Fall back to raw
       // Spansh name when commodity isn't in the colonisation dictionary so data isn't lost.
       // Always save the snapshot — even a zero-commodity one preserves station metadata.
@@ -1592,6 +1638,7 @@ export function pollCompanionFiles(journalDir, deps) {
             buyPrice: it.buyPrice,
             stock: it.stock,
             sellPrice: it.sellPrice,
+            meanPrice: it.meanPrice,
             demand: it.demand,
             category: it.category || '',
           };

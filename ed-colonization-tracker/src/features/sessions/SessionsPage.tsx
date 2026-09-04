@@ -123,10 +123,10 @@ export function SessionsPage() {
   if (sessions.length === 0 && !activeSessionId) {
     return (
       <div>
-        <h2 className="text-2xl font-bold mb-6">Sessions & Progress</h2>
+        <h2 className="text-2xl font-bold mb-6">Hauling Sessions</h2>
         <div className="bg-card border border-border rounded-lg p-8 text-center">
           <div className="text-4xl mb-3">{'\u25F7'}</div>
-          <h3 className="font-semibold mb-2">No Sessions Yet</h3>
+          <h3 className="font-semibold mb-2">No Hauling Sessions Yet</h3>
           <p className="text-sm text-muted-foreground max-w-md mx-auto mb-4">
             Start a delivery session from any active project's detail page to track your delivery rate over time.
           </p>
@@ -140,7 +140,7 @@ export function SessionsPage() {
 
   return (
     <div>
-      <h2 className="text-2xl font-bold mb-6">Sessions & Progress</h2>
+      <h2 className="text-2xl font-bold mb-6">Hauling Sessions</h2>
 
       {/* Active session banner */}
       {activeSession && activeProject && (

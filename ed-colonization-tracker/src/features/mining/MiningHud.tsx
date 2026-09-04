@@ -10,6 +10,7 @@
  * series color.
  */
 import { useEffect, useRef, useState } from 'react';
+import { formatRingName } from '@/lib/ringNames';
 
 // ---- shared display helpers ----------------------------------------------------------------
 
@@ -167,7 +168,7 @@ export function HeroBand(props: {
           {props.ring ? (
             <>
               <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Current ring</div>
-              <div className="text-sm font-semibold leading-tight">{props.ring.name}</div>
+              <div className="text-sm font-semibold leading-tight">{formatRingName(props.ring.name)}</div>
               <div className="text-xs text-muted-foreground">
                 {ringClassText(props.ring.ringClass)}{' '}
                 <span className={RESERVE_TONE[props.ring.reserve] ?? ''}>{props.ring.reserve}</span>

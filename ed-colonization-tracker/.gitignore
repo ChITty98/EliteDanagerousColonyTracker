@@ -47,6 +47,14 @@ colony-images/
 # Mining side-stores: append-only rock log + cached ring/hotspot index. Deliberately outside
 # colony-data.json so the synced state blob doesn't grow without bound.
 mining-log.jsonl
+mining-log.jsonl.bak*
+*.jsonl.bak*
+surface-mining-log.jsonl
+surface-mining-annotations.json
+surface-track.jsonl
+market-means.json
+market-history.jsonl
+carrier-ledger.jsonl
 mining-rings.json
 mining-trophies.json
 journal-stats.json

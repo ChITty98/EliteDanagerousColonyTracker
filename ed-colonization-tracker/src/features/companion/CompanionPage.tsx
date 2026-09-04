@@ -4,6 +4,7 @@ import { FC_MAX_CAPACITY } from '@/store/types';
 import { sseSubscribe, sseBusStatus } from '@/services/sseBus';
 import { SightingCard } from './SightingCard';
 import { ChecklistCard } from './ChecklistCard';
+import { DomainTasksCard } from './DomainTasksCard';
 import {
   computeNeedsContent,
   computeScoreContent,
@@ -28,7 +29,18 @@ const RATING_STYLE: Record<ColonizationRating, string> = {
   unknown: 'bg-slate-600/20 text-slate-400 border-slate-600/40',
 };
 
+/** Surface-mining compass reading, pushed by the server on every Status tick while a target is set. */
+interface SurfaceCompass { label: string; distance: number; bearing: number; turn: number | null; arrived?: boolean }
+
 export function CompanionPage() {
+  const [compass, setCompass] = useState<SurfaceCompass | null>(null);
+  const clearCompass = () => {
+    const tk = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
+    fetch(tk ? `/api/surface-mining/target?token=${tk}` : '/api/surface-mining/target', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clear: true }),
+    }).catch(() => { /* best-effort */ });
+    setCompass(null);
+  };
   const overlayEnabled = useAppStore((s) => s.settings.overlayEnabled);
   const commanderPosition = useAppStore((s) => s.commanderPosition);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
@@ -135,6 +147,13 @@ export function CompanionPage() {
       setEvents((prev) => [e, ...prev].slice(0, 50));
     }));
 
+    // Surface-mining compass: the iPad on the dash shows distance, bearing and turn to the target.
+    unsubs.push(sseSubscribe('surface_compass', (ev) => {
+      const e = ev as Record<string, unknown>;
+      if (e.cleared) { setCompass(null); return; }
+      setCompass({ label: String(e.label), distance: Number(e.distance), bearing: Number(e.bearing), turn: e.turn == null ? null : Number(e.turn), arrived: !!e.arrived });
+      if (e.arrived) setTimeout(() => setCompass(null), 8000);
+    }));
     unsubs.push(sseSubscribe('npc_threat', (ev) => {
       const e = ev as CompanionEvent;
       setThreatAlert(e);
@@ -599,6 +618,28 @@ export function CompanionPage() {
           running alerts are never below the fold. */}
       <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_400px] lg:gap-4 lg:items-start flex-1 min-h-0">
       <aside className="lg:order-2 lg:sticky lg:top-4 mb-4 lg:mb-0 min-w-0">
+      {/* Surface-mining compass — big, for the dash */}
+      {compass && (
+        <div className={`mb-3 rounded-lg border px-4 py-3 ${compass.arrived ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-sky-500/50 bg-sky-500/10'}`}>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs uppercase tracking-widest text-sky-300">{'⤴'} {compass.label}</div>
+            <button onClick={clearCompass} className="text-[10px] uppercase tracking-wider text-muted-foreground hover:text-foreground">clear</button>
+          </div>
+          {compass.arrived ? (
+            <div className="mt-1 text-2xl font-bold text-emerald-300">you&rsquo;re here</div>
+          ) : (
+            <div className="mt-1 flex flex-wrap items-baseline gap-4 tabular-nums">
+              <span className="text-3xl font-bold">{compass.distance < 1000 ? `${Math.round(compass.distance)} m` : `${(compass.distance / 1000).toFixed(1)} km`}</span>
+              <span className="text-lg text-muted-foreground">brg {compass.bearing}°</span>
+              {compass.turn != null && (
+                <span className={`text-2xl font-semibold ${Math.abs(compass.turn) < 5 ? 'text-emerald-400' : 'text-amber-300'}`}>
+                  {Math.abs(compass.turn) < 5 ? 'straight on' : `${compass.turn < 0 ? '←' : '→'} ${Math.abs(compass.turn)}°`}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       {/* Live Event Feed */}
       <div className="flex-1 min-h-0">
         <div className="flex items-center justify-between mb-2">
@@ -652,6 +693,9 @@ export function CompanionPage() {
       <div className="lg:order-1 min-w-0">
       {/* Exploration checklist — current system, self-checking */}
       <ChecklistCard />
+
+      {/* Chores in a system you own — only shows inside the domain */}
+      <DomainTasksCard />
 
       {/* Record-this-spot — the postcard button */}
       <SightingCard />

@@ -1,7 +1,7 @@
 // server/ai/copilotAffinity.js
 //
 // The persona affinity matrix → LIVE, arbiter-gated reaction beats. Each persona
-// only perks up at what fits their character (Wash/Agriculture, TARS/High Tech,
+// only perks up at what fits their character (Wren/Agriculture, Tycho/High Tech,
 // K2/Military+Industrial, etc.). These are LIVE (the reaction references the
 // specific economy / allegiance / world), but the salience arbiter keeps them
 // rare — once or twice per place, never every dock. FLAVOUR ONLY: an affinity
@@ -16,6 +16,7 @@ import { isSingleSeatShip, isCrampedShip, shipRole } from '../journal/extractor.
 import { isSrvType, noteMotherShip } from './copilotAway.js';
 import { getMemory, saveMemory } from './copilotMemory.js';
 import { liveCarrierFreeSpace } from './copilotContext.js';
+import { detectStationTypeBeat } from './copilotStations.js';
 
 // Economy (StationEconomy) → per-persona stance text folded into the intent.
 const ECONOMY = {
@@ -79,7 +80,7 @@ const ROLE_STANCE = {
 };
 
 // Three truly-ancient hull designs with centuries of in-lore service — not an axis, just
-// heritage flavour. TARS leads (respects the history); Wash nods softly; K2 is indifferent.
+// heritage flavour. Tycho leads (respects the history); Wren nods softly; K2 is indifferent.
 const HERITAGE = {
   sidewinder: 'one of the oldest hull designs still flying — centuries of service, the ship that taught half the galaxy to fly',
   python: 'a hull design with centuries of service — one of the oldest still in production, a workhorse across every era of human expansion',
@@ -166,12 +167,12 @@ function shipKinship(shipType, persona) {
   if (persona === 'k2' && isCrampedShip(t)) return 'a cramped flight deck — a heavy combat frame folded into a cockpit built for someone half his size; openly, characterfully grumpy about it';
   const heritage = HERITAGE[t];
   if (heritage) {
-    if (persona === 'tars') return `${heritage} — TARS knows the history and respects it; a teaching moment about the design lineage`;
+    if (persona === 'tars') return `${heritage} — you know the history and respect it; a teaching moment about the design lineage`;
     if (persona === 'wash') return `${heritage} — an old design that still flies; there is something to that`;
   }
   if (persona === 'k2' && t.includes('imperial')) return "Gutamaya / Imperial lines — the rounded shape he's built like; a bittersweet kinship he won't quite admit";
   if (persona === 'tars' && /(cobra|python|anaconda|krait|viper|sidewinder)/.test(t)) return 'a Faulcon DeLacy hull — he finds the design language agreeable, an aesthetic lineage they share';
-  // Wash: the big slow cargo bricks (Panther Clipper, Type-7/9/10, Cutter, Beluga) are the
+  // Wren: the big slow cargo bricks (Panther Clipper, Type-7/9/10, Cutter, Beluga) are the
   // OPPOSITE of what he loves — he flies them for the job, not the joy, and says so.
   if (persona === 'wash' && /(panther|type.?7|type.?9|type.?10|cutter|beluga)/.test(t)) return "a vast, slow cargo BRICK — the exact opposite of the nimble ship he loves; he flies it because the JOB demands it, not for one second of joy, and he'll cheerfully complain about it";
   if (persona === 'wash' && /(sidewinder|eagle|viper|cobra|dolphin|asp|courier|diamondback|mamba|fer.?de.?lance)/.test(t)) return 'a ship you actually FEEL in the turns — exactly his kind; let the affection show';
@@ -179,14 +180,14 @@ function shipKinship(shipType, persona) {
 }
 
 function shipTaste(persona) {
-  if (persona === 'wash') return 'Wash loves nimble, experiential ships you FEEL in the turns, and grumbles in a flying brick';
-  if (persona === 'tars') return 'TARS cares about efficiency and capability — jump range, thermals, cargo ratio, good engineering — not "fun"';
-  return 'K2 respects tough, combat-capable, heavy ships and is physically uncomfortable folded into a cramped cockpit';
+  if (persona === 'wash') return 'You love nimble, experiential ships you FEEL in the turns, and grumble in a flying brick';
+  if (persona === 'tars') return 'You care about efficiency and capability — jump range, thermals, cargo ratio, good engineering — not "fun"';
+  return 'You respect tough, combat-capable, heavy ships and are physically uncomfortable folded into a cramped cockpit';
 }
 
 // A periodic, in-character read on the hull we're CURRENTLY flying — so the ship gets
 // remarked on even when we haven't just swapped (the #1 miss: flying a Panther Clipper for
-// hours and never hearing Wash's take on it). Guarded per hull so it's occasional.
+// hours and never hearing Wren's take on it). Guarded per hull so it's occasional.
 function maybeShipBeat(persona, state) {
   if (!currentShip) return null;
   const now = Date.now();
@@ -245,12 +246,19 @@ export function detectAffinityBeat(ev, persona, hauling, state) {
   }
   // ...and seed it from PERSISTED state when no LoadGame/Loadout fired this session. Without this the
   // periodic ship read stays silent after a server restart while you're already in the ship — the
-  // exact reason Wash never remarked on the Panther Clipper. state.currentShip.type is the hull id.
+  // exact reason Wren never remarked on the Panther Clipper. state.currentShip.type is the hull id.
   if (!currentShip && state && state.currentShip) {
     const cs = state.currentShip;
     currentShip = (typeof cs === 'object' ? cs.type : cs) || '';
   }
   switch (ev.event) {
+    // Station ARCHITECTURE — what kind of building we are flying into, independent of its economy
+    // or whether we are hauling. On DockingGranted rather than Docked: the type is in the payload,
+    // it lands ~30s out while the station fills the canopy, and that tick is otherwise empty.
+    // Literal lines, so it speaks with the `claude` CLI unavailable.
+    case 'DockingGranted':
+      return detectStationTypeBeat(ev, persona);
+
     // (Fleet-carrier tritium watch moved to copilotContext.detectCarrierFuel — STATE-driven off the
     // persisted fuelLevel, so it works without a live CarrierStats event and re-offers if it loses
     // arbitration. The event-edge version here sat silent while the carrier ran at 193t for days.)
@@ -305,18 +313,18 @@ export function detectAffinityBeat(ev, persona, hauling, state) {
             ? "Imperial Slaves — the Empire's legalised, paperwork-dressed indenture"
             : 'raw Slaves — open human trafficking, the kind only a lawless anarchy trades in the open';
           const a = persona === 'wash'
-            ? `Wash is quietly revolted — ${imperial ? "the Empire calling it 'indenture' doesn't wash the stink off" : 'this is the ugly kind, no euphemism'}. Do the job, don't linger; he wants no part of it`
+            ? `You are quietly revolted — ${imperial ? "the Empire calling it 'indenture' doesn't wash the stink off" : 'this is the ugly kind, no euphemism'}. Do the job, don't linger; you want no part of it`
             : persona === 'k2'
-            ? `K2 is clinically detached — ${imperial ? 'his ex-Imperial-enforcer half respects the ORDER of it (the Empire files the paperwork); the edited rest is unbothered' : 'no law here, no pretense — he notes it without feeling, dimly aware he ought to feel something'}`
-            : `TARS is honest about it — this place trades in people; he names it plainly, neither sermon nor shrug`;
+            ? `You are clinically detached — ${imperial ? 'your ex-Imperial-enforcer half respects the ORDER of it (the Empire files the paperwork); the edited rest is unbothered' : 'no law here, no pretense — you note it without feeling, dimly aware you ought to feel something'}`
+            : `You are honest about it — this place trades in people; you name it plainly, neither sermon nor shrug`;
           return beat('affinity-slavery', `This station's market deals in ${kind}. ${a}. FLAVOUR ONLY — react to the FACT that they trade in people; do NOT recite stock numbers or invent specifics. Voice YOUR OWN discomfort/read — never tell the commander what to do or not do (they're the captain).`, ev, 50);
         }
       }
       const fst = ev.StationFaction && ev.StationFaction.FactionState;
       if (fst && /War|CivilWar|Boom|Famine|Outbreak|Lockdown/i.test(fst)) {
-        const a = persona === 'k2' ? 'K2 reads it tactically — security will be erratic, conditions he finds familiar; stay alert'
-          : persona === 'wash' ? 'Wash is wary — the place has an edge now; do our business and not make friends'
-          : 'TARS notes the security and market implications, factually';
+        const a = persona === 'k2' ? 'You read it tactically — security will be erratic, conditions you find familiar; stay alert'
+          : persona === 'wash' ? 'You are wary — the place has an edge now; do our business and not make friends'
+          : 'You note the security and market implications, factually';
         return beat('faction-state', `The controlling faction here is in ${fst}. ${a}.`, ev, 49);
       }
       if (!hauling) {
@@ -340,9 +348,9 @@ export function detectAffinityBeat(ev, persona, hauling, state) {
           powerplaySaid.set(sysKey, nowPP);
           const ppState = ev.PowerplayState ? ` (${ev.PowerplayState})` : '';
           const desc = power ? `under ${power}'s control${ppState}` : `contested between ${powers.join(' and ')}`;
-          const a = persona === 'k2' ? "K2 clocks the controlling power's doctrine and what it means for enforcement here"
-            : persona === 'wash' ? 'Wash would rather stay clear of Powerplay politics — just passing through, heads down'
-            : 'TARS notes the controlling power and the practical security / market implications, factually';
+          const a = persona === 'k2' ? "You clock the controlling power's doctrine and what it means for enforcement here"
+            : persona === 'wash' ? 'You would rather stay clear of Powerplay politics — just passing through, heads down'
+            : 'You note the controlling power and the practical security / market implications, factually';
           return beat('powerplay', `This system sits ${desc} in the Powerplay contest. ${a}. Flavour only — NEVER invent galaxy-wide standings, who is winning, or fabricated orders.`, ev, 45);
         }
       }
@@ -358,9 +366,9 @@ export function detectAffinityBeat(ev, persona, hauling, state) {
         const lastA = anarchySaid.get(aKey);
         if (!(lastA && Date.now() - lastA < ANARCHY_MS)) {
           anarchySaid.set(aKey, Date.now());
-          const a = persona === 'k2' ? 'K2 is comfortable — no laws, no authority; he should find it alarming and does not'
-            : persona === 'wash' ? 'Wash is nervous — nobody in charge and everybody armed; keep our heads down and cargo close'
-            : 'TARS notes it factually — minimal security, elevated interdiction odds';
+          const a = persona === 'k2' ? 'You are comfortable — no laws, no authority; you should find it alarming and do not'
+            : persona === 'wash' ? 'You are nervous — nobody in charge and everybody armed; keep our heads down and cargo close'
+            : 'You note it factually — minimal security, elevated interdiction odds';
           return beat('faction-anarchy', `Just jumped into an ANARCHY system (no system authority). ${a}.`, ev, 50);
         }
       }
@@ -421,7 +429,7 @@ export function detectAffinityBeat(ev, persona, hauling, state) {
         // CRAMPED but NOT single-seat — he has a seat, it's just a tight fit (K2's big-frame gripe; the
         // single-seat "in the hold" case above already folds in cramped when a hull is both).
         if (nowCramped && persona === 'k2') {
-          return beat('cramped-cockpit', `Just switched into a ${nm} (${shipType}) — a small, cramped flight deck. React as K2: a large combat frame folded into a cockpit built for someone half his size, packed in, pointedly and repeatedly displeased.`, ev, 55);
+          return beat('cramped-cockpit', `Just switched into a ${nm} (${shipType}) — a small, cramped flight deck. React in character: a large combat frame folded into a cockpit built for someone half your size, packed in, pointedly and repeatedly displeased.`, ev, 55);
         }
         const kin = shipKinship(shipType, persona);
         const role = shipRole(shipType);

@@ -7,6 +7,7 @@ import { ProjectCreatePage } from '@/features/projects/ProjectCreatePage';
 import { SystemDetailPage } from '@/features/systems/SystemDetailPage';
 import { SourcesPage } from '@/features/sources/SourcesPage';
 import { SessionsPage } from '@/features/sessions/SessionsPage';
+import { ThreatsPage } from '@/features/threats/ThreatsPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 import { FaqPage } from '@/features/faq/FaqPage';
 import { WikiPage } from '@/features/wiki/WikiPage';
@@ -21,8 +22,11 @@ import { SightsPage } from '@/features/sights/SightsPage';
 import { SystemViewPage } from '@/features/system-view/SystemViewPage';
 import { WarPeacePage } from '@/features/war-peace/WarPeacePage';
 import { MaterialsPage } from '@/features/materials/MaterialsPage';
+import { RewardsPage } from '@/features/rewards/RewardsPage';
 import { CopilotPage } from '@/features/copilot/CopilotPage';
 import { MiningPage } from '@/features/mining/MiningPage';
+import { SurfaceMiningPage } from '@/features/surface-mining/SurfaceMiningPage';
+import { SellPage } from '@/features/sell/SellPage';
 import { RadarPage } from '@/features/radar/RadarPage';
 import { ScoutMapPage } from '@/features/scouting/ScoutMapPage';
 import { ChainWatchPage } from '@/features/chains/ChainWatchPage';
@@ -42,6 +46,7 @@ export const router = createBrowserRouter([
       { path: 'planner', element: <ChainPlannerPage /> },
       { path: 'sources', element: <SourcesPage /> },
       { path: 'sessions', element: <SessionsPage /> },
+      { path: 'threats', element: <ThreatsPage /> },
       { path: 'domain', element: <ArchitectDomainPage /> },
       { path: 'map', element: <ColonyMapPage /> },
       { path: 'system-view', element: <SystemViewPage /> },
@@ -50,7 +55,10 @@ export const router = createBrowserRouter([
       { path: 'copilot', element: <CopilotPage /> },
       { path: 'war-peace', element: <WarPeacePage /> },
       { path: 'materials', element: <MaterialsPage /> },
+      { path: 'rewards', element: <RewardsPage /> },
       { path: 'mining', element: <MiningPage /> },
+      { path: 'surface-mining', element: <SurfaceMiningPage /> },
+      { path: 'sell', element: <SellPage /> },
       { path: 'radar', element: <RadarPage /> },
       { path: 'scout-map', element: <ScoutMapPage /> },
       { path: 'chains', element: <ChainWatchPage /> },

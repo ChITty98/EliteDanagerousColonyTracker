@@ -2,7 +2,7 @@
 //
 // The Q&A question bank + selection. The co-pilot occasionally asks the commander a
 // tappable question and stores the answer (copilotMemory.qa.*), building a model of them
-// for richer banter + callbacks. Persona-shaped: Wash personal/human/curious; TARS warm
+// for richer banter + callbacks. Persona-shaped: Wren personal/human/curious; Tycho warm
 // calibration (ties to his dial + teacher role); K2 blunt/probing/assessing. DURABLE
 // answers are asked ONCE EVER; SESSION answers reset each game-load. The cockpit UI auto-
 // adds "It's complicated" (a real logged non-answer) + "not now" (dismiss) to every one.
@@ -27,7 +27,7 @@ export const QUESTIONS = [
     trigger: 'quiet-cruise', skipWhenHauling: true,
   },
 
-  // --- Wash: personal, human, curious (durable) ---
+  // --- Wren: personal, human, curious (durable) ---
   {
     id: 'q-savor-beauty', persona: 'wash', layer: 'durable', learnKey: 'savorBeauty',
     text: 'Real question — when we find a beautiful system, do you stop and look, or log it and move on?',
@@ -47,7 +47,7 @@ export const QUESTIONS = [
     trigger: 'quiet-cruise',
   },
 
-  // --- TARS: warm calibration, ties to his dial + teacher role (durable) ---
+  // --- Tycho: warm calibration, ties to his dial + teacher role (durable) ---
   {
     id: 'q-honesty-pref', persona: 'tars', layer: 'durable', learnKey: 'honestyPref',
     text: 'Quick calibration: when the news is bad, do you want it straight, or softened? I have a setting for both.',

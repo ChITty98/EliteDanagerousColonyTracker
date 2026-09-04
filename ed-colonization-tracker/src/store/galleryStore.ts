@@ -6,6 +6,13 @@ export interface GalleryImage {
   url: string; // Server URL like /gallery-images/img_xxx.jpg
   caption: string;
   addedAt: string; // ISO timestamp
+  /**
+   * A shot taken to DOCUMENT something rather than to picture the place — currently the F10 used
+   * to record a planetary mining deposit's HUD panel. Set when such a marker is promoted to a
+   * deposit, since one keypress serves both purposes and intent is only known afterwards.
+   * Representative thumbnails skip these, so a photo of a rock face is never a system's portrait.
+   */
+  utility?: boolean;
 }
 
 // Key format: "system:SystemName" or "system:SystemName:body:BodyName" or "system:SystemName:station:StationName"

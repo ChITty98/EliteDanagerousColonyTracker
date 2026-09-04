@@ -27,6 +27,31 @@ const cache = new Map(); // key -> { cr, station, system, demand, updatedAt, at 
 let queue = [];
 let running = false;
 
+// Shared Ardent fetch for everything on the server (this module, the Sell page, the history
+// sampler): cached per URL, one request in flight at a time with FETCH_SPACING_MS between them,
+// a failure remembered for ten minutes so a down API is not hammered. Resolves to the parsed JSON
+// or null — never throws.
+const jsonCache = new Map(); // url -> { at, data }
+let chain = Promise.resolve();
+const MISS_MS = 10 * 60_000;
+export function ardentJson(pathOrUrl, ttlMs = TTL_MS) {
+  const url = /^https?:/.test(pathOrUrl) ? pathOrUrl : `https://api.ardent-insight.com/v2${pathOrUrl}`;
+  const hit = jsonCache.get(url);
+  if (hit && Date.now() - hit.at < (hit.data == null ? MISS_MS : ttlMs)) return Promise.resolve(hit.data);
+  const run = chain.then(async () => {
+    const again = jsonCache.get(url);
+    if (again && again !== hit && Date.now() - again.at < ttlMs) return again.data; // filled while queued
+    let data = null;
+    try { const res = await fetch(url); if (res.ok) data = await res.json(); } catch { data = null; }
+    jsonCache.set(url, { at: Date.now(), data });
+    await new Promise((r) => setTimeout(r, FETCH_SPACING_MS));
+    return data;
+  });
+  chain = run.catch(() => {});
+  return run;
+}
+export function ardentCacheStats() { return { urls: jsonCache.size }; }
+
 /** Sync read for the hot path. Null when never fetched or too stale to trust. */
 export function getLivePrice(key) {
   const hit = cache.get(key);
@@ -66,12 +91,9 @@ async function drain() {
 async function fetchOne(key) {
   const name = ARDENT_ALIAS[key] || key;
   try {
-    const url = refSystem
-      ? `https://api.ardent-insight.com/v2/system/name/${encodeURIComponent(refSystem)}/commodity/name/${encodeURIComponent(name)}/nearby/imports?maxDistance=${CARRIER_RANGE_LY}`
-      : `https://api.ardent-insight.com/v2/commodity/name/${encodeURIComponent(name)}/imports`;
-    const res = await fetch(url);
-    if (!res.ok) { markMiss(key); return; }
-    const rows = await res.json();
+    const rows = await ardentJson(refSystem
+      ? `/system/name/${encodeURIComponent(refSystem)}/commodity/name/${encodeURIComponent(name)}/nearby/imports?maxDistance=${CARRIER_RANGE_LY}`
+      : `/commodity/name/${encodeURIComponent(name)}/imports`);
     if (!Array.isArray(rows)) { markMiss(key); return; }
     const good = rows
       .filter((x) => x && x.stationType !== 'FleetCarrier' && (x.demand ?? 0) >= MIN_DEMAND && (x.sellPrice ?? 0) > 0)
@@ -79,6 +101,11 @@ async function fetchOne(key) {
       .sort((a, b) => (b.sellPrice || 0) - (a.sellPrice || 0) || ((a.distance ?? 1e9) - (b.distance ?? 1e9)));
     const best = good[0];
     if (!best) { markMiss(key); return; }
+    // Log only when the answer actually MOVED. Refreshing hourly and announcing an unchanged
+    // price for every minable commodity turns the console into a scroll of nothing — a line
+    // should mean "this changed", which is the only time it is worth your eye.
+    const prev = cache.get(key);
+    const moved = !prev || !prev.cr || prev.cr !== best.sellPrice || prev.station !== (best.stationName || '');
     cache.set(key, {
       cr: best.sellPrice,
       station: best.stationName || '',
@@ -88,7 +115,10 @@ async function fetchOne(key) {
       updatedAt: best.updatedAt || '',
       at: Date.now(),
     });
-    console.log(`[LivePrice] ${key}: ${best.sellPrice.toLocaleString()} Cr/t @ ${best.stationName} (${best.systemName})${best.distance != null ? ` ${Math.round(best.distance)} ly` : ''}`);
+    if (moved) {
+      const delta = prev && prev.cr ? ` (was ${prev.cr.toLocaleString()})` : '';
+      console.log(`[LivePrice] ${key}: ${best.sellPrice.toLocaleString()} Cr/t @ ${best.stationName} (${best.systemName})${best.distance != null ? ` ${Math.round(best.distance)} ly` : ''}${delta}`);
+    }
   } catch {
     markMiss(key);
   }

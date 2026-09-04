@@ -27,7 +27,13 @@ const BEATS = {
   }),
   lead: (d) => ({
     key: 'radar-lead', priority: 52, interrupt: false, live: false, mood: 'hyped',
-    inputs: { dist: String(d.distLy ?? '?'), system: d.sys || 'a nearby system' },
+    // `atmo` is the whole point of the line — "oxygen, 152 light-years out" is worth hearing,
+    // "something matched your criteria" is not. The listener only queues oxygen/ammonia now.
+    inputs: {
+      dist: String(d.distLy ?? '?'),
+      system: d.sys || 'a nearby system',
+      atmo: d.atmo || 'an atmosphere',
+    },
   }),
   chain: (d) => ({
     key: 'radar-chain', priority: 45, interrupt: false, live: false, mood: 'calm',

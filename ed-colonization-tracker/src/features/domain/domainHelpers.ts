@@ -128,18 +128,30 @@ export const STAR_SORT_ORDER: Record<string, number> = {
   Unknown: 999,
 };
 
+// TWO VOCABULARIES LAND HERE. A station DISCOVERED through the journal carries a journal type
+// (Coriolis, Orbis, AsteroidBase) which resolves to a "… Station" label. A station the commander
+// BUILT is recorded with its Raven build id (coriolis_starport, large_planetary_port), which
+// resolves through installationTypes to a "… Starport" label instead. Both reach this table, so
+// both spellings must be here — otherwise the commander's own builds sort as Unknown and, worse,
+// miss the highlight sets below. That is exactly how Chitty City and Atmo Sky Cairn Asc — two
+// Tier 3 Large Planetary Ports — stayed invisible on their own Domain page.
 export const STATION_SORT_ORDER: Record<string, number> = {
   'Dodec Spaceport': 0,
   'Coriolis Station': 1,
+  'Coriolis Starport': 1,
   'Orbis Station': 2,
+  'Orbis Starport': 2,
   'Ocellus Station': 3,
+  'Ocellus Starport': 3,
   'Asteroid Base': 4,
+  'Asteroid Starport': 4,
   Megaship: 999, // not buildable — sort to bottom
   Outpost: 6,
   'Surface Port': 7,
   'Surface Station': 8,
   'Surface Outpost': 9,
   'Planetary Port': 10,
+  'Large Planetary Port': 5, // Tier 3, the largest surface build — ranks with the orbital ports
   'Planetary Outpost': 11,
   Settlement: 12,
   Installation: 13,
@@ -191,13 +203,21 @@ export const RARE_STAR_TYPES = new Set([
   'Carbon Star',
 ]);
 
+// Both spellings of every notable type — see the note on STATION_SORT_ORDER. The "Starport" and
+// "Large Planetary Port" entries are the commander's OWN builds; omitting them meant the page
+// highlighted stations they merely found while ignoring the ones they raised.
 export const NOTABLE_STATION_LABELS = new Set([
   'Coriolis Station',
+  'Coriolis Starport',
   'Orbis Station',
+  'Orbis Starport',
   'Ocellus Station',
+  'Ocellus Starport',
   'Dodec Spaceport',
   'Asteroid Base',
+  'Asteroid Starport',
   'Planetary Port',
+  'Large Planetary Port',
   'Surface Station',
 ]);
 
@@ -207,8 +227,12 @@ export const DEFAULT_HIGHLIGHT_STARS = [
 ];
 export const DEFAULT_HIGHLIGHT_ATMOS = ['Oxygen'];
 export const DEFAULT_HIGHLIGHT_STATIONS = [
-  'Coriolis Station', 'Orbis Station', 'Ocellus Station', 'Dodec Spaceport',
-  'Asteroid Base', 'Planetary Port',
+  'Coriolis Station', 'Coriolis Starport',
+  'Orbis Station', 'Orbis Starport',
+  'Ocellus Station', 'Ocellus Starport',
+  'Dodec Spaceport',
+  'Asteroid Base', 'Asteroid Starport',
+  'Planetary Port', 'Large Planetary Port',
 ];
 
 // All known types for the settings UI toggles

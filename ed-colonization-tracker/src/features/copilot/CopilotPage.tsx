@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react';
 import { useAppStore } from '@/store';
 import type { AppSettings } from '@/store/types';
 import { sseSubscribe } from '@/services/sseBus';
+import { ensureAudio, playChime } from '@/services/copilotVoice';
 
 // Attach the LAN token to co-pilot action endpoints so the Cockpit works from network devices
 // (iPad). On localhost there's no stored token and the server bypasses auth for loopback anyway.
@@ -26,8 +27,8 @@ interface Pack {
 }
 
 const PERSONALITIES = [
-  { key: 'wash', label: 'Wash' },
-  { key: 'tars', label: 'TARS' },
+  { key: 'wash', label: 'Wren' },
+  { key: 'tars', label: 'Tycho' },
   { key: 'k2', label: 'K2' },
 ] as const;
 
@@ -52,7 +53,7 @@ const MOOD_ACCENT: Record<string, string> = {
   awe: '#38bdf8', hyped: '#fbbf24', proud: '#a78bfa', somber: '#94a3b8', wave: '#5eead4',
 };
 
-// TARS's trivia host reactions (deadpan-warm), indexed by question so they stay stable.
+// Tycho's trivia host reactions (deadpan-warm), indexed by question so they stay stable.
 const TRIVIA_RIGHT = ['Correct. I am almost proud.', 'Right. Logged, with approval.', 'Correct — you were paying attention after all.', 'Affirmative. Pleasingly so.'];
 const TRIVIA_WRONG = ['Incorrect. The answer is highlighted; commit it to memory.', 'Wrong. Confidently wrong, which I respect.', 'No. A bold no, but a no.', 'Incorrect. I would flash the cue light, but you would still be wrong.'];
 function triviaSignoff(score: number, total: number) {
@@ -73,38 +74,9 @@ const COPILOT_ANIM_CSS = `
 @keyframes copilotLineIn { 0%{opacity:0; transform:translateY(12px)} 100%{opacity:1; transform:translateY(0)} }
 `;
 
-// A soft two-note chime so a new line registers without looking over.
-// Browsers suspend any AudioContext not started by a user gesture, so we keep ONE context
-// and resume it on the Sound-toggle click (a real gesture) — then chimes on SSE lines play.
-let audioCtx: AudioContext | null = null;
-function ensureAudio(): AudioContext | null {
-  try {
-    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return null;
-    if (!audioCtx) audioCtx = new Ctx();
-    if (audioCtx.state === 'suspended') void audioCtx.resume();
-    return audioCtx;
-  } catch { return null; }
-}
-function playChime() {
-  const ctx = ensureAudio();
-  if (!ctx) return;
-  try {
-    const now = ctx.currentTime;
-    [660, 880].forEach((freq, i) => {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.connect(g); g.connect(ctx.destination);
-      o.type = 'sine';
-      o.frequency.value = freq;
-      const t = now + i * 0.12;
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.12, t + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
-      o.start(t); o.stop(t + 0.2);
-    });
-  } catch { /* */ }
-}
+// The chime and the speaking voice both live in @/services/copilotVoice so this page and the
+// corner pop-up share ONE AudioContext — the Sound-toggle gesture has to unlock the same one
+// that later plays SSE-driven audio.
 
 function moodFace(mood: string) {
   switch (mood) {
@@ -166,6 +138,8 @@ export function CopilotPage() {
   const personality = useAppStore((s) => s.settings.copilotPersonality ?? 'wash');
   const idleGap = useAppStore((s) => s.settings.copilotIdleGapSec ?? 240);
   const sound = useAppStore((s) => s.settings.copilotSound ?? false);
+  const voice = useAppStore((s) => s.settings.copilotVoiceEnabled ?? false);
+  const live = useAppStore((s) => s.settings.copilotLiveEnabled !== false); // default on
   const humor = useAppStore((s) => s.settings.copilotTarsHumor ?? 60);
   const honesty = useAppStore((s) => s.settings.copilotTarsHonesty ?? 80);
   const [lines, setLines] = useState<CopilotLine[]>([]);
@@ -200,6 +174,8 @@ export function CopilotPage() {
           lastCost: u.costUsd || 0,
         }));
       }
+      // Chime only. Speech is driven from CopilotPopup, which is mounted app-wide and so
+      // already fires on this page too — doing it here as well would speak every line twice.
       if (useAppStore.getState().settings.copilotSound) playChime();
     });
     return unsub;
@@ -345,21 +321,39 @@ export function CopilotPage() {
           >
             {sound ? '🔔 Sound' : '🔕 Sound'}
           </button>
+          {/* Speech is opt-in and needs a real click to unlock audio, same as the chime. */}
+          <button
+            onClick={() => { ensureAudio(); update({ copilotVoiceEnabled: !voice }); }}
+            className={`px-2 py-1 rounded border text-xs ${voice ? 'border-primary text-primary' : 'border-border text-muted-foreground hover:text-foreground'}`}
+            title={voice ? 'Spoken lines on — click to silence' : 'Speak lines aloud (Windows only)'}
+          >
+            {voice ? '🗣 Voice' : '🔇 Voice'}
+          </button>
+          {/* Live generation on/off, right here rather than buried in Settings — this is the page
+              you're on when the CLI is wedged, and off means instant canned lines instead of every
+              beat waiting out a 60-second timeout. */}
+          <button
+            onClick={() => update({ copilotLiveEnabled: !live })}
+            className={`px-2 py-1 rounded border text-xs ${live ? 'border-primary text-primary' : 'border-amber-500/60 text-amber-500'}`}
+            title={live ? 'Live generation on — uses the local claude CLI' : 'Canned lines only — no CLI calls'}
+          >
+            {live ? '⚡ Live' : '📼 Canned'}
+          </button>
           <button onClick={goFullscreen} className="px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground text-xs">
             ⛶ Fullscreen
           </button>
           <button
             onClick={() => { if (thinking) return; setThinking(true); void fetch(withTok('/copilot-ask'), { method: 'POST' }).catch(() => setThinking(false)); window.setTimeout(() => setThinking(false), 30000); }}
-            disabled={!enabled || thinking}
-            title="Ask the co-pilot for a comment right now"
+            disabled={!enabled || thinking || !live}
+            title={live ? 'Ask the co-pilot for a comment right now' : 'Needs live generation — there is no canned pool for this'}
             className="px-2 py-1 rounded border border-primary/60 text-primary hover:bg-primary/10 text-xs disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {thinking ? '💭 Thinking…' : "💭 What's on your mind?"}
           </button>
           <button
             onClick={() => { if (thinking) return; setThinking(true); void fetch(withTok('/copilot-news'), { method: 'POST' }).catch(() => setThinking(false)); window.setTimeout(() => setThinking(false), 30000); }}
-            disabled={!enabled || thinking}
-            title="The co-pilot's take on the latest GalNet news"
+            disabled={!enabled || thinking || !live}
+            title={live ? "The co-pilot's take on the latest GalNet news" : 'Needs live generation — there is no canned pool for this'}
             className="px-2 py-1 rounded border border-primary/60 text-primary hover:bg-primary/10 text-xs disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {thinking ? '📰 …' : '📰 News'}
@@ -367,7 +361,7 @@ export function CopilotPage() {
           <button
             onClick={startTrivia}
             disabled={!enabled || triviaLoading || !!trivia}
-            title="Play TARS's trivia — the galaxy, and your own play"
+            title="Play Tycho's trivia — the galaxy, and your own play"
             className="px-2 py-1 rounded border border-primary/60 text-primary hover:bg-primary/10 text-xs disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {triviaLoading ? '🧠 …' : '🧠 Trivia'}
@@ -424,7 +418,7 @@ export function CopilotPage() {
             {!triviaDone ? (
               <div className="flex flex-col h-full max-w-2xl mx-auto w-full">
                 <div className="flex items-center justify-between text-[11px] text-white/50 mb-2">
-                  <span className="tracking-widest">TARS TRIVIA · Q{triviaIdx + 1}/{trivia.length}</span>
+                  <span className="tracking-widest">Tycho TRIVIA · Q{triviaIdx + 1}/{trivia.length}</span>
                   <span>Score {triviaScore}<button onClick={() => setTrivia(null)} className="ml-3 text-white/40 hover:text-white/80">✕ close</button></span>
                 </div>
                 <div className="text-lg md:text-xl text-white leading-snug mb-3">{trivia[triviaIdx].text}</div>
@@ -450,7 +444,7 @@ export function CopilotPage() {
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center h-full text-center max-w-md mx-auto">
-                <div className="text-[11px] text-white/50 mb-1 tracking-widest">TARS TRIVIA · COMPLETE</div>
+                <div className="text-[11px] text-white/50 mb-1 tracking-widest">Tycho TRIVIA · COMPLETE</div>
                 <div className="text-3xl font-bold text-white mb-2">{triviaScore} / {trivia.length}</div>
                 <div className="text-sm text-amber-200/90 mb-4">{triviaSignoff(triviaScore, trivia.length)}</div>
                 {triviaHistory.length > 1 && (

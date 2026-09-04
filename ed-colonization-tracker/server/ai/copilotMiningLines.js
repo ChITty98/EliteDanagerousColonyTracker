@@ -5,9 +5,9 @@
 // island inside it would eventually be clobbered. copilotCanned.poolFor() merges these in.
 //
 // Voice contracts (see reference_tars_persona_spec + copilotRules):
-//   Wash — Firefly register. Warm, human, a little cowardly, morale-first. Talks like TALK.
+//   Wren — Firefly register. Warm, human, a little cowardly, morale-first. Talks like TALK.
 //          Numbers are flavor at most, never a report. Fishing-buddy energy on catches.
-//   TARS — warm/funny/loyal/teacher. Precise, deadpan, settings jokes sparingly. Proud-teacher
+//   Tycho — warm/funny/loyal/teacher. Precise, deadpan, settings jokes sparingly. Proud-teacher
 //          on records, never cold.
 //   K2   — blunt, statistical, put-upon. Compliments arrive under protest.
 //

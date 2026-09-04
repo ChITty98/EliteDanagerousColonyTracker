@@ -20,7 +20,9 @@ import path from 'node:path';
 import { isEphemeralStation } from './util.js';
 import { findCommodityByJournalName, findCommodityByDisplayName } from './commodities.js';
 
-const CACHE_VERSION = 1;
+// Bumped to 2 (2026-08-28) for msys — mission earnings per system. Existing caches predate the
+// field, so they are discarded and rescanned rather than served with it silently empty.
+const CACHE_VERSION = 2;
 
 let agg = null;          // in-memory aggregate (single journal dir per process)
 let cachePath = null;
@@ -36,6 +38,13 @@ function freshAgg() {
     cb: {}, cs: {},       // commodity display name -> tons bought / sold
     fff: [],              // { body, system, timestamp }
     claimed: {},          // system -> 1
+    // Mission rewards per system. missionEarnings below is the galaxy-wide total and throws the
+    // location away, which hid the fact that a single system had paid this commander 1.91bn.
+    // Keyed on DestinationSystem — where the mission was DELIVERED. For the mining and collection
+    // contracts that dominate here, that is the same station it was accepted at, so it reads as
+    // "what this system paid me". It is a proxy, not the literal origin: MissionAccepted carries
+    // no system of its own, so true origin would need correlating against the preceding Docked.
+    msys: {},             // system -> { cr, n }
     n: {
       totalJumps: 0, totalDistanceLY: 0, bodiesScanned: 0, bodiesDiscovered: 0,
       surfaceMapped: 0, efficientMaps: 0, systemsHonked: 0,
@@ -196,10 +205,17 @@ function processEvent(e) {
       agg.cs[name] = (agg.cs[name] || 0) + (e.Count || 0);
       break;
     }
-    case 'MissionCompleted':
+    case 'MissionCompleted': {
       n.missionsCompleted++;
       n.missionEarnings += e.Reward || 0;
+      const msys = e.DestinationSystem;
+      if (msys) {
+        const b = agg.msys[msys] || (agg.msys[msys] = { cr: 0, n: 0 });
+        b.cr += e.Reward || 0;
+        b.n += 1;
+      }
       break;
+    }
     case 'ColonisationContribution': n.contributionsMade++; break;
     case 'ColonisationSystemClaim':
     case 'ColonisationBeaconPlaced':
@@ -329,6 +345,11 @@ function finalize() {
     firstEventDate: agg.firstTs,
     lastEventDate: agg.lastTs,
     journalFileCount: Object.keys(agg.files).length,
+    // Ranked by CREDITS, never by mission count — 364 missions in one system were worth a
+    // fiftieth of 43 in another, so count actively misleads here.
+    missionEarningsBySystem: Object.entries(agg.msys || {})
+      .map(([name, b]) => ({ name, credits: b.cr, missions: b.n }))
+      .sort((a, b) => b.credits - a.credits),
     totalJumps: n.totalJumps,
     totalDistanceLY: Math.round(n.totalDistanceLY),
     uniqueSystemsVisited: allSystemVisits.length,

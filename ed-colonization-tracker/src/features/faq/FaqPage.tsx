@@ -29,6 +29,10 @@ const faqItems: FaqItem[] = [
           <li><strong>Market sourcing</strong> &mdash; Find where to buy commodities using local market snapshots and live Ardent Insight data.</li>
           <li><strong>Journal history</strong> &mdash; Analyze years of gameplay across all your journal files &mdash; systems visited, distance travelled, discoveries, combat, trade, and more.</li>
           <li><strong>Gallery</strong> &mdash; Screenshot gallery for your colonies and installations.</li>
+          <li><strong>Asteroid &amp; Surface Mining</strong> &mdash; Two ledgers: rocks and hotspots for ring mining, signals and deposits for the Rhino. Rates, values, photos, ratings.</li>
+          <li><strong>Co-pilot</strong> &mdash; Three voiced personas (Wren, Tycho, K2) that react to what you are doing, with live generation or a curated canned corpus.</li>
+          <li><strong>Radar &amp; Threats</strong> &mdash; What other commanders are doing within 200 ly, and who is building towards your systems.</li>
+          <li><strong>Reward info</strong> &mdash; The three facts a mission board never tells you about an item reward.</li>
         </ul>
       </>
     ),
@@ -1313,7 +1317,7 @@ const faqItems: FaqItem[] = [
   // --- Co-pilot ---
   {
     category: 'Co-pilot',
-    question: 'Why is my co-pilot (TARS/Wash/K2) quiet, or only using canned lines?',
+    question: 'Why is my co-pilot (Tycho/Wren/K2) quiet, or only using canned lines?',
     answer: (
       <>
         <p>
@@ -1329,6 +1333,395 @@ const faqItems: FaqItem[] = [
           An auth failure is fixed by opening <code>claude</code> in a terminal on the host
           and logging back in. Network devices (iPads) hear whatever the host produces —
           the co-pilot runs server-side, so there is no per-device setup.
+        </p>
+      </>
+    ),
+  },
+
+  {
+    category: 'Co-pilot',
+    question: 'Who are Wren, Tycho and K2?',
+    answer: (
+      <>
+        <p>
+          Three personas, one seat. Pick one in the Cockpit page or Settings; the others stay silent.
+        </p>
+        <ul className="list-disc ml-5 mt-2 space-y-1">
+          <li><strong>Wren</strong> &mdash; human, on a headset mic. Deadpan, needles you as an equal, buries the number mid-sentence. Her voice runs through a comms filter because a human voice on a radio should.</li>
+          <li><strong>Tycho</strong> &mdash; a machine plugged into the ship. Leads with the number, lands warm wit as the closer. Space teacher and GalNet reader; his humour and honesty are dials in Settings.</li>
+          <li><strong>K2</strong> &mdash; a reprogrammed security droid. Verdict first, then the number as evidence. Dry, no processing on the voice.</li>
+        </ul>
+        <p className="mt-2">
+          They speak in the first person, only about what the journal actually shows, and never name each other. They recommend; they do not give orders, and they are nobody&rsquo;s yes-man.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Co-pilot',
+    question: 'What does the co-pilot react to?',
+    answer: (
+      <>
+        <p>Journal and Status events, weighted by how much they matter right now (a salience arbiter decides what is worth interrupting for):</p>
+        <ul className="list-disc ml-5 mt-2 space-y-1">
+          <li>Docking and launching &mdash; including the auto-dock handoff, where you are, how often you have been here, what is distinctive about the place.</li>
+          <li>Jumps and arrivals &mdash; the system&rsquo;s state, a faction shift or population jump since last time, oxygen or ammonia on the body you are approaching.</li>
+          <li>Damage, in four tiers by hull, with escalation; low fuel; carrier fuel below 300 tritium; supercruise overcharge and assist.</li>
+          <li>Mining &mdash; ring drops, hotspots, streaks and records; surface tonnes speak through their own overlay line, not the co-pilot.</li>
+          <li>Your hired crew, your tenure together, the ship you are in (a single-seat hull exiles the persona to the cargo hold), and what the radar hears within 50 ly.</li>
+          <li>Colony Watch &mdash; on login, what changed within 15 ly of each of your colonies while you were away, including someone else&rsquo;s construction sites.</li>
+        </ul>
+        <p className="mt-2">
+          Chattiness is a slider (Chatty / Normal / Quiet). &ldquo;What&rsquo;s on your mind?&rdquo; and &ldquo;What&rsquo;s the news?&rdquo; ask on demand.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Co-pilot',
+    question: 'Why does the co-pilot only talk about hauling sometimes?',
+    answer: (
+      <>
+        <p>
+          Because hauling talk is tied to the <strong>Start Session</strong> button, not to a guess. With a session active, dock lines say the next action &mdash; buy here, load off the carrier &mdash; and never the remaining total. With no session, the same dock is fair game for flavour: the economy, the station, the faction, a black market. Two registers, one explicit switch.
+        </p>
+        <p className="mt-2">
+          Construction and lead chatter from the radar is voiced only within 50 ly; anything farther stays on the Radar page.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Co-pilot',
+    question: 'How does the voice work, and why does Wren sound like a radio?',
+    answer: (
+      <>
+        <p>
+          Voice is off by default; toggle it in the Cockpit header or Settings. Lines are synthesised on the host PC with Windows speech (SAPI) into audio the browser plays through Web Audio, so every device &mdash; iPad included &mdash; hears the same thing.
+        </p>
+        <p className="mt-2">
+          The fiction decides the signal path. Wren is a person on a mic, so her voice goes through a comms filter (band-limited, gritty, a little hiss). Tycho and K2 are software plugged into the ship, so they are dry: no processing, separated by pitch alone. Each persona&rsquo;s delivery contour follows its writing rule &mdash; Wren rises into the payoff she buries, K2 falls away from the verdict he leads with.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Co-pilot',
+    question: 'What do the 👍 / 👎 buttons do?',
+    answer: (
+      <>
+        <p>
+          Every line the co-pilot speaks is logged. Rating it feeds two things: the reasons behind a 👎 (wrong facts, off-character, repetitive) are how the prompts get fixed, and 👍&rsquo;d live lines can be promoted into the free canned corpus &mdash; templatised from their logged inputs, so a good line about one station generalises to the next. A tap costs nothing and is the only way the corpus improves.
+        </p>
+      </>
+    ),
+  },
+
+  // --- Sell Cargo ---
+  {
+    category: 'Sell Cargo',
+    question: 'What does the Sell Cargo page show, and where do its prices come from?',
+    answer: (
+      <>
+        <p>
+          Your ship&rsquo;s hold (Cargo.json) and your carrier&rsquo;s goods at the top, then one row per commodity with three prices, each with a place: <strong>here</strong> is what the station you are docked at pays, from its own snapshot; <strong>local</strong> is the best buyer within the range you pick (20 / 50 / 100 / 500 ly); <strong>galaxy</strong> is the best within one carrier jump, or the overall top of book when that beats it, with its distance. Every cell shows tonnes &times; price, and the footer totals a <em>sell everything</em> per column. Green marks the best of the three on each line.
+        </p>
+        <p className="mt-2">
+          Two sources feed it. <strong>Your own market records</strong> &mdash; every station whose commodities screen you have opened in the last 30 days &mdash; which is how the domain&rsquo;s stations show up whether or not anyone uploads them; a row marked <em>only in your records</em> is one Ardent has never heard of. And <strong>Ardent</strong> (EDDN-fed, live listings, carriers excluded), the same source as the Sources page. Your record beats Ardent&rsquo;s when it is newer. Search any of 335 commodities to price one you do not hold, and give it a tonnage so the value column works.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Sell Cargo',
+    question: 'Why is a buyer I can see on Inara missing, and why does Colonia never appear?',
+    answer: (
+      <>
+        <p>
+          Two rules. A buyer&rsquo;s <strong>demand must cover your load</strong> &mdash; a station wanting 5 t at a huge price cannot take 44 t, so it is skipped rather than shown. And <strong>anything beyond 10,000 ly of you is not your galaxy</strong>: Colonia&rsquo;s outposts post the top price on every board and are 22,000 ly from the bubble, so they are ignored for the top of book and for the daily history sample alike. (From Colonia, the rule ignores the bubble instead.)
+        </p>
+        <p className="mt-2">Ardent&rsquo;s live listings do know the 2026 surface commodities; its summary report does not, which is why the page never uses it. A buyer showing demand of 999,999 is a <strong>Community Goal</strong> market &mdash; real, generous, and gone when the goal ends &mdash; and is tagged <em>community goal &middot; limited time</em> rather than shown with a demand figure.</p>
+      </>
+    ),
+  },
+  {
+    category: 'Sell Cargo',
+    question: 'What is the sparkline under a commodity, and what is Trade nearby?',
+    answer: (
+      <>
+        <p>
+          <strong>Price history</strong>, recorded from 4 September 2026 because nobody else keeps one: every market you open (only when a price moved or the day changed), a daily galaxy-wide sample from Ardent&rsquo;s buyers for the surface commodities and anything you hold or searched, and your own sales from the last year of journals. Tap the commodity name for the twelve-month chart: galactic average, your best market, the galaxy top and median, and what you sold at. A year is kept; older lines are pruned on load. The question &ldquo;is 240k an aberration?&rdquo; has an answer after a few weeks of it.
+        </p>
+        <p className="mt-2">
+          <strong>Trade nearby</strong> pairs the lowest buy (stock for a load) with the highest sell (demand for a load) within the same range, per commodity, from Ardent&rsquo;s per-system boards for the populated systems you know plus your own records, and ranks them by profit per load of the ship you are in. Read the freshness on both legs before you fly it &mdash; a stale leg is how arbitrage goes wrong.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Fleet Carrier',
+    question: 'How does the app know what is on my carrier now, and what does &ldquo;not itemised&rdquo; mean?',
+    answer: (
+      <>
+        <p>
+          A transaction ledger. The journal records every move <em>you</em> make at your own carrier &mdash; a CargoTransfer while docked at it, a buy or sell against its market, tritium to the tank &mdash; and the app replays all of it from the day you bought the carrier, then keeps it current. For anything nobody else can touch (mined ore, goods with no trade order) that is exact to the tonne.
+        </p>
+        <p className="mt-2">
+          What the journal never sees is other players trading against your orders: a visitor filling a buy order or buying from a sell order writes nothing. So the carrier&rsquo;s own market read is taken as the truth for what is on a sell order (the correction shows in the transactions as <em>reconciled</em>), and CarrierStats &mdash; written every time you dock at the carrier or it jumps &mdash; is the total everything must add up to. <strong>Not itemised</strong> is the difference: tonnes the game says are aboard that no transaction or order accounts for, typically goods that arrived through buy orders. Dock at the carrier and open its market to bring the sell orders back in line.
+        </p>
+        <p className="mt-2">
+          Anything that was ever on a sell order and has not been anchored by a market read is <strong>named, not counted</strong>, because a visitor could have taken any of it. <strong>Set a baseline</strong> on the Fleet Carrier page: type the tonnes from the carrier&rsquo;s inventory screen (or tap <em>none</em>), and it is recorded as a dated transaction that anchors the commodity from then on.
+        </p>
+      </>
+    ),
+  },
+
+  // --- Asteroid Mining ---
+  {
+    category: 'Asteroid Mining',
+    question: 'What does the Asteroid Mining page and its overlay actually tell me?',
+    answer: (
+      <>
+        <p>
+          Four things, all measured. <strong>Is this rock worth it</strong> &mdash; an expected credit total, not a material list: the prospector&rsquo;s proportions become tonnes through a per-material yield table calibrated from your own log, and tonnes become credits at the best live non-carrier buyer within 500 ly (Ardent) or your own visited-market average. &ldquo;Worth it&rdquo; is the median rock of the ring you are in, from your own history, never a fixed number. <strong>Is it one I am hunting</strong> &mdash; target hits (yours, and anything a live mission demands) fire regardless of value. <strong>Has collection stopped</strong> &mdash; stated as facts (elapsed silence, limpets, last collector launch), never a guessed cause. <strong>Am I about to run out of hold</strong> &mdash; on effective ore space.
+        </p>
+        <p className="mt-2">
+          The page adds what the cockpit cannot: live missions with their real Cr/t and deadline, rings ranked for your current targets, the target and ignore sets edited on the rocks themselves, the prospected-rock log with measured rate per ring, and trophies and streaks. Hotspots are attributed from the nav lock; rings are indexed from your own DSS scans. Anything refined while you are in the SRV belongs to Surface Mining, not here.
+        </p>
+      </>
+    ),
+  },
+
+  // --- Materials ---
+  {
+    category: 'Materials',
+    question: 'What is the Materials page?',
+    answer: (
+      <>
+        <p>
+          Your engineering material inventory, from the journal&rsquo;s Materials snapshot and the pickup events after it (run <strong>Sync All from Journal</strong> once to seed it). Three tabs: <strong>inventory</strong> by category with grade and cap, <strong>trade</strong> with material-trader yields including cross-line trades, and <strong>engineering</strong> with blueprints and how many grades your stock covers. The surface-mining overlay uses the same grades and caps to say how much room you have for what a deposit or a brain-tree grove drops.
+        </p>
+      </>
+    ),
+  },
+
+  // --- Architect's Domain ---
+  {
+    category: "Architect's Domain",
+    question: 'What are the Domain Records, and where do Notable Surface finds come from?',
+    answer: (
+      <>
+        <p>
+          Records are facts about ground you hold, never about what you chose to pull: <strong>Most Mining Signals</strong> (the body with the most planetary mining signals, from a DSS or the count you typed from the map), <strong>Richest Signals</strong> (the body whose signals promise the most &mdash; each signal counted as its three highest-priced commodities, one deposit each), <strong>Highest Ground Reached</strong> (on foot, landed or in the SRV; jumps filtered out) and <strong>Most Hotspots</strong> (the DSS-mapped ring with the most hotspots, from your own scans).
+        </p>
+        <p className="mt-2">
+          <strong>Notable Surface</strong> lists brain trees on domain bodies from two sources: the flag you set by hand on the System Bodies tab, and the groves on the Surface Mining page &mdash; a <em>grove here</em> pin or a Codex entry &mdash; with grove counts and harvested units.
+        </p>
+      </>
+    ),
+  },
+
+  // --- Surface Mining ---
+  {
+    category: 'Surface Mining',
+    question: 'How does the app count rigs, and how is a signal&rsquo;s expected value worked out?',
+    answer: (
+      <>
+        <p>
+          Rigs per deposit default to one; the app&rsquo;s estimate is the largest single collection at the deposit divided by what a full rig holds &mdash; <strong>12 t</strong> since Frontier&rsquo;s patch of 4 September 2026, 9 t before it, and each collection divides by the capacity in force at its own time. Pick a rig count on the deposit to confirm or correct the estimate; a count you set is never overwritten.
+        </p>
+        <p className="mt-2">
+          A signal&rsquo;s expected value, on <em>rank by expected value</em> and the Domain page&rsquo;s Richest Signals, is the sum of its <strong>three</strong> highest-priced expected commodities, one tonne each &mdash; three because the Rhino&rsquo;s refinery holds three, so a six-commodity signal is worked as its best three. Prices are your best market this month within reach, else the galactic average.
+        </p>
+        <p className="mt-2">
+          Logging out on a body and back in starts a new visit: the journal&rsquo;s Location event at login carries the position, so two evenings at one signal are two visits with two clocks, and <em>Where to go back</em> is not diluted by the night in between.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Surface Mining',
+    question: 'What is the Surface Mining page, and how is it different from Asteroid Mining?',
+    answer: (
+      <>
+        <p>
+          Asteroid mining is rock-centric: a prospector fingerprint, a hotspot, a ring. Surface mining with the Rhino has no rock &mdash; it is a fixed <strong>deposit</strong> at a latitude and longitude on a body, found under a <strong>signal</strong> (the game&rsquo;s &ldquo;Planetary Mining Location Signal (N)&rdquo;), worked by rigs and emptied in bursts. So it has its own ledger and its own page, and the two never mix: the asteroid module ignores anything refined while you are in the SRV.
+        </p>
+        <p className="mt-2">The page is organised the way you navigate: <strong>bodies &rarr; signals &rarr; deposits</strong>. Tap a signal row to see its deposits, photos, ratings and tags.</p>
+      </>
+    ),
+  },
+  {
+    category: 'Surface Mining',
+    question: 'How does it know which signal I am at?',
+    answer: (
+      <>
+        <p>
+          Nav-lock the signal in the left panel before you drop. The lock puts the signal&rsquo;s own index into Status.json, and the drop from supercruise is recorded against it &mdash; the same way ring hotspots are attributed. Everything you collect until the next drop belongs to that signal.
+        </p>
+        <p className="mt-2">
+          Dropped without a lock, or moved without going back to supercruise? The hero shows a signal box: type the number and press <strong>Enter</strong> to say &ldquo;this visit is really Signal N&rdquo; (nothing else moves), or tap <strong>moved here</strong> to start a new visit from now. A move the app missed while the exe was closed is restored from the journal at the next launch.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Surface Mining',
+    question: 'Why is a body listed under &ldquo;Needs a DSS&rdquo; when the system map shows its signal count?',
+    answer: (
+      <>
+        <p>
+          Because the journal only writes the count when you DSS the body (<code>SAASignalsFound</code>). The map shows server data the journal never carries &mdash; verified across every journal file on this machine: no other event ever mentions a planetary mining location. So type the number you can see into the card&rsquo;s <strong>signals</strong> box. A later DSS replaces it; retype it to correct it; leave it empty and press Enter to clear it. Icy bodies are greyed with ❄, since an ice ball is a skip by your own rule.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Surface Mining',
+    question: 'How do I record what a signal holds without driving to it?',
+    answer: (
+      <>
+        <p>
+          From orbit, nav-lock a signal and the <strong>Targeting</strong> strip appears: type what the panel lists and press Enter, or open a signal row&rsquo;s <strong>edit</strong> mode and tap the chips &mdash; commodities this body and this system have already shown or given up. <strong>done</strong> closes it. A signal holds at most six commodities; at six the chips stop offering and the row says so.
+        </p>
+        <p className="mt-2">
+          Anything you have already pulled at a signal counts as expected there and cannot be tagged again. A tag added by mistake gets a × in edit mode; pulled commodities are journal facts and have none. Retractions are append-only &mdash; the tag and the correction both stay in the history. Spelling is normalised to the price table&rsquo;s.
+        </p>
+        <p className="mt-2">
+          <strong>Find</strong> chips above the bodies filter every signal in scope by what it holds; <strong>rank by expected value</strong> orders signals by the sum of galactic-average prices of their commodities, one deposit of each.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Surface Mining',
+    question: 'What do F10 screenshots have to do with deposits?',
+    answer: (
+      <>
+        <p>
+          F10 is the only at-will journal event that carries your latitude and longitude, so a shot of the deposit panel is a position marker with the commodity, mineral amount and density in the picture. A surface shot is a <em>candidate</em> until you name what it is a deposit of &mdash; F10 is also the Sights key, so an untagged shot is just a postcard. Name it from the signal&rsquo;s chips or type it, and it becomes a deposit.
+        </p>
+        <p className="mt-2">
+          On promotion the gallery copy is re-encoded from a 31 MB BMP to a JPEG; the original in the game&rsquo;s screenshot folder is untouched. Deposit photos are utility images: they never appear in the system or installation galleries. Once a deposit is logged you can <strong>remove photo</strong> &mdash; the app&rsquo;s copy always, the original only if you tick it. The position, signal, commodity, amount and density stay.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Surface Mining',
+    question: 'What are the landing and driving ratings?',
+    answer: (
+      <>
+        <p>
+          Your own scores, 1 easy to 5 brutal, inside a signal row. <strong>Landing</strong> is filed under the hull you are flying &mdash; read from the journal, never typed &mdash; with its landing-pad size, because a Caspian is not a Type-11. For a hull the ship table does not know, the page asks for the pad size once (S / M / L) and remembers it. <strong>Driving</strong> is per signal. Both show as chips on the row and on the &ldquo;Where to go back&rdquo; cards.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Surface Mining',
+    question: 'Where do the prices come from, and why is something unpriced?',
+    answer: (
+      <>
+        <p>
+          A baked galactic-average table (an Ardent snapshot) that works offline, with the 2026 surface commodities added. Prices you tell the app override the snapshot; they reach the page, the overlay and the co-pilot from one table, and a test fails if the server copy drifts from it. &ldquo;Unpriced&rdquo; means neither the snapshot nor you have given a number yet.
+        </p>
+        <p className="mt-2">
+          The overlay&rsquo;s per-tonne line carries only that tonne&rsquo;s facts (<code>⛏ Thortveitite +1t @ 130k · 12t this collection · Signal 7</code>); the visit total gets its own line when a collection ends, so a cheap tonne never reads as if it were worth the visit.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Surface Mining',
+    question: 'How are rates measured, and what can the game not tell the app?',
+    answer: (
+      <>
+        <p>
+          A <strong>collection</strong> is a burst of refined tonnes while in the SRV (a gap over a minute closes it). A <strong>visit</strong> runs from the drop to the last collection at that signal, giving t/h; visits to the same signal sum into credits per hour, which is what &ldquo;Where to go back&rdquo; ranks by. Deposits are collections within 300 m of each other for the same commodity.
+        </p>
+        <p className="mt-2">Verified against the journal, not assumed:</p>
+        <ul className="list-disc ml-5 mt-1 space-y-1">
+          <li>Rig deployment, rig progress and the 9/9 fill are HUD-only. Nothing is written to disk, so there is no per-rig cycle time.</li>
+          <li>Mineral amount and density exist only on the HUD panel &mdash; you tag them from the photo.</li>
+          <li>Position exists only in Status.json, which the game overwrites and never archives. Anything refined while the exe was closed is restored to the body and the signal, but has no coordinates.</li>
+        </ul>
+      </>
+    ),
+  },
+
+  {
+    category: 'Surface Mining',
+    question: 'Can the app steer me to a deposit, or back to the ship?',
+    answer: (
+      <>
+        <p>
+          Yes. <strong>Steer here</strong> on any deposit, on a signal&rsquo;s recall spot, or <strong>back to the ship</strong> in the hero sets one compass target. From then on, every Status tick, you get distance, bearing and the turn against your heading &mdash; on the in-game overlay, in the hero, and in a large card on the Companion page for the iPad. Within 50 m it says you&rsquo;re there and clears.
+        </p>
+        <p className="mt-2">
+          Each signal panel also has a <strong>map</strong>: local metres around the signal, north up &mdash; deposits sized by tonnage and coloured by commodity, the ship&rsquo;s landing spot, the <strong>recall spot</strong> (the tonnage-weighted point with the least total driving to your deposits &mdash; terrain is yours to judge on arrival), your live position and heading, and your drive as a grey line. The drive is recorded from now on while you are near the surface; the app cannot reconstruct earlier ones, because positions before this build exist only at events.
+        </p>
+      </>
+    ),
+  },
+
+  // --- Radar & Threats ---
+  {
+    category: 'Radar & Threats',
+    question: 'What does the co-pilot voice from the radar?',
+    answer: (
+      <>
+        <p>
+          The Radar page shows everything heard on EDDN within 200 ly. The co-pilot only <em>speaks</em> about what is close enough to act on: construction and lead pushes within 50 ly, and atmospheric leads only when the atmosphere is <strong>oxygen or ammonia on a non-icy body</strong>. A methane ice ball is still a lead on the page; it is not worth a sentence in the cockpit.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Radar & Threats',
+    question: 'What is the Threats page?',
+    answer: (
+      <>
+        <p>
+          An encroachment watch on the systems you flagged as yours to lose. It watches a <strong>radius</strong>, not the system: colonisation spreads by claim hops of about 15 ly, so a 50 ly ring is roughly three hops of warning &mdash; enough to act on. Watching the target itself would only report the loss. Each entry shows whether Spansh knows the system at all.
+        </p>
+      </>
+    ),
+  },
+
+  // --- Rewards ---
+  {
+    category: 'Rewards',
+    question: 'What is the Reward Info page for?',
+    answer: (
+      <>
+        <p>
+          A mission board offers an item instead of credits and tells you nothing useful about it. The page states the three facts that decide it and stops:
+        </p>
+        <ul className="list-disc ml-5 mt-2 space-y-1">
+          <li><strong>Is it worth more?</strong> Units × galactic average sell, against the credits you give up.</li>
+          <li><strong>Is it unlock related?</strong> An engineer or tech-broker gate, and whether yours is already done &mdash; engineer progress is read from the journal.</li>
+          <li><strong>Is it a colonisation commodity?</strong> Whether an active build needs it, and how much is outstanding.</li>
+        </ul>
+        <p className="mt-2">
+          For a material, the only number that matters is room: <strong>Grade N · held/cap · room for X</strong>. Materials cannot be bought at any price and overflow is lost.
+        </p>
+        <p className="mt-2">
+          It renders no verdict. The trade-off between cash, hold space and a hauling loop is yours and changes by the hour.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Rewards',
+    question: 'Why is it a manual lookup? And what does the board actually show?',
+    answer: (
+      <>
+        <p>
+          The journal never sees the reward menu: <code>MissionAccepted</code> carries only the cash figure, and <code>MissionCompleted</code> records what you chose. The options exist only on screen, so this is a second-screen lookup.
+        </p>
+        <p className="mt-2">
+          Read the board carefully: <strong>&ldquo;63 units / 49,856,676 CR&rdquo; means you receive both</strong>. The real cost of taking the item is the cash option minus that figure &mdash; usually small, which makes item rewards far better than they look.
         </p>
       </>
     ),
@@ -1713,6 +2106,10 @@ export function FaqPage() {
                 {group.category === 'Projects & Data' && '📊'}
                 {group.category === 'Commodity Production' && '🏗️'}
                 {group.category === 'Fleet Carrier' && '⚓'}
+                {group.category === 'Co-pilot' && '🎙️'}
+                {group.category === 'Surface Mining' && '⛏️'}
+                {group.category === 'Radar & Threats' && '📡'}
+                {group.category === 'Rewards' && '🎁'}
                 {group.category === 'APIs & External Services' && '🔌'}
                 {group.category === 'Network Access' && '📱'}
                 {group.category === 'Troubleshooting' && '🔧'}

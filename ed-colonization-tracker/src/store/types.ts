@@ -165,6 +165,16 @@ export interface AppSettings {
   // AI co-pilot — companion cockpit comms. Requires the local `claude` CLI +
   // Max subscription on the PC running the exe; silent otherwise. Opt-in.
   copilotEnabled?: boolean;
+  /** Proximity radar + chain watch: the always-on EDDN firehose (~1.8 GB/day inbound). Default on; off saves the bandwidth. */
+  radarEnabled?: boolean;
+  /**
+   * Live generation via the local `claude` CLI. Default ON. Turn it OFF to run on the canned +
+   * promoted pools alone — instant, free, and the way back when the CLI is wedged (a blocked
+   * credential read makes it hang rather than error, so every line waits out the 60s timeout).
+   */
+  copilotLiveEnabled?: boolean;
+  /** Speak lines aloud (server-rendered SAPI voice). Windows-only, opt-in, silent elsewhere. */
+  copilotVoiceEnabled?: boolean;
   copilotPersonality?: 'wash' | 'tars' | 'k2';
   copilotModel?: 'haiku' | 'sonnet' | 'opus'; // optional global override; per-beat default otherwise
   copilotThrottleSec?: number; // min seconds between non-urgent lines (default 30)
@@ -235,9 +245,18 @@ export interface PersistedMarketSnapshot {
 
 export interface PersistedCarrierCargo {
   callsign: string;
-  items: { commodityId: string; name: string; count: number }[];
+  items: { commodityId: string; name: string; count: number; basis?: 'ledger' | 'market' | 'you'; ordered?: 'buy' | 'sell' | null; atLeast?: boolean }[];
   isEstimate: boolean;
   updatedAt: string; // ISO timestamp
+  /** Present for the commander's own carrier once the transactional ledger has run (carrierLedger.js). */
+  ledger?: {
+    statsTotal: number | null; statsAt: string | null; free: number | null; capacity: number | null;
+    itemised: number; unaccounted: number | null; since: string | null; txCount: number;
+    /** Ever on a sell order and never anchored by a market read — the journal cannot count these. */
+    unknown: { commodityId: string; name: string; ordered: 'buy' | 'sell' | null }[];
+    negatives: { commodityId: string; name: string; qty: number }[];
+    recent: { at: string; kind: 'transfer' | 'buy' | 'sell' | 'fuel' | 'reconcile' | 'baseline'; c: string; n?: string | null; d: number }[];
+  } | null;
 }
 
 // --- Persisted journal lifetime stats (the game's Statistics event) ---
@@ -430,6 +449,15 @@ export interface CurrentDock {
 // (`Materials` snapshot + delta events). No live snapshot file from ED.
 // Server is the only writer; replace strategy in MERGE_STRATEGIES.
 // Keys are canonical journal Names (lowercase, e.g. "iron", "improvisedcomponents").
+/** Engineer unlock state, from the journal's EngineerProgress event. */
+export interface EngineerState {
+  progress: string;   // 'Known' | 'Invited' | 'Unlocked' | 'Barred'
+  rank: number | null;
+  rankProgress: number | null;
+  updatedAt: string | null;
+}
+export type EngineerProgressMap = Record<string, EngineerState>;
+
 export interface MaterialInventory {
   raw: Record<string, number>;
   manufactured: Record<string, number>;

@@ -7,7 +7,7 @@
 // --- World awareness (security / current body / atmosphere) -----------------
 // Ephemeral, fed from the journal each tick by ingestWorld(); resets on restart
 // until the next jump. buildSnapshot() folds it into every line's context.
-import { getActiveProject, findMarketMatches, findCarrierLoadMatches } from '../journal/overlay.js';
+import { findMarketMatches, findCarrierLoadMatches } from '../journal/overlay.js';
 import { friendlyShip, isSingleSeatShip, isCrampedShip } from '../journal/extractor.js';
 import { getMemory, saveMemory } from './copilotMemory.js';
 import { pickQuestion } from './copilotQuestions.js';
@@ -532,8 +532,11 @@ export function detectCargoBayGripe(parsed, state, persona) {
     ? 'Put-upon and wry — this is beneath a pilot of your talents, but here you are, flying from the luggage.'
     : 'Dry and deadpan — state the absurd indignity precisely and find it quietly funny.';
   const shipNm = friendlyShip(String(type).toLowerCase());
+  // Slot filler for the canned pool. `hull` is the TYPE, not ctx.ship (which is the commander's
+  // custom ship NAME when set) — the joke is about the hull having exactly one seat.
   return {
     key: 'cargo-bay-gripe', priority: 56, interrupt: false, live: true, model: 'sonnet', mood: 'calm', character: true,
+    inputs: { hull: shipNm },
     intent: `This ${shipNm} is a SINGLE-SEATER — there is no co-pilot seat for you, so you are crammed into the CARGO HOLD, ${what} by remote from back there: no forward view, wedged between cargo racks, flying by feel and instruments. React in character to the absurd indignity of it. ${angle} A wry one-liner — do not over-explain the joke.`,
     detail: `You (the co-pilot) are physically in the cargo hold of a single-seat ${shipNm}; the commander has the only seat.`,
   };
@@ -557,7 +560,9 @@ export function detectSrvReturn(parsed, state) {
   const hull = cs ? (typeof cs === 'object' ? cs.type : cs) : null;
   const ship = hull ? friendlyShip(String(hull).toLowerCase()) : 'the ship';
   return {
-    key: 'srv-return', priority: 40, interrupt: false, live: true, model: 'sonnet', mood: 'warm', character: true,
+    // 'warm' was not one of the nine MOODS, so this silently fell back to calm.png and the calm
+    // accent colour. 'wave' is the greeting mood — exactly right for the SRV coming home.
+    key: 'srv-return', priority: 40, interrupt: false, live: true, model: 'sonnet', mood: 'wave', character: true,
     intent: `The commander just docked the ${srv} back into the ${ship} — they are ABOARD again, in the seat next to you. `
       + `You have been station-keeping overhead watching them work the surface, so greet the return with something you actually SAW, `
       + `not a generic hello. Warm, short, in character. Do not recap their whole outing.`,
@@ -645,10 +650,77 @@ export function liveCarrierFreeSpace(state, callsign) {
 // The actionable next move at the station we're docked at: load-off-carrier or
 // buy-here for the active build. Returns string[] of facts, or null when there's
 // nothing to do here OR we already called this same action recently. NEVER the total.
+/**
+ * Everything still owed, merged into one commodity list.
+ *
+ * Shaped like a project so it drops straight into findMarketMatches / findCarrierLoadMatches,
+ * which only ever read `.commodities`. Two builds both wanting Steel become one Steel line, so
+ * the co-pilot says "you still owe 8,600 Steel" rather than reciting per-site totals — and it
+ * needs no session to know which build is "the" one, because it no longer picks one.
+ *
+ * `onlyProjectId` narrows it to a single build: during a hauling session the commander is
+ * running to ONE site, and quoting a commodity for a build they are not flying to is noise.
+ */
+function outstandingNeeds(state, onlyProjectId) {
+  const byId = new Map();
+  for (const p of (state && state.projects) || []) {
+    if (p.status !== 'active') continue;
+    if (onlyProjectId && p.id !== onlyProjectId) continue;
+    for (const c of p.commodities || []) {
+      const id = String(c.commodityId || '').toLowerCase();
+      if (!id) continue;
+      const remaining = (c.requiredQuantity || 0) - (c.providedQuantity || 0);
+      if (remaining <= 0) continue;
+      const cur = byId.get(id);
+      if (cur) {
+        cur.requiredQuantity += c.requiredQuantity || 0;
+        cur.providedQuantity += c.providedQuantity || 0;
+      } else {
+        byId.set(id, {
+          commodityId: c.commodityId,
+          name: c.name,
+          requiredQuantity: c.requiredQuantity || 0,
+          providedQuantity: c.providedQuantity || 0,
+        });
+      }
+    }
+  }
+  return { commodities: [...byId.values()] };
+}
+
+/**
+ * Mid-haul is DECLARED, never inferred: the commander presses Start Session on a project, which
+ * sets activeSessionId. There is an explicit button for this, so guessing from recent buys was
+ * both unnecessary and wrong in two directions — it went true for anyone who had merely shopped
+ * in the last twenty minutes (muting their station flavour), and it could not go true at the
+ * first dock of a run, before anything had been bought.
+ *
+ * This is the switch between the co-pilot's two registers at a dock. Session ON → the haul: what
+ * to buy, in what order. Session OFF → the PLACE: economy, station architecture, illegal markets.
+ * Never both, and never haul talk when the commander is just out and about.
+ */
+export function isHaulSessionActive(state) {
+  return !!(state && state.activeSessionId);
+}
+
+/** The build being hauled TO — an active session names its project. Null when not hauling. */
+export function activeHaulProjectId(state) {
+  if (!isHaulSessionActive(state)) return null;
+  const session = (state.sessions || []).find((s) => s && s.id === state.activeSessionId);
+  return (session && session.projectId) || null;
+}
+
 function haulActions(state, marketId, stationName) {
   const s = state || {};
-  const project = getActiveProject(s);
-  if (!project || !Array.isArray(project.commodities)) return null;
+  // BUY ORDERS ARE HAUL TALK — they belong to a declared run and nothing else. Off-session the
+  // commander is just out and about, and the dock moment belongs to the PLACE instead (economy,
+  // station architecture, illegal markets — the affinity/station beats, which outrank nothing
+  // here only because this one stops competing). Returning null is what hands them the slot.
+  if (!isHaulSessionActive(s)) return null;
+  // Scoped to the build the session names: they are flying to ONE site, so a commodity owed by
+  // some other active build is noise. Off-session aggregation is moot — we already returned.
+  const project = outstandingNeeds(s, activeHaulProjectId(s));
+  if (!project.commodities.length) return null;
   const now = Date.now();
   const cargoCap = (s.settings && s.settings.cargoCapacity) || 0;
   // A single run only carries ~cargoCap — NEVER quote the build's whole remaining
@@ -809,7 +881,7 @@ export function detectAtmo(parsed) {
   return {
     key: 'atmo', priority: 47, interrupt: false, live: true, model: 'haiku', mood: 'calm', character: true,
     inputs: { atmo, look },
-    intent: `We're dropping into / flying through an atmosphere — ${look}. React to the striking sky and light in character (Wash marvels at it, TARS notes the chemistry precisely, K2 unbothered but clocks it). They MAY be on the night side — do NOT assert the colour is visible right now. One natural line.`,
+    intent: `We're dropping into / flying through an atmosphere — ${look}. React to the striking sky and light in character. They MAY be on the night side — do NOT assert the colour is visible right now. One natural line.`,
     detail: `Detail: in a ${atmo} atmosphere — ${look}.`,
   };
 }
@@ -851,7 +923,7 @@ export function detectCrew(parsed, state) {
   return {
     key: 'crew', priority: 50, interrupt: false, live: true, model: 'haiku', mood: 'calm', character: true,
     inputs: { name, rank, wages },
-    intent: `Docked at the carrier, a quiet beat after the loading's handled. Tell a SHORT, funny, lived-in bit about the hired crew member ${name} — some hijinks they probably got into while you were out: a mess they left, money they owe, a bottle emptier than it was, a feud with the other crew, something they broke and won't admit to.${rankBit}${wagesBit} In character — Wash exasperated-but-fond (Firefly-crew energy), K2 logging it as evidence, TARS flagging the expense. NAME them. Never mean-spirited, never a status report.`,
+    intent: `Docked at the carrier, a quiet beat after the loading's handled. Tell a SHORT, funny, lived-in bit about the hired crew member ${name} — some hijinks they probably got into while you were out: a mess they left, money they owe, a bottle emptier than it was, a feud with the other crew, something they broke and won't admit to.${rankBit}${wagesBit} In character — Wren exasperated-but-fond (Firefly-crew energy), K2 logging it as evidence, Tycho flagging the expense. NAME them. Never mean-spirited, never a status report.`,
     detail: `Detail: crew ${name}${rank ? ` (${rank})` : ''}${wages ? `; ~${wages} total crew wages` : ''}.`,
   };
 }
@@ -986,7 +1058,7 @@ export function detectSystemChange(parsed, state) {
 // answer (memory.qa), building a model of them for later callbacks. RARE (20-min guard),
 // arbiter-gated, on an earned moment (fresh session / quiet cruise). The question text is
 // the line; the tappable options ride in beat.question for the cockpit UI. The question
-// SET is placeholder pending the TARS rewrite — the pipeline is content-agnostic.
+// SET is placeholder pending the Tycho rewrite — the pipeline is content-agnostic.
 let lastQuestionAt = 0;
 const QUESTION_GAP_MS = 20 * 60 * 1000;
 export function detectQuestion(parsed, state) {
@@ -1000,7 +1072,7 @@ export function detectQuestion(parsed, state) {
   if (!trigger) return null;
   const persona = (state && state.settings && state.settings.copilotPersonality) || 'wash';
   const mem = getMemory();
-  const q = pickQuestion({ persona, trigger, answeredDurable: (mem.qa && mem.qa.durable) || {}, answeredSession: (mem.qa && mem.qa.session) || {}, hauling: !!getActiveProject(state) });
+  const q = pickQuestion({ persona, trigger, answeredDurable: (mem.qa && mem.qa.durable) || {}, answeredSession: (mem.qa && mem.qa.session) || {}, hauling: isHaulSessionActive(state) });
   if (!q) return null;
   lastQuestionAt = now;
   return {
@@ -1214,10 +1286,10 @@ export function detectDamageSeverity(parsed, state) {
 
   const persona = (state && state.settings && state.settings.copilotPersonality) || 'wash';
   const personaAngle = persona === 'wash'
-    ? 'Wash feels it HARD — escalates fast, human fear, wants to run'
+    ? 'You feel it HARD — escalates fast, human fear, wants to run'
     : persona === 'k2'
-    ? 'K2 stays tactical — clinical damage assessment, only breaks composure at critical'
-    : 'TARS tracks the math precisely — hull percentage, rate of damage, factual concern that builds';
+    ? 'You stay tactical — clinical damage assessment, only breaking composure at critical'
+    : 'You track the math precisely — hull percentage, rate of damage, factual concern that builds';
 
   const contextDesc = context === 'combat'
     ? 'under fire from a hostile — combat damage'
@@ -1299,7 +1371,11 @@ export function detectPaceNudge(parsed, state) {
     lastPaceNudgeAt = 0;
   }
 
-  if (!getActiveProject(state)) return null;
+  // Commenting on the HAUL'S RHYTHM is haul talk: "you were averaging six minutes between loads"
+  // only means something inside a declared run. Off-session the same line reads as nagging about
+  // a job the commander is not currently doing.
+  if (!isHaulSessionActive(state)) return null;
+  if (!outstandingNeeds(state, activeHaulProjectId(state)).commodities.length) return null;
 
   for (const ev of events) {
     if (!ev || !isRecent(ev.timestamp)) continue;
@@ -1332,7 +1408,7 @@ export function detectPaceNudge(parsed, state) {
 
   return {
     key: 'pace-nudge', priority: 38, interrupt: false, live: true, model: 'haiku', mood: 'calm', character: true,
-    intent: `The haul's rhythm has slowed — the commander was averaging about ${avgMins} minutes between loads, but it's been ${curMins} minutes since the last one. A light, in-character nudge: Wash notices the rhythm breaking ("we were cranking earlier"); TARS gives the precise pace comparison; K2 is blunt ("you are slower than you were"). NOT a nag, NOT a status report — a co-pilot who notices you've lost the groove. One line.`,
+    intent: `The haul's rhythm has slowed — the commander was averaging about ${avgMins} minutes between loads, but it's been ${curMins} minutes since the last one. A light, in-character nudge: Wren notices the rhythm breaking ("we were cranking earlier"); Tycho gives the precise pace comparison; K2 is blunt ("you are slower than you were"). NOT a nag, NOT a status report — a co-pilot who notices you've lost the groove. One line.`,
     detail: `Detail: avg cycle ${avgMins}min, current gap ${curMins}min.`,
   };
 }

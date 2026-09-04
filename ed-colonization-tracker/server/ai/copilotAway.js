@@ -21,10 +21,15 @@
  */
 
 // Journal SRV type ids → display names. lander01 = Nomad (ARX EA, June 2026).
+// mev_rhino = Rhino, the surface-mining SRV (2026-09-02, game 4.4.1.0 build r332753). Id confirmed
+// from three sources: RestockVehicle.Type, LaunchSRV.SRVType, and the in-cockpit HUD. It needs the
+// Mk II Large Planetary Vehicle Hangar (int_mkiilargebuggybay_size4_class3), so it only appears on
+// ships outfitted for it — but the hull-overwrite below applies the moment you log in inside one.
 const SRV_NAMES = {
   lander01: 'Nomad',
   testbuggy: 'Scarab',
   combat_multicrew_srv_01: 'Scorpion',
+  mev_rhino: 'Rhino',
 };
 
 /** SRV type ids are NOT ship hulls — LoadGame reports "Lander01" as Ship when you

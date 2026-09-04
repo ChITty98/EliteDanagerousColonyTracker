@@ -9,7 +9,11 @@ interface ImageGalleryProps {
 
 export function ImageGallery({ galleryKey, title, compact }: ImageGalleryProps) {
   const rawImages = useGalleryStore((s) => s.images[galleryKey]);
-  const images = useMemo(() => rawImages ?? [], [rawImages]);
+  // Utility shots are hidden here. An F10 promoted to a surface-mining deposit is documentation of
+  // a rock face — it belongs on the Surface Mining page and nowhere else. This gallery is for
+  // pictures of the place: Sights shots and the manually-added colony screenshots. The photo is
+  // not deleted, just filed elsewhere; un-tagging the deposit returns it here.
+  const images = useMemo(() => (rawImages ?? []).filter((i) => !i.utility), [rawImages]);
   const addImage = useGalleryStore((s) => s.addImage);
   const removeImage = useGalleryStore((s) => s.removeImage);
   const updateCaption = useGalleryStore((s) => s.updateCaption);

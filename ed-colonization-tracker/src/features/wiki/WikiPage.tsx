@@ -205,7 +205,7 @@ const STAR_RARITY: { count: number; type: string }[] = [
   { count: 2387,    type: 'B Blue-White (main sequence)' },
   { count: 2705,    type: 'M Red giant' },
   { count: 14192,   type: 'A Blue-White' },
-  { count: 36127,   type: 'Y Brown dwarf (your home parent type)' },
+  { count: 36127,   type: "Y Brown dwarf (the author's home colony orbits one)" },
   { count: 64934,   type: 'F White' },
   { count: 71045,   type: 'G White-Yellow' },
   { count: 81771,   type: 'T Tauri' },
@@ -241,16 +241,108 @@ export function WikiPage() {
       <header>
         <h1 className="text-2xl font-bold text-primary">Galaxy Wiki</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Reference data for the 700 ly scouting bubble around Col 173 Sector AX-J d9-52
+          Reference: surface mining as the journal actually records it, the co-pilot cast, and the 700 ly scouting bubble around Col 173 Sector AX-J d9-52
         </p>
       </header>
+
+      {/* ============ Selling reference ============ */}
+      <section className="bg-card border border-border rounded-lg p-5 space-y-3">
+        <h2 className="text-lg font-semibold text-foreground">Selling — where a price comes from, and what it is not</h2>
+        <p className="text-sm text-foreground/90">
+          Verified 4 September 2026 against the commander&rsquo;s own records and Ardent&rsquo;s live API. The game&rsquo;s &ldquo;galactic average&rdquo; is the mean over every market, most of which pay a fraction of the top; the top is usually in Colonia.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-xs uppercase tracking-wider text-muted-foreground">
+              <tr><th className="text-left py-1 pr-3">Source</th><th className="text-left py-1 pr-3">What it is</th><th className="text-left py-1">How the app uses it</th></tr>
+            </thead>
+            <tbody className="text-foreground/90">
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 font-mono text-xs">Market.json MeanPrice</td><td className="py-1 pr-3">the in-game galactic average, per commodity, on every market read</td><td className="py-1">the <strong>galactic average</strong> everywhere; kept in <code>market-means.json</code>; the baked table is only the floor</td></tr>
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 font-mono text-xs">Market.json SellPrice / Demand</td><td className="py-1 pr-3">what a station pays, and how much it wants, the moment you open its commodities screen</td><td className="py-1"><strong>your own records</strong> (30 days): the &ldquo;here&rdquo; and &ldquo;local&rdquo; prices, the one price on the Surface Mining page, and the stations Ardent lacks</td></tr>
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 font-mono text-xs">Ardent nearby/imports</td><td className="py-1 pr-3">EDDN buyers within a radius of a system, carriers excluded, with demand and distance</td><td className="py-1">&ldquo;local&rdquo; and &ldquo;galaxy&rdquo; (500 ly, one carrier jump); the asteroid module&rsquo;s live value</td></tr>
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 font-mono text-xs">Ardent commodity/imports</td><td className="py-1 pr-3">the top 100 buyers galaxy-wide</td><td className="py-1">the <strong>top of book</strong> within 10,000 ly of you (Colonia ignored), and the daily history sample</td></tr>
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 font-mono text-xs">Ardent system/commodities</td><td className="py-1 pr-3">every trade order in one system, both sides</td><td className="py-1"><strong>Trade nearby</strong>: lowest buy &rarr; highest sell within range, per load of your ship</td></tr>
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 font-mono text-xs">Ardent commodity summary</td><td className="py-1 pr-3">avg / min / max — last updated May 2025, blind to the 2026 commodities</td><td className="py-1">not used</td></tr>
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 font-mono text-xs">MarketSell / MarketBuy</td><td className="py-1 pr-3">what you actually sold or bought, at what price</td><td className="py-1">points on the history chart, from the last twelve months of journals</td></tr>
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 font-mono text-xs">CargoTransfer · CarrierStats</td><td className="py-1 pr-3">your own moves at your carrier (docked there), and the game&rsquo;s total aboard at every dock and jump</td><td className="py-1">the <strong>carrier ledger</strong>: exact for ore and unordered goods; sell orders reconciled from the carrier&rsquo;s market read; the rest shown as <em>not itemised</em>. Blind to visitors trading against your orders</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          <strong className="text-foreground">Rules that skip a buyer:</strong> demand under your load; a carrier; farther than 10,000 ly; a record older than 30 days.
+          <strong className="text-foreground"> History</strong> lives in <code>market-history.jsonl</code> beside the exe from 4 September 2026 — movers-only market rows, one Ardent sample per commodity per day, your own sales — pruned to a year on load.
+        </p>
+      </section>
+
+      {/* ============ Surface mining reference ============ */}
+      <section className="bg-card border border-border rounded-lg p-5 space-y-3">
+        <h2 className="text-lg font-semibold text-foreground">Surface mining — what the journal gives, and what it withholds</h2>
+        <p className="text-sm text-foreground/90">
+          Verified against the commander&rsquo;s own journals after the Rhino update (2 September 3312 / 2026).
+          The app records only what is on disk; everything else is tagged by hand from the HUD.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-xs uppercase tracking-wider text-muted-foreground">
+              <tr><th className="text-left py-1 pr-3">Event</th><th className="text-left py-1 pr-3">What it carries</th><th className="text-left py-1">What the app makes of it</th></tr>
+            </thead>
+            <tbody className="text-foreground/90">
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 font-mono text-xs">MiningRefined</td><td className="py-1 pr-3">one line per tonne, commodity only — no position, no count</td><td className="py-1">a <strong>collection</strong>: a burst while in the SRV; position sampled from Status.json at the first tonne</td></tr>
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 font-mono text-xs">Status.json Destination</td><td className="py-1 pr-3"><code>$SAA_Unknown_Signal:#type=$PlanetaryMiningLocation_Name;:#index=N;</code> with Body = BodyID</td><td className="py-1">the <strong>signal&rsquo;s own index</strong> — nav-lock it before you drop and the visit is filed under Signal N</td></tr>
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 font-mono text-xs">SAASignalsFound</td><td className="py-1 pr-3"><code>$PlanetaryMiningLocation_Name;</code> Count — DSS only</td><td className="py-1">the body&rsquo;s signal count. The only event that ever carries it; the map shows it earlier, the journal does not</td></tr>
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 font-mono text-xs">Screenshot (F10)</td><td className="py-1 pr-3">lat / lon / heading / altitude — the only at-will position event</td><td className="py-1">a <strong>marker</strong>; named with a commodity it becomes a deposit and its picture is re-encoded to JPEG</td></tr>
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 font-mono text-xs">SupercruiseExit · LaunchSRV</td><td className="py-1 pr-3">the body; position via Status.json at that instant</td><td className="py-1">the <strong>visit boundary</strong> and the landing anchor distances are measured from</td></tr>
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 font-mono text-xs">Scan</td><td className="py-1 pr-3">surface materials %, gravity, planet class, atmosphere</td><td className="py-1">the body survey — and the ❄ on ice balls</td></tr>
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 font-mono text-xs">Cargo (Vessel: SRV)</td><td className="py-1 pr-3">the Rhino&rsquo;s hold (72 t)</td><td className="py-1">proof you are in the SRV for journals that begin mid-drive</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          <strong className="text-foreground">Not on disk at all:</strong> rig deployment, rig progress, the fill (9/9 until Frontier&rsquo;s patch of 4 September 2026, 12/12 since &mdash; the app divides by the capacity in force at the time), mineral amount, density. Sixty-seven minutes of deploying rigs produced zero journal lines.
+          <strong className="text-foreground"> A login on the surface</strong> is a visit boundary: the journal&rsquo;s Location event at login carries the position, so a signal worked across two evenings is two visits with two clocks, not one twenty-hour visit.
+          <strong className="text-foreground"> Measured geometry:</strong> marker to collection at one deposit ≈ 200 m; deposits inside a signal 0.9–1.4 km apart; the app merges positions within 300 m for the same commodity and treats 3 km as one signal.
+          <strong className="text-foreground"> Commander&rsquo;s observation:</strong> a signal holds at most six commodities.
+        </p>
+        <h3 className="text-sm font-semibold text-foreground mt-2">Where the surface prices come from</h3>
+        <p className="text-sm text-foreground/90">
+          The galactic average is the game&rsquo;s own <code>MeanPrice</code>, read from Market.json every time you open a market and kept beside the exe; the baked price table is only the floor for a commodity no market has shown yet, and a test fails if its server copy drifts. The one price on the Surface Mining page is what your best market paid in the last 30 days within 10,000 ly (Colonia excluded), else that average. See the Selling reference above for the rest.
+        </p>
+      </section>
+
+      {/* ============ The co-pilot cast ============ */}
+      <section className="bg-card border border-border rounded-lg p-5 space-y-3">
+        <h2 className="text-lg font-semibold text-foreground">The co-pilot cast</h2>
+        <p className="text-sm text-foreground/90">
+          Three personas, one seat. The fiction decides the signal path, and each persona&rsquo;s writing rule decides its delivery contour — the corpus needs no annotation.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-xs uppercase tracking-wider text-muted-foreground">
+              <tr><th className="text-left py-1 pr-3"></th><th className="text-left py-1 pr-3">Wren</th><th className="text-left py-1 pr-3">Tycho</th><th className="text-left py-1">K2</th></tr>
+            </thead>
+            <tbody className="text-foreground/90">
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 text-muted-foreground">fiction</td><td className="py-1 pr-3">human, on a headset mic</td><td className="py-1 pr-3">machine, plugged into the ship</td><td className="py-1">reprogrammed security droid, plugged in</td></tr>
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 text-muted-foreground">writing rule</td><td className="py-1 pr-3">buries the number mid-sentence; deadpan, needles you as an equal</td><td className="py-1 pr-3">leads with the number, lands warm wit as the closer; space teacher, GalNet reader</td><td className="py-1">leads with the verdict, then the number as evidence; dry</td></tr>
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 text-muted-foreground">voice</td><td className="py-1 pr-3">Zira, pitch +38%, comms filter (970 / 4600 Hz, grit, hiss)</td><td className="py-1 pr-3">David at the +50% ceiling, tape-shifted to +75% — no processing</td><td className="py-1">David or Zira pitched down — no processing</td></tr>
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 text-muted-foreground">contour</td><td className="py-1 pr-3">rise into the payoff (−10%, beat, +10%); whole line up on panic or excitement</td><td className="py-1 pr-3">two lifts</td><td className="py-1">fall away from the verdict</td></tr>
+              <tr className="border-t border-border/50"><td className="py-1 pr-3 text-muted-foreground">in a single-seat hull</td><td colSpan={3} className="py-1">no co-pilot seat — the persona flies from the cargo hold by remote, and says so on every handoff</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Rules that hold for all three: first person, always; speak only about what the journal shows; never name another persona; recommend, never order; no invented people or game mechanics.
+          Hauling talk exists only while a <strong className="text-foreground">Start Session</strong> is active — off-session, a dock is flavour: economy, faction, station, black market.
+          Every line is logged and ratable; 👍&rsquo;d live lines are templatised into the free canned corpus.
+        </p>
+      </section>
 
       {/* ============ Dataset background ============ */}
       <section className="bg-card border border-border rounded-lg p-5 space-y-3">
         <h2 className="text-lg font-semibold text-foreground">About the dataset</h2>
         <p className="text-sm text-foreground/90">
           All figures below come from the Spansh galaxy dump pulled 2026-04-20 and
-          region-indexed into a 700 ly sphere around your home colony.
+          region-indexed into a 700 ly sphere around the author&rsquo;s home colony in Col 173 &mdash;
+          this is the author&rsquo;s own scouting dataset, not a survey of wherever you happen to be.
         </p>
         <p className="text-xs text-muted-foreground">
           Note: the <strong className="text-foreground">Atmosphere rarity</strong> table reflects
@@ -547,7 +639,7 @@ export function WikiPage() {
             just past the outermost ring, <strong className="text-foreground">ring material sits
             between the moon and the parent</strong> — you see the rings wrapping visually from
             your orbit inward toward the gas giant. This is the geometry that produces the
-            &ldquo;amongst the rings&rdquo; view (your home&rsquo;s type). Parent must be a gas
+            &ldquo;amongst the rings&rdquo; view (the author&rsquo;s home colony is one). Parent must be a gas
             giant or brown dwarf; rocky ringed parents don&rsquo;t dominate. Distribution by
             atmosphere: SO2 (44), Methane (17), CO2 (10), Ammonia (4),{' '}
             <strong className="text-primary">Oxygen (3)</strong>, Argon-rich (1), Hot SO2 (2).
@@ -840,9 +932,9 @@ export function WikiPage() {
               </dd>
             </div>
             <div>
-              <dt className="text-foreground font-medium">&ldquo;At the rings&rdquo; like your home</dt>
+              <dt className="text-foreground font-medium">&ldquo;At the rings&rdquo; like the author&rsquo;s home colony</dt>
               <dd className="text-foreground/80 mt-0.5">
-                Col 173 Sector LG-Z c15-7 AB 2 a — 102 ly HIP, Methane atmo, Y brown dwarf parent at 103%. Same geometry as home, different atmosphere.
+                Col 173 Sector LG-Z c15-7 AB 2 a — 102 ly HIP, Methane atmo, Y brown dwarf parent at 103%. Same geometry as the author&rsquo;s home, different atmosphere.
               </dd>
             </div>
             <div>

@@ -270,6 +270,7 @@ export function WikiPage() {
         </div>
         <p className="text-xs text-muted-foreground">
           <strong className="text-foreground">Rules that skip a buyer:</strong> demand under your load; a carrier; farther than 10,000 ly; a record older than 30 days.
+          <strong className="text-foreground"> Learned 7 September 2026:</strong> Ardent&rsquo;s nearby lists never include the system you ask from (a thousand rows at 50 ly, none at distance zero), so the system&rsquo;s own listing is merged in at distance zero. A community-goal market is the journal&rsquo;s own <code>CommunityGoal</code> list with an expiry ahead &mdash; demand is no signal (The Gatehouse posted 2,725,657 t of demand for Beryllium at 1.07&times; mean) &mdash; and a goal&rsquo;s price never values a rig or a rock. Sell-at verdicts are one comparison, the share of the best buyer known: sell at 85% or better, take it elsewhere under 70%.
           <strong className="text-foreground"> History</strong> lives in <code>market-history.jsonl</code> beside the exe from 4 September 2026 — movers-only market rows, one Ardent sample per commodity per day, your own sales — pruned to a year on load.
         </p>
       </section>
@@ -302,6 +303,12 @@ export function WikiPage() {
           <strong className="text-foreground"> A login on the surface</strong> is a visit boundary: the journal&rsquo;s Location event at login carries the position, so a signal worked across two evenings is two visits with two clocks, not one twenty-hour visit.
           <strong className="text-foreground"> Measured geometry:</strong> marker to collection at one deposit ≈ 200 m; deposits inside a signal 0.9–1.4 km apart; the app merges positions within 300 m for the same commodity and treats 3 km as one signal.
           <strong className="text-foreground"> Commander&rsquo;s observation:</strong> a signal holds at most six commodities.
+        </p>
+        <p className="text-xs text-muted-foreground">
+          <strong className="text-foreground">The recall tell (7 September 2026):</strong> no event records a recall, but the moment the ship&rsquo;s AI takes over the game re-emits <code>SAASignalsFound</code> for every mapped body in range &mdash; while you are in an SRV or on foot, where the scanner cannot fire. An unmanned <code>Liftoff</code> inside 5 s of the burst is an auto-departure (drove out of range; 5 on file); nothing is a recall: an unmanned <code>Touchdown</code> 26&ndash;33 s later on foot (25 of 26), a <code>DockSRV</code> 38&ndash;76 s later from the Rhino (19), a <code>CargoTransfer</code> from 32 s (8).
+          <strong className="text-foreground"> She never lands during Rhino ops:</strong> Status.json shows her at 28&ndash;32 m, landed=false, at every deploy and dock &mdash; the Rhino drops from her and docks back into her, so those sessions hold no Liftoff or Touchdown at all.
+          <strong className="text-foreground"> Queued refinery output:</strong> a full hold cannot take finished bins; they drop in 1&ndash;2 s after the transfer, with the Rhino at the ship, and are credited to the rig just worked (same commodity, within 10 s of the transfer) at read time.
+          <strong className="text-foreground"> Commander-supplied:</strong> the Rhino&rsquo;s mineral scanner reaches 2 km; a planetary mining location is about 5 km in radius. <code>ShipLocker</code> is the vehicle-inventory sync (after MiningRefined, Cargo, MaterialCollected, embark/disembark), not a recall marker.
         </p>
         <h3 className="text-sm font-semibold text-foreground mt-2">Where the surface prices come from</h3>
         <p className="text-sm text-foreground/90">

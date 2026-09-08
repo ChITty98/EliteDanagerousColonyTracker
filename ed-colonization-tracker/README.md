@@ -4,7 +4,7 @@ A comprehensive companion app for **Elite Dangerous** colonization gameplay. Tra
 
 Built with React, TypeScript, and Node.js. Runs as a standalone Windows `.exe` — no install required.
 
-**Current release: 1.57.0** — see [CHANGELOG.md](CHANGELOG.md) for what changed and when. The app follows a journal-first rule: everything below works from the game's own journal files; external services only add to it.
+**Current release: 1.58.2** — see [CHANGELOG.md](CHANGELOG.md) for what changed and when. The app follows a journal-first rule: everything below works from the game's own journal files; external services only add to it.
 
 ---
 
@@ -13,8 +13,8 @@ Built with React, TypeScript, and Node.js. Runs as a standalone Windows `.exe` �
 ### Dashboard
 Your command center. See all 20+ colonized systems at a glance with tier-based cards (Outpost → Settlement → Colony → Hub), population badges, installation counts, and progress bars for active construction projects. Systems are color-coded by tier with glow effects. A "HERE" badge shows which system you're currently in.
 
-### Colony Map
-Interactive 2D galactic map (X/Z plane, top-down view) showing all your colonies positioned by real galactic coordinates. Pan, zoom, pinch-to-zoom on iPad. Color-coded by tier, with your ship shown as a pulsing cyan triangle that updates on each jump. Optional Sagittarius A* reference point. Click any system name to zoom in. Connection lines show nearest-neighbor distances between colonies.
+### Map
+Interactive 2D galactic map (X/Z plane, top-down) of your colonies by real coordinates, with layers you switch on as you need them: **Colonies** and **Targets** (the systems you are watching), the **Journey** (every major stop from the Commander's Log, drawn as legs), a **Galaxy** outline, the **42 galactic regions** with their real borders (from the klightspeed community region map, MIT, vendored), **Landmarks** placed only from coordinates in your own data, and **Populated** — every populated system across 700 ly of HIP 47126 and 500 ly of Praea Euq AT-U d2-47, seeded from your Spansh regional dump (`scripts/gen-populated-systems.mjs`) and kept current from the journal stream: every FSDJump, Location or CarrierJump with a population, from EDDN or your own journal, updates `populated-systems.json`. Three population bands, one path each, so thousands of points pan without lag. Pan, zoom, pinch-to-zoom on iPad; your ship as a pulsing cyan triangle.
 
 ### Architect's Domain
 A showcase of everything remarkable across your territory. Highlights rare stars (neutron stars, black holes, Wolf-Rayet), special atmospheres (oxygen worlds, ammonia worlds), and notable stations (Coriolis, Orbis, Dodec Spaceport). Expandable drill-down sections for stars, landable bodies, other bodies, and installations — each sorted by rarity. Fully configurable from Settings: choose which types count as "highlights."
@@ -80,20 +80,23 @@ Deep-dive into any system with three tabs:
 ### Asteroid Mining
 A mining assist for ring mining, built only from measured data. Every prospected rock gets an expected credit total, not just a material list: proportion → tonnes through a per-material yield table calibrated from your own log, tonnes → credits at the best live non-carrier buyer within 500 ly (Ardent) or your own visited-market average. "Worth it" is the median rock of the ring you are in, from your own history, never a fixed number. Target hits fire regardless of value, stalls are reported as facts (silence, limpets, last collector launch) rather than guessed causes, and hold warnings use effective ore space. Hotspots are attributed from the nav lock, rings are indexed from your DSS scans, and trophies and streaks accumulate per session.
 
+### Commander's Log
+A deterministic timeline of everything the journals hold, weighted so a Dodec build or a first discovery outranks a jump: builds with station photos and a searchable *builds* tag (large ports and Dodecs weighted by your Domain Highlights), loop hauls, missions, exobiology and bio sales, community goals joined and delivered, vehicle firsts, surface presence on relog, and a searchable station list with the fleet log. Station renames resolve by market id, so a station that changed its name is one entry, not three. No generated prose: every line is an event.
+
 ### Surface Mining
-The Rhino's page: bodies → signals → deposits, in the order you navigate. Nav-lock a "Planetary Mining Location Signal (N)" before you drop and the visit is filed under it; a login on the surface starts a new visit. Live hero with this visit's tonnes, value and pace; a compass to any deposit, the ship or a recall spot; a signal map from the breadcrumb track with driven distance, climb and speed; F10 screenshots become deposit markers; tags from orbit, landing and driving ratings per signal, rigs per deposit (a full rig is 12 t since the 4 September 2026 patch), brain-tree groves and harvests, and "Where to go back" ranked by credits per hour of being there. One price rules the page: your best market in the last 30 days within 10,000 ly, else the game's own galactic average.
+The Rhino's page: bodies → signals → deposits, in the order you navigate. Nav-lock a "Planetary Mining Location Signal (N)" before you drop and the visit is filed under it; a login on the surface starts a new visit. Live hero with this visit's tonnes, value and pace; a compass to any deposit, the ship or a recall spot; a signal map from the breadcrumb track (SRV and on-foot samples only — never the ship) with a **Covered** layer shading the 2 km the Rhino's scanner sweeps either side of the drive, this visit brighter than earlier evenings, so unshaded ground inside the rings is a real gap; a **Route** button that orders the rig points over the ground you actually drove, time-costed from your own pace; rigs per deposit with the 4-rig / 3-per-commodity cap shared with the Domain; F10 screenshots as deposit markers, tags from orbit, landing and driving ratings in your own words; queued refinery output after a transfer credited to the rig it came from. Under **My systems**, a row of colony chips narrows the page to one system. The map hoists itself to a *Working now* panel while you are on a signal.
 
 ### Sell Cargo
-Your ship's hold and your carrier's cargo, priced three ways with a place for each: **here** (the station you are docked at), **local** (the best of your own market records and Ardent's buyers within 20/50/100/500 ly), and **galaxy** (one carrier jump out, or the overall top of book). Tonnes × price on every line, a sell-everything total per column, any of 335 commodities searchable, a "trade nearby" board of lowest buy → highest sell pairs per load of your ship, and a year of price history per commodity: every market you open, a daily galaxy sample, and your own sales. A buyer showing 999,999 demand is tagged as a Community Goal.
+Your ship's hold and your carrier's cargo, priced three ways with a place for each: **here** (the station you are docked at), **local** (the best of your own market records and Ardent's buyers within 20/50/100/500 ly — the system you are in included, which Ardent's nearby lists leave out), and **galaxy** (one carrier jump out, or the overall top of book). Tonnes × price on every line, a sell-everything total per column, any of 335 commodities searchable, a "trade nearby" board of lowest buy → highest sell pairs, and a year of price history per commodity. The page paints at once from your own markets and Ardent's cache and fills the rest in behind. **Sell at…** prices everything you hold at one chosen system with one verdict per line against the best buyer known: green sell here (85% or better), amber close call, red take it elsewhere (under 70%), and a summary line naming the three groups. Community-goal markets are tagged from the journal's own goal list — never from a demand figure — and their prices are never used to value a rig or a rock.
 
 ### Fleet Carrier ledger
 Carrier cargo is tracked transactionally: every transfer while docked at your carrier, your own buys and sells against its market, and tritium to the tank, replayed from the journals since the carrier was bought. That is exact for ore and anything without a trade order; sell orders are reconciled from the carrier's market read, the game's CarrierStats total is the check, and the remainder is shown as "not itemised". A baseline typed from the carrier's inventory screen anchors what the journal cannot count.
 
 ### Co-pilot
-A voiced co-pilot with three personas — Wren, Tycho and K2 — that react to what you are doing: jumps, docks, scans, hauling, mining, threats, GalNet news. Lines come from a curated canned corpus or, when the local Claude command line is available, live generation with a breaker that falls back to canned. Humour and honesty are dials in Settings; the voice runs through the app's own speech path (Wren through a comms filter, the machines dry).
+A voiced co-pilot with three personas — Wren, Tycho and K2 — that react to what you are doing: jumps, docks, scans, hauling, mining, threats, GalNet news. Lines come from a curated canned corpus or, when the local Claude command line is available, live generation with a breaker that falls back to canned. On the surface it has its own canned beats — arrival by driving band, the hold filling (near or far, never promising to move the ship), the ship going up on its own, a nudge for the most valuable commodity logged at the signal, a **recall** line off the one tell the game leaks (the SAASignalsFound burst when her AI takes over), and stepping out on foot keyed by the body's scanned temperature — and it is silent while combat music plays. Humour and honesty are dials in Settings; the voice runs through the app's own speech path.
 
 ### Proximity Radar, Chain Watch and Threats
-The radar listens to the EDDN firehose and shows what tool-running commanders are doing within 200 ly: builds, atmospheric leads, scans, conflicts. Chain Watch turns colonisation events and Spansh records into named chains near your regions. Threats watches a 50 ly sphere around systems you have flagged as yours to lose. All of it is off with one switch in Settings, because the EDDN feed is about 1.8 GB a day inbound.
+The radar listens to the EDDN firehose and shows what tool-running commanders are doing within 200 ly: builds, atmospheric leads, scans, conflicts. Chain Watch turns colonisation events and Spansh records into named chains near your regions. Threats watches a 50 ly sphere around systems you have flagged as yours to lose. The same feed keeps the Map's Populated layer current. All of it is off with one switch in Settings, because the EDDN feed is about 1.8 GB a day inbound.
 
 ### Rewards, Materials, Sights, System View and Wiki
 **Rewards** states facts about mission and reward options, never a verdict. **Materials** shows your engineering material inventory from the journal, trader yields and blueprint capacity. **Sights** is the postcard ledger of places you have been, with photos per location. **System View** is an orrery of the current system. The **Wiki** holds the author's scouting reference — mass codes, atmosphere rarity, dramatic skies — and the journal facts behind surface mining and selling.
@@ -141,7 +144,7 @@ iPad, iPhone, Surface, any Firefox or Safari browser gets full functionality —
 | [Spansh](https://spansh.co.uk) | Scouting, threats, chain watch seed, radar lookback, War & Peace | User-driven at 1.1 s spacing; chain seed once; lookback at most every 5 min; War & Peace cached until the weekly tick | Scouting, threats and lookback stop |
 | [EDSM](https://www.edsm.net) | Arrival traffic, factions, colony watch | Once per jump (10 min cache); at most 5 calls per dock | Arrival overlays lose the traffic line |
 | [Ardent Insight](https://ardent-insight.com) | Live commodity buyers and prices (EDDN-fed) | Hourly per commodity, cached; Sell page lookups cached an hour; a daily history sample | Prices fall back to your own markets, then the galactic average |
-| EDDN firehose (`eddn.edcd.io:9500`) | Proximity radar and chain watch | Always on while enabled — about 1.8 GB a day inbound | Radar and chain watch dormant. Switch in Settings |
+| EDDN firehose (`eddn.edcd.io:9500`) | Proximity radar, chain watch, the Map's populated-systems upkeep | Always on while enabled — about 1.8 GB a day inbound | Radar and chain watch dormant. Switch in Settings |
 | GalNet CMS | Co-pilot news beat | Every 30 min | No news lines |
 | BGS tick service | Tick awareness | Every 15 min | Tick features dormant |
 | GitHub Releases | Update banner | On boot and every 6 h | No update banner |
@@ -150,7 +153,7 @@ iPad, iPhone, Surface, any Firefox or Safari browser gets full functionality —
 Browser-side calls are proxied through the server (`/spansh-api/*`, `/edsm-api/*`, `/ardent-api/*`) to avoid CORS. Nothing the journals feed needs the network; every external call fails quiet with a fallback.
 
 ### Gallery
-Screenshots stored server-side in `colony-images/` folder. Upload from any device including iOS camera. Images associated with systems and displayed on system detail pages, dashboard cards, and Architect's Domain.
+Screenshots stored server-side in `colony-images/`. Upload from any device including iOS camera. F10 shots arrive as 31.6 MB BMPs and are re-encoded to JPEG (quality 90, about 1.2 MB) as they land, with anything still on disk converted at startup; the originals in your Pictures folder are never touched. Images associate with systems and show on system detail pages, dashboard cards, the Architect's Domain, Sights and the Commander's Log.
 
 ---
 
@@ -267,7 +270,7 @@ Toggleable chips for each category:
 |------|---------|
 | `colony-data.json` | All app state (projects, systems, settings, sessions, market snapshots, carrier record) |
 | `colony-token.txt` | Auth token for network access |
-| `colony-gallery.json`, `colony-images/` | Screenshot metadata and files |
+| `colony-gallery.json`, `colony-images/` | Screenshot metadata and files (JPEG; BMPs are converted on arrival and at startup) |
 | `backups/` | Timestamped recovery snapshots of the state file |
 | `mining-log.jsonl` | Append-only rock log for asteroid mining |
 | `mining-rings.json`, `mining-trophies.json`, `mining-annotations.json` | Ring and hotspot index from your scans, trophies and streaks, your notes |

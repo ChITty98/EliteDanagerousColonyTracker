@@ -2,6 +2,11 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.58.2] — 2026-09-07
+
+### Docs
+- Both READMEs describe the Map (regions, landmarks, the Populated layer), the Commander's Log, the surface-mining route and Covered layers, the Sell page's fast paint and Sell at… verdicts, the co-pilot's surface beats and combat silence, the JPEG gallery, and the new `populated-systems.json` data file. FAQ gains eleven entries (Sell at…, the own-system fix, community goals from the journal, the fast paint, Covered, the system row, queued refinery output, the co-pilot on the surface, the Populated layer, region sources, gallery JPEGs). The Wiki's selling and surface-mining references carry the 7 September findings: Ardent's nearby lists exclude the origin system, goal markets from the journal, the recall tell, the hovering ship, queued refinery output, scanner reach and site radius.
+
 ## [1.58.1] — 2026-09-07
 
 ### Changed

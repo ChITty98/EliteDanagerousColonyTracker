@@ -1992,6 +1992,115 @@ const faqItems: FaqItem[] = [
       </p>
     ),
   },
+  {
+    category: 'Sell Cargo',
+    question: 'What is Sell at\u2026, and what do the green, amber and red mean?',
+    answer: (
+      <>
+        <p>
+          Type a system and every commodity you hold is priced at its best-paying station there, from Ardent&rsquo;s full listing for the system plus your own snapshot if you docked. One comparison decides the colour: the share of the <strong>best buyer known</strong> anywhere. Green, 85% or better &mdash; sell here. Amber, 70 to 85% &mdash; close call. Red, under 70% &mdash; take it elsewhere. The summary line above the table names the three groups, and the &times;mean figure under each price is a fact, not a colour.
+        </p>
+        <p className="mt-2">
+          &ldquo;Best there&rdquo; is per commodity, so the stations differ down the column. If you will dock at one station only, read the station name on each line before you sell.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Sell Cargo',
+    question: 'Why did the page show a buyer in another system when a better one was in the system I was in?',
+    answer: (
+      <p>
+        Ardent&rsquo;s nearby listings never include the system you ask from (a thousand rows at 50 ly, none at distance zero), and until 1.58.1 the Local and Galaxy columns were built from those lists alone. The system&rsquo;s own listing now joins the within-range candidates at distance zero, so a buyer next door shows in both columns. Sell at&hellip; always asked for the system&rsquo;s own listing, which is why it disagreed with the main table.
+      </p>
+    ),
+  },
+  {
+    category: 'Sell Cargo',
+    question: 'How does the app know a station is a community-goal market, and why are goal prices ignored when valuing rigs and rocks?',
+    answer: (
+      <p>
+        From the journal: the latest <code>CommunityGoal</code> event lists every current goal with its system, market and expiry, and the app keeps the ones still ahead. It used to read a demand of 999,999 as a goal &mdash; but big stations post far larger demand for ordinary goods, so the tag spread across half the page. A goal market is a real buyer, and the Sell page shows it as one, tagged; but its 8&times; is gone when the goal ends, so &ldquo;your best market&rdquo;, the visited-markets average, the galaxy&rsquo;s best buyer and the daily history sample all skip goal markets when valuing surface rigs and asteroid rocks.
+      </p>
+    ),
+  },
+  {
+    category: 'Sell Cargo',
+    question: 'Why does the page appear at once now, with some prices marked as still checking Ardent?',
+    answer: (
+      <p>
+        The first paint uses your own market records and whatever Ardent answered in the last hour; the rest is looked up in the background (three at a time, one nearby call per commodity, a carrier jump out) and the page refreshes itself when the full plan lands. Changing the range no longer refetches anything. Before this, a full carrier of 43 commodities meant a four-minute blank page.
+      </p>
+    ),
+  },
+  {
+    category: 'Surface Mining',
+    question: 'What does Covered shade on the signal map?',
+    answer: (
+      <p>
+        The ground the Rhino&rsquo;s mineral scanner has swept: the drive, drawn as a stroke 2 km either side (the scanner&rsquo;s reach), this visit in blue and earlier evenings in grey. Unshaded ground inside the rings is a gap you have not scanned. The track holds SRV and on-foot samples only &mdash; an approach glide in the ship is never a drive &mdash; and every sample within a site&rsquo;s 5 km radius is kept whatever its age, so gaps read across evenings.
+      </p>
+    ),
+  },
+  {
+    category: 'Surface Mining',
+    question: 'How do I narrow My systems to one colony?',
+    answer: (
+      <p>
+        With <strong>My systems</strong> selected, a row of chips appears: <strong>all</strong>, then one per colony with surface data, each with its count of bodies carrying signals, the current system first. Pick one and the bodies list, Needs a DSS, the find-by-commodity chips, visits and materials narrow to it. The pick is remembered per browser; <strong>all</strong> or the current-system chip clears it.
+      </p>
+    ),
+  },
+  {
+    category: 'Surface Mining',
+    question: 'Tonnes refined right after a transfer showed up as a deposit at the ship. Why?',
+    answer: (
+      <p>
+        A full hold cannot take the refinery&rsquo;s finished bins, so they wait; the moment a transfer empties the hold they drop in, a second or two later, with the Rhino parked at the ship. Live, that opened a fresh collection at the ship&rsquo;s position. Since 1.58.0 a collection that opens within ten seconds of a transfer takes the position of the latest earlier collection of the same commodity on that body &mdash; the rig those tonnes came from. The correction is made when the ledger is read, so history is repaired too.
+      </p>
+    ),
+  },
+  {
+    category: 'Co-pilot',
+    question: 'What does the co-pilot say on the surface, and how does it know I recalled the ship?',
+    answer: (
+      <>
+        <p>
+          Canned lines only, so nothing arrives a minute late: an arrival line keyed by the driving band you rated the signal (never the number), the hold filling with the ship near or far (it never promises to move her), the ship going up on her own, a nudge after a while on site for the most valuable commodity logged there, and stepping out on foot keyed by the body&rsquo;s scanned temperature. It is silent while combat music plays.
+        </p>
+        <p className="mt-2">
+          There is no journal event for a recall, but the game tells on itself: the moment the ship&rsquo;s AI takes over it re-emits <code>SAASignalsFound</code> for every mapped body in range, while you are sitting in an SRV or standing on the surface where the scanner cannot fire. A Liftoff inside five seconds of that burst means she is leaving; nothing means she is coming, about thirty seconds out. That is the &ldquo;on my way&rdquo; line.
+        </p>
+      </>
+    ),
+  },
+  {
+    category: 'Map',
+    question: 'What is the Populated layer, and where does it come from?',
+    answer: (
+      <p>
+        Every populated system across 700 ly of HIP 47126 and 500 ly of Praea Euq AT-U d2-47, in three population bands. It is seeded from your own Spansh regional dump with <code>scripts/gen-populated-systems.mjs</code> and kept current from the journal stream: every FSDJump, Location or CarrierJump with a population, from EDDN or your own journal, updates <code>populated-systems.json</code> beside the exe. EDDN is a push stream the app already subscribes to, so this costs no extra requests. Hover the toggle for the count, the seed date and how many the stream has added.
+      </p>
+    ),
+  },
+  {
+    category: 'Map',
+    question: 'Where do the region borders and landmarks come from?',
+    answer: (
+      <p>
+        The 42 galactic regions are the klightspeed community region map (MIT licence, vendored under <code>scripts/vendor/</code>, regenerated with <code>scripts/gen-galactic-regions.mjs</code>), validated against Spansh&rsquo;s region names for 690 of 690 systems. Landmarks &mdash; Colonia, the nebulae, Founders World &mdash; are placed only from coordinates in your own data, never by eye. The galactic arms carry no names on purpose; the region names are the ones that mean something.
+      </p>
+    ),
+  },
+  {
+    category: 'Projects & Data',
+    question: 'Why did my gallery BMPs become JPEGs?',
+    answer: (
+      <p>
+        An F10 screenshot is a 31.6 MB BMP at 3440&times;1440, and 33 of them had grown to a gigabyte. Since 1.58.0 every gallery copy is re-encoded to JPEG at quality 90 (about 1.2 MB) &mdash; as it lands, at startup for anything still on disk, and on demand with <code>POST /api/gallery/convert</code>. Old <code>.bmp</code> links keep resolving. The originals in your Pictures folder are never touched.
+      </p>
+    ),
+  },
 ];
 
 // Group FAQ items by category

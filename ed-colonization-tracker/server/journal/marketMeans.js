@@ -10,6 +10,7 @@
 // with where and when — because a station can pay 185% of the average (Atmo Sky Cairn: Iridium,
 // Thortveitite and Periclase Dunite at 240k against a 129,763 mean), and "skip Thortveitite"
 // was a decision made on the average alone.
+import { isCommunityGoalMarket } from './communityGoals.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { setLiveMeans } from './commodityPricesMirror.js';
@@ -106,6 +107,9 @@ export function bestSellFromSnapshots(state, name, maxAgeMs = FRESH_MARKET_MS, r
   let best = null;
   for (const snap of Object.values((state && state.marketSnapshots) || {})) {
     if (!snap || !Array.isArray(snap.commodities)) continue;
+    // A goal market is a buyer, not a price: its 8× is gone with the goal and would value every
+    // rig and rock at it for a month (Metz Enterprise, September 2026).
+    if (isCommunityGoalMarket(snap.stationName, snap.systemName)) continue;
     if (maxAgeMs > 0 && !(Date.parse(snap.updatedAt) >= cutoff)) continue;
     if (reachLy > 0) { const d = distanceFromCommander(state, snap.systemName); if (d != null && d > reachLy) continue; }
     for (const c of snap.commodities) {

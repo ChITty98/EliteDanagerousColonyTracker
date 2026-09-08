@@ -12,6 +12,7 @@
 //      commander holds or searched
 //   s  the commander's own MarketSell / MarketBuy from the last twelve months of journals
 // "Is 240k an aberration?" is answerable only after weeks of these; the file starts today.
+import { isCommunityGoalMarket } from './communityGoals.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { canonicalCommodityName } from './commodityPricesMirror.js';
@@ -126,9 +127,12 @@ export function recordArdentSample(key, rows, now = Date.now(), reach = null) {
     if (![x.systemX, x.systemY, x.systemZ].every(Number.isFinite)) return true;
     return Math.hypot(x.systemX - o.x, x.systemY - o.y, x.systemZ - o.z) <= reach.maxLy;
   };
-  const good = (Array.isArray(rows) ? rows : [])
+  const all = (Array.isArray(rows) ? rows : [])
     .filter((x) => x && x.stationType !== 'FleetCarrier' && x.sellPrice > 0 && x.demand > 0 && within(x))
     .sort((a, b) => b.sellPrice - a.sellPrice);
+  // A goal market is recorded beside the day, never AS the day: the galaxy top is the best real buyer.
+  const goal = all.find((x) => isCommunityGoalMarket(x.stationName, x.systemName)) || null;
+  const good = all.filter((x) => !isCommunityGoalMarket(x.stationName, x.systemName));
   if (!good.length) return false;
   const top = good[0];
   const med = good[Math.floor(good.length / 2)].sellPrice;
@@ -137,6 +141,7 @@ export function recordArdentSample(key, rows, now = Date.now(), reach = null) {
     k: 'a', at: new Date(now).toISOString(), c, n: canonicalCommodityName(top.commodityName || key),
     top: top.sellPrice, topSt: top.stationName || null, topSys: top.systemName || null, topDem: top.demand,
     med, n100: good.length, mean: withMean ? withMean.meanPrice : 0,
+    ...(goal ? { cg: goal.sellPrice, cgSt: goal.stationName || null } : {}),
   });
   return true;
 }

@@ -38,8 +38,12 @@ interface Searched { name: string; tonnes: number }
 interface SellAtRow {
   key: string; name: string; ship: number; carrier: number; tonnes: number;
   offer: Offer | null; mean: number; vsMean: number | null; demandShort: boolean; value: number; elsewhere: Offer | null; listedHere: boolean;
+  pctOfBest: number | null; worthHere: boolean; verdict: 'sell' | 'close' | 'loss' | 'none'; bestValue: number;
 }
-interface SellAt { at: string; system: string | null; distance: number | null; known: boolean; stations: string[]; rows: SellAtRow[]; total: number; error?: string }
+interface SellAt {
+  at: string; system: string | null; distance: number | null; known: boolean; stations: string[]; rows: SellAtRow[]; total: number; totalBest: number;
+  worth: string[]; close: { name: string; pct: number; at: string | null; system: string | null }[]; better: { name: string; pct: number; at: string | null; system: string | null; price: number | null }[]; error?: string;
+}
 
 const token = () => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } };
 const q = (p: string) => { const t = token(); return t ? `${p}${p.includes('?') ? '&' : '?'}token=${t}` : p; };
@@ -213,7 +217,7 @@ export function SellPage() {
       const d = (await res.json()) as SellAt;
       if (seq === atSeq.current) setAt(d);
     } catch (e) {
-      if (seq === atSeq.current) setAt({ at: new Date().toISOString(), system: name, distance: null, known: false, stations: [], rows: [], total: 0, error: e instanceof Error ? e.message : String(e) });
+      if (seq === atSeq.current) setAt({ at: new Date().toISOString(), system: name, distance: null, known: false, stations: [], rows: [], total: 0, totalBest: 0, worth: [], close: [], better: [], error: e instanceof Error ? e.message : String(e) });
     } finally {
       if (seq === atSeq.current) setAtLoading(false);
     }
@@ -257,7 +261,7 @@ export function SellPage() {
   const carrierTonnes = plan?.carrier ? plan.carrier.items.reduce((a, i) => a + (i.count || 0), 0) : 0;
   const topItems = (items: { name: string; count: number }[]) => [...items].sort((a, b) => b.count - a.count).slice(0, 4).map((i) => `${i.name} ${i.count}`).join(' · ');
   const bestCol = (r: PlanRow): 'here' | 'local' | 'galaxy' | null => {
-    const g = r.galaxy || r.top;
+    const g = r.top || r.galaxy; // the server sets top only when it beats the carrier-range buyer
     const c = [['here', r.here?.price || 0], ['local', r.local?.price || 0], ['galaxy', g?.price || 0]] as const;
     const m = Math.max(...c.map((x) => x[1]));
     if (m <= 0) return null;
@@ -357,7 +361,7 @@ export function SellPage() {
               const hasHist = !!hist && hist.days.length > 0;
               const isSearched = r.searched != null;
               const draft = tonnesDraft[r.key];
-              const g = r.galaxy || r.top;
+              const g = r.top || r.galaxy; // the server sets top only when it beats the carrier-range buyer
               return (
                 <RowGroup key={r.key} open={open === r.key} history={hasHist ? <History series={hist} /> : null}>
                   <td className="px-2 py-2 align-top">
@@ -490,6 +494,23 @@ export function SellPage() {
               {at.stations.length ? <> · {at.stations.length} station{at.stations.length === 1 ? '' : 's'} with prices: {at.stations.slice(0, 4).join(', ')}{at.stations.length > 4 ? '…' : ''}</> : null}
               {!at.known ? <span className="ml-1 text-amber-300/80">no market data for this system in Ardent or your records</span> : null}
             </div>
+            {/* The answer first: what is worth selling HERE, and what the trip leaves on the table. */}
+            {at.rows.length > 0 && (
+              <div className="rounded border border-border bg-background/40 px-3 py-2 text-xs">
+                {at.worth.length ? (
+                  <div><span className="text-emerald-200">Sell here:</span> {at.worth.join(', ')} <span className="text-muted-foreground">({at.worth.length} of {at.rows.length} held)</span></div>
+                ) : (
+                  <div className="text-muted-foreground">Nothing you hold is within reach of its best known buyer here.</div>
+                )}
+                {at.close.length ? (
+                  <div className="mt-0.5"><span className="text-amber-200">Close call:</span> <span className="text-muted-foreground">{at.close.map((b) => `${b.name} (${b.pct}%${b.at ? `, best at ${b.at}` : ''})`).join(' · ')}</span></div>
+                ) : null}
+                {at.better.length ? (
+                  <div className="mt-0.5"><span className="text-red-300">Take elsewhere:</span> <span className="text-muted-foreground">{at.better.slice(0, 8).map((b) => `${b.name} (${b.pct}% here${b.at ? `, ${b.at}${b.system && b.system !== b.at ? `, ${b.system}` : ''}` : ''})`).join(' · ')}{at.better.length > 8 ? ' · …' : ''}</span></div>
+                ) : null}
+                <div className="mt-0.5 tabular-nums text-muted-foreground">Everything at this system: <span className="text-foreground">{cr(at.total)}</span>{at.totalBest > at.total ? <> · at the best known buyers: {cr(at.totalBest)}</> : null}</div>
+              </div>
+            )}
             <div className="overflow-x-auto rounded border border-border">
               <table className="w-full min-w-[720px] text-xs">
                 <thead>
@@ -497,15 +518,18 @@ export function SellPage() {
                     <th className="px-2 py-2">Commodity</th>
                     <th className="px-2 py-2">You hold</th>
                     <th className="px-2 py-2">Best there</th>
-                    <th className="px-2 py-2">vs mean</th>
                     <th className="px-2 py-2">Value</th>
-                    <th className="px-2 py-2">Best elsewhere</th>
+                    <th className="px-2 py-2">Best known elsewhere</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {at.rows.length === 0 && <tr><td colSpan={6} className="px-2 py-4 text-center text-muted-foreground">Nothing held.</td></tr>}
+                  {at.rows.length === 0 && <tr><td colSpan={5} className="px-2 py-4 text-center text-muted-foreground">Nothing held.</td></tr>}
                   {at.rows.map((r) => {
-                    const dim = !r.offer || (r.vsMean != null && r.vsMean < 1);
+                    // One coloured cell per row, one meaning, one comparison: the share of the best buyer
+                    // known. Green sell here (85%+), amber close call, red take it elsewhere (under 70%).
+                    // The mean is a fact under the price and colours nothing.
+                    const tone = r.verdict === 'sell' ? 'green' : r.verdict === 'close' ? 'amber' : r.verdict === 'loss' ? 'red' : 'dim';
+                    const dim = tone === 'dim';
                     return (
                       <tr key={r.key} className={`border-t border-border/60 ${dim ? 'text-muted-foreground/70' : ''}`}>
                         <td className="px-2 py-2 align-top font-medium">{r.name}</td>
@@ -513,14 +537,33 @@ export function SellPage() {
                           {r.ship > 0 ? <div>{r.ship} ship</div> : null}
                           {r.carrier > 0 ? <div>{r.carrier} carrier</div> : null}
                         </td>
-                        <OfferCell o={r.offer} best={!!r.offer && r.vsMean != null && r.vsMean >= 1.2} tonnes={0} note={r.listedHere ? 'no demand there' : 'not traded there'} />
-                        <td className="px-2 py-2 align-top tabular-nums">
-                          {r.vsMean != null ? <span className={r.vsMean >= 1.2 ? 'text-emerald-200' : r.vsMean < 1 ? 'text-red-300/80' : ''}>×{r.vsMean.toFixed(2)}</span> : '—'}
-                          {r.mean > 0 ? <div className="text-[10px] text-muted-foreground">mean {fmt(r.mean)}</div> : null}
-                          {r.demandShort && r.offer ? <div className="text-[10px] text-amber-300/80">demand {fmt(r.offer.demand || 0)} t &lt; {fmt(r.tonnes)} t held</div> : null}
+                        <td className="px-2 py-2 align-top">
+                          {r.offer ? (
+                            <>
+                              <span className={`inline-block rounded px-1.5 py-0.5 tabular-nums ${tone === 'green' ? 'bg-emerald-500/20 text-emerald-200' : tone === 'amber' ? 'bg-amber-500/15 text-amber-200' : tone === 'red' ? 'bg-red-500/15 text-red-200' : 'text-foreground'}`}>{fmt(r.offer.price)}</span>
+                              <div className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
+                                {r.vsMean != null ? <>×{r.vsMean.toFixed(2)} mean</> : null}
+                                {r.pctOfBest != null && r.elsewhere ? <> · {Math.round(r.pctOfBest * 100)}% of the best known</> : r.offer ? <> · the best known</> : null}
+                                {r.demandShort ? <span className="ml-1 text-amber-300/80">· demand {fmt(r.offer.demand || 0)} t &lt; {fmt(r.tonnes)} t held</span> : null}
+                              </div>
+                              <div className="text-[10px] leading-4 text-muted-foreground">
+                                {[r.offer.station, r.offer.system && r.offer.system !== r.offer.station ? r.offer.system : null].filter(Boolean).join(' · ')}
+                                {padLabel(r.offer.pad) ? <> · {padLabel(r.offer.pad)} pad</> : null}
+                                {r.offer.at ? <> · {when(r.offer.at)}</> : null}
+                                {r.offer.cg ? <span className="ml-1 text-amber-300">community goal · limited time</span> : null}
+                              </div>
+                            </>
+                          ) : <span>— <span className="text-[10px] text-muted-foreground/70">{r.listedHere ? 'no demand there' : 'not traded there'}</span></span>}
                         </td>
                         <td className="px-2 py-2 align-top tabular-nums">{r.value > 0 ? cr(r.value) : '—'}</td>
-                        <OfferCell o={r.elsewhere} best={!!r.elsewhere && !!r.offer && r.elsewhere.price > r.offer.price * 1.1} tonnes={0} note="not looked up yet" />
+                        <td className="px-2 py-2 align-top text-muted-foreground">
+                          {r.elsewhere ? (
+                            <>
+                              <span className="tabular-nums text-foreground/80">{fmt(r.elsewhere.price)}</span>
+                              <div className="text-[10px] leading-4">{[r.elsewhere.station, r.elsewhere.system && r.elsewhere.system !== r.elsewhere.station ? r.elsewhere.system : null].filter(Boolean).join(' · ')}{r.elsewhere.distance != null ? <> · {ly(r.elsewhere.distance)}</> : null}{r.elsewhere.cg ? <span className="ml-1 text-amber-300">goal</span> : null}</div>
+                            </>
+                          ) : <span className="text-[10px] text-muted-foreground/70">not looked up yet</span>}
+                        </td>
                       </tr>
                     );
                   })}
@@ -528,16 +571,16 @@ export function SellPage() {
                 {at.total > 0 && (
                   <tfoot>
                     <tr className="border-t border-border font-medium">
-                      <td className="px-2 py-2" colSpan={4}>Sell everything it wants</td>
+                      <td className="px-2 py-2" colSpan={3}>Sell everything it wants</td>
                       <td className="px-2 py-2 tabular-nums">{cr(at.total)}</td>
-                      <td />
+                      <td className="px-2 py-2 tabular-nums text-muted-foreground">{at.totalBest > at.total ? cr(at.totalBest) : ''}</td>
                     </tr>
                   </tfoot>
                 )}
               </table>
             </div>
             <p className="text-[11px] text-muted-foreground/70">
-              Green is 1.2× the galactic mean or better; red is under it. "Best elsewhere" is the plan's galaxy-wide buyer when it has been looked up, so you can see what selling here gives up. Demand is checked against everything you hold.
+              One comparison: the share of the best buyer known. Green, 85% or better: sell here. Amber, 70 to 85%: close call. Red, under 70%: take it elsewhere. The ×mean is a fact, not a colour. "Best known elsewhere" is the plan's galaxy-wide buyer once looked up. Demand is checked against everything you hold.
             </p>
           </div>
         )}

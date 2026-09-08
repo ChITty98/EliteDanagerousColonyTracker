@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { initMarketHistory } from '../server/journal/marketHistory.js';
+import { _setCommunityGoals } from '../server/journal/communityGoals.js';
 import { buildSellPlan, buildSellAt, bestSell, lowestBuy } from '../server/journal/sellPlan.js';
 
 const NOW = Date.parse('2026-09-04T12:00:00Z');
@@ -109,6 +110,21 @@ describe('sell plan', () => {
     expect(plan.totals.galaxy).toBe(20 * 327007 + 44 * 240542);
   });
 
+  it('a buyer in the system you are in counts as local and galaxy even though Ardent\'s nearby lists leave it out', async () => {
+    // The home listing gains a Thortveitite buyer at 500k; the nearby list still knows nothing at distance zero.
+    const withHome = async (p) => {
+      if (p === `/system/name/${encodeURIComponent(ME)}/commodities`) return [...ardent[p], { commodityName: 'thortveitite', marketId: 777, stationName: 'Home Dodec', systemName: ME, stationType: 'Dodec', maxLandingPadSize: 3, buyPrice: 0, stock: 0, sellPrice: 500000, demand: 4000, updatedAt: iso(NOW - 3600e3) }];
+      return ardent[p] ?? null;
+    };
+    const plan = await buildSellPlan({ state, journalDir, rangeLy: 50, fetchJson: withHome, now: NOW });
+    const t = plan.rows.find((r) => r.key === 'thortveitite');
+    expect(t.local.station).toBe('Home Dodec');
+    expect(t.local.price).toBe(500000);
+    expect(t.local.distance).toBe(0);
+    expect(t.galaxy.station).toBe('Home Dodec');                 // it beats Borel Vista a carrier jump out
+    expect(plan.totals.galaxy).toBe(20 * 500000 + 44 * 240542);
+  });
+
   it('asks Ardent for nearby buyers ONCE per commodity, a carrier jump out — never once per range', async () => {
     calls.length = 0;
     await buildSellPlan({ state, journalDir, rangeLy: 50, fetchJson, now: NOW });
@@ -149,12 +165,30 @@ describe('sell plan', () => {
     expect(at.stations).toContain('Near Port');
     const thort = at.rows.find((r) => r.key === 'thortveitite');
     expect(thort.offer.price).toBe(300000);                    // the carrier at 900k is ignored
+    expect(thort.pctOfBest).toBeLessThan(1);                    // the galaxy list knows a better buyer
+    expect(typeof thort.worthHere).toBe('boolean');
+    expect(['sell', 'close', 'loss']).toContain(thort.verdict);
+    expect(thort.verdict).toBe(thort.pctOfBest >= 0.85 ? 'sell' : thort.pctOfBest < 0.7 ? 'loss' : 'close');
+    expect(Array.isArray(at.close) && Array.isArray(at.better)).toBe(true);
+    expect(at.worth.every((n) => typeof n === 'string')).toBe(true);
+    expect(at.totalBest).toBeGreaterThanOrEqual(at.total);
+    expect(thort.offer.cg).toBe(false);                          // no goal on file — a big demand is not a goal
     expect(thort.offer.station).toBe('Near Port');
     expect(thort.vsMean).toBeGreaterThan(1);
     expect(thort.elsewhere).toBeTruthy();                      // the cached galaxy list gives the comparison
     const gran = at.rows.find((r) => r.key === 'grandidierite');
     expect(gran.demandShort).toBe(true);                       // 10 t of demand against more held
     expect(at.rows[0].value).toBeGreaterThanOrEqual(at.rows[at.rows.length - 1].value);
+  });
+
+  it('tags a buyer as a community goal only when the journal lists that market', async () => {
+    _setCommunityGoals([{ market: 'Tiny Demand', system: 'Nearby', expiry: new Date(NOW + 86400e3).toISOString() }]);
+    const plan = await buildSellPlan({ state, journalDir, rangeLy: 50, fetchJson, now: NOW });
+    const thort = plan.rows.find((r) => r.key === 'thortveitite');
+    const offers = [thort.here, thort.local, thort.galaxy, thort.top].filter(Boolean);
+    expect(offers.some((o) => o.station === 'Tiny Demand' ? o.cg === true : true), JSON.stringify(offers.map((o) => [o.station, o.system, o.cg]))).toBe(true);
+    expect(offers.filter((o) => o.station !== 'Tiny Demand').every((o) => o.cg === false), JSON.stringify(offers.map((o) => [o.station, o.system, o.cg]))).toBe(true);
+    _setCommunityGoals([]);
   });
 
   it('a top-of-book buyer within reach shows as the top and is sampled into the history', async () => {

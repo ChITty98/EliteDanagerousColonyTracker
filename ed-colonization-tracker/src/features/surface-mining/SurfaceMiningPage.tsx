@@ -885,6 +885,10 @@ export function SurfaceMiningPage() {
   // Default to where you are — the commander's call. Falls back to "my systems" only when the
   // current system is not known yet (see inScope), so the page never comes up empty.
   const [scope, setScope] = useState<Scope>('current');
+  // Under "My systems": one colony, or all of them. As more planets get signal details the union
+  // of every colony stops being findable, so the row narrows it. Remembered per browser.
+  const [sysPick, setSysPickState] = useState<string | null>(() => { try { return localStorage.getItem('surface.sysPick') || null; } catch { return null; } });
+  const setSysPick = (name: string | null) => { setSysPickState(name); try { if (name) localStorage.setItem('surface.sysPick', name); else localStorage.removeItem('surface.sysPick'); } catch { /* per-browser nicety */ } };
 
   // "My systems" — the same definition colonySystemsOf() uses server-side.
   const myLower = useMemo(() => {
@@ -1107,10 +1111,32 @@ export function SurfaceMiningPage() {
 
   const inScope = useCallback((sys: string | null) => {
     const s = (sys ?? '').toLowerCase();
-    if (scope === 'mine') return myLower.has(s);
+    if (scope === 'mine') return sysPick ? s === sysPick.toLowerCase() : myLower.has(s);
     if (!currentSystem) return myLower.has(s); // position not known yet — show your systems, not nothing
     return s === currentSystem.toLowerCase();
-  }, [scope, myLower, currentSystem]);
+  }, [scope, myLower, currentSystem, sysPick]);
+
+  // Every colony system with surface data — a DSS count, a tag, or tonnage — and how many of its
+  // bodies carry signals. The current system first, then natural order. Feeds the system row.
+  const mySystemsWithData = useMemo(() => {
+    const here = (currentSystem ?? '').toLowerCase();
+    const counts = new Map<string, { name: string; bodies: number; worked: number }>();
+    for (const b of bodies) {
+      if (!b.system || !myLower.has(b.system.toLowerCase())) continue;
+      if (!((b.sitesKnown ?? 0) > 0 || b.tonnes > 0 || b.siteRows.length > 0)) continue;
+      const e = counts.get(b.system.toLowerCase()) ?? { name: b.system, bodies: 0, worked: 0 };
+      e.bodies += 1;
+      if (b.tonnes > 0) e.worked += 1;
+      counts.set(b.system.toLowerCase(), e);
+    }
+    const natural = (x: string, y: string) => x.localeCompare(y, undefined, { numeric: true, sensitivity: 'base' });
+    return [...counts.values()].sort((a, b) => ((a.name.toLowerCase() === here ? 0 : 1) - (b.name.toLowerCase() === here ? 0 : 1)) || natural(a.name, b.name));
+  }, [bodies, myLower, currentSystem]);
+  // A remembered pick that no longer has data (or never did) must not empty the page.
+  useEffect(() => {
+    if (sysPick && bodies.length && !mySystemsWithData.some((x) => x.name.toLowerCase() === sysPick.toLowerCase())) setSysPick(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sysPick, mySystemsWithData, bodies.length]);
 
   // Live overlay wins over the 5s snapshot when fresher.
   const session = useMemo(() => {
@@ -1455,6 +1481,27 @@ export function SurfaceMiningPage() {
             {scopeLabel[k]}
           </button>
         ))}
+        {scope === 'mine' && mySystemsWithData.length > 1 && (
+          <div className="flex flex-wrap items-center gap-1 pl-2 text-[10px]">
+            <span className="mr-1 uppercase tracking-wider text-muted-foreground/70">in</span>
+            <button
+              type="button" onClick={() => setSysPick(null)}
+              className={`rounded border px-2 py-0.5 ${!sysPick ? 'border-sky-400/60 bg-sky-500/15 text-sky-200' : 'border-border text-muted-foreground hover:border-sky-500/40'}`}
+              title="Every colony with surface data"
+            >
+              all · {mySystemsWithData.reduce((t, x) => t + x.bodies, 0)}
+            </button>
+            {mySystemsWithData.map((x) => (
+              <button
+                key={x.name} type="button" onClick={() => setSysPick(x.name)}
+                className={`rounded border px-2 py-0.5 ${sysPick && sysPick.toLowerCase() === x.name.toLowerCase() ? 'border-sky-400/60 bg-sky-500/15 text-sky-200' : 'border-border text-muted-foreground hover:border-sky-500/40'}`}
+                title={`${x.bodies} bod${x.bodies === 1 ? 'y' : 'ies'} with signals, ${x.worked} worked`}
+              >
+                {x.name}{x.name.toLowerCase() === (currentSystem ?? '').toLowerCase() ? ' · here' : ''} <span className="opacity-70">{x.bodies}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ---- Find by commodity · rank by expected value ---- */}

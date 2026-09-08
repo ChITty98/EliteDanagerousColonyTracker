@@ -36,6 +36,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { notePopulatedSystem } from '../radar/populatedStore.js';
+import { noteCommunityGoalEvent } from './communityGoals.js';
 import {
   extractKnowledgeBaseFromEvents,
   readMarketJson,
@@ -376,6 +377,8 @@ function resolveCoords(ev, existing) {
 }
 
 function processPositionEvents(parsed, existing, patch, extraEvents) {
+  // The goal list, live: opening the goal panel or docking at a goal market writes CommunityGoal.
+  for (const ev of parsed.allEvents || []) if (ev && ev.event === 'CommunityGoal') { try { noteCommunityGoalEvent(ev); } catch { /* best-effort */ } }
   // Populated-systems upkeep from the commander's own journal — the same facts EDDN would relay,
   // available even with the radar off. StarPos rides on FSDJump, Location and CarrierJump.
   for (const ev of [...parsed.fsdJumpEvents, ...parsed.locationEvents, ...parsed.carrierJumpEvents]) {

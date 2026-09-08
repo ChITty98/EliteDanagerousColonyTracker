@@ -25,6 +25,7 @@
 //     The original STALL_MS of 12s fired below the MEDIAN; 60s still caught 15% of normal gaps.
 //     Hence 90s, plus the requirement that the rock was already producing.
 
+import { isCommunityGoalMarket } from './communityGoals.js';
 import fs from 'node:fs';
 import path from 'node:path';
 // missionRateFor is deliberately NOT imported — see valueOf(). Mission targeting still comes from
@@ -238,6 +239,7 @@ function getPriceMap(state) {
   if (priceMap && now() - priceMapAt < PRICE_CACHE_MS) return priceMap;
   const acc = {};
   for (const s of Object.values((state && state.marketSnapshots) || {})) {
+    if (!s || isCommunityGoalMarket(s.stationName, s.systemName)) continue; // never average a goal market in
     for (const c of (s.commodities || [])) {
       if (!c || !(c.sellPrice > 0)) continue;
       const id = commodityKey(c.commodityId || c.name);

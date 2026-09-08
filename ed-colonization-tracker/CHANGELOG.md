@@ -2,6 +2,16 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.58.1] — 2026-09-07
+
+### Changed
+- **Community goals come from the journal.** A goal market is one the latest `CommunityGoal` event lists with an expiry still ahead (`server/journal/communityGoals.js`), never a station whose demand happens to read 999,999 — big stations post millions of demand for ordinary goods, and that tag had spread across half the Sell page. Every valuation that reads "your best market" or "the galaxy's best buyer" — surface rig values, asteroid rock values, the live price ladder, the daily history sample — now skips goal markets, so a goal's 8× never prices a deposit or a rock. The Sell page still lists the goal market as the buyer it is, tagged.
+- **Sell at… says it plainly.** One comparison, the share of the best buyer known: green sell here at 85% or better, amber close call, red take it elsewhere under 70%. A summary line above the table names the three groups. The ×mean figure stays as a fact under each price and colours nothing.
+- **Surface Mining: a system row under My systems.** One chip per colony with surface data, with its count of bodies carrying signals; pick one and the whole page narrows to it. Remembered per browser.
+
+### Fixed
+- **The system you are in was missing from the Sell page's Local and Galaxy columns.** Ardent's nearby listings never include the origin system (1,000 rows at 50 ly, none at distance zero), so a buyer 0 ly away could only land in a hidden slot — Grandidierite read 640k in Lembava while The Gatehouse, in the same system, paid 781k. The system's own listing now joins the within-range candidates, galaxy-list buyers inside the range are merged in by market id, and the page shows the better of the two galaxy slots.
+- The docked station's own price cell never carried the goal flag.
 ## [1.58.0] — 2026-09-07
 
 ### Added

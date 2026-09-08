@@ -1,3 +1,4 @@
+import { isCommunityGoalMarket } from './communityGoals.js';
 // server/journal/livePrices.js
 //
 // Live market basis for mined commodities: the best non-Fleet-Carrier sell price WITHIN 500 LY of
@@ -116,7 +117,7 @@ async function fetchOne(key) {
       : `/commodity/name/${encodeURIComponent(name)}/imports`);
     if (!Array.isArray(rows)) { markMiss(key); return; }
     const good = rows
-      .filter((x) => x && x.stationType !== 'FleetCarrier' && (x.demand ?? 0) >= MIN_DEMAND && (x.sellPrice ?? 0) > 0)
+      .filter((x) => x && x.stationType !== 'FleetCarrier' && (x.demand ?? 0) >= MIN_DEMAND && (x.sellPrice ?? 0) > 0 && !isCommunityGoalMarket(x.stationName, x.systemName))
       // Price caps make exact ties common — at equal pay, the nearest station wins (it's a haul).
       .sort((a, b) => (b.sellPrice || 0) - (a.sellPrice || 0) || ((a.distance ?? 1e9) - (b.distance ?? 1e9)));
     const best = good[0];

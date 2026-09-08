@@ -46,6 +46,7 @@ import {
 } from './server/journal/extractor.js';
 import { friendlyShip, padSizeFor } from './server/journal/extractor.js';
 import { initMarketMeans, bestSellFromSnapshots } from './server/journal/marketMeans.js';
+import { initCommunityGoals } from './server/journal/communityGoals.js';
 import { initMarketHistory, backfillSales, sampleKeys, needsSample, recordArdentSample, historyStats } from './server/journal/marketHistory.js';
 import { buildSellPlan, buildSellAt, sellPlanKey, MAX_REACH_LY } from './server/journal/sellPlan.js';
 import { initPopulatedStore, getPopulatedSystems, flushPopulatedStore } from './server/radar/populatedStore.js';
@@ -3479,6 +3480,8 @@ server.listen(PORT, '0.0.0.0', () => {
     // place a surface position exists (never archived, so it must be sampled live).
     initSurfaceMining(APP_DIR, jd);
     initMarketMeans(APP_DIR);
+    // Goal markets from the journal — the Sell page tag, and every valuation that must NOT price at a goal.
+    { const g = initCommunityGoals(jd); console.log(`[Goals] ${g.goals} community goal(s) on file${g.eventAt ? ` (as of ${g.eventAt.slice(0, 16)})` : ''}`); }
     // The Map's Populated layer: seeded from the Spansh regional dump, kept current from the stream.
     { const p = initPopulatedStore(APP_DIR); console.log(`[Populated] ${p.count} systems on file${p.count ? '' : ' — run scripts/gen-populated-systems.mjs to seed'}`); }
     backfillStationNameHistory(jd);

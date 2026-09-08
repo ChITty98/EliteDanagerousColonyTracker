@@ -33,7 +33,37 @@ let lastEventAt = null;
 const DAY_MS = 86400e3;
 const EVENTS = /"event":"(CargoTransfer|CarrierStats|CarrierDepositFuel|CarrierBuy|CarrierTradeOrder|MarketBuy|MarketSell|Docked|Undocked|Location)"/;
 
-export const keyOf = (t) => String(t || '').toLowerCase().replace(/^\$/, '').replace(/_name;$/, '');
+// One key for a commodity however it is written: the journal's `$microcontrollers_name;`, its bare
+// `microcontrollers`, and the display name "Micro Controllers" all land on the same entry — which
+// is what lets a baseline typed from the carrier's own screen meet the transfers the journal saw.
+//
+// For eight commodities the game's internal id is simply a different word from the one on screen,
+// so no amount of normalising joins them. Found by listing every id in the commander's own ledger
+// that matches no known display name (2026-09-04); the game is the authority, not a guess.
+const ID_ALIAS = {
+  drones: 'limpet',
+  coolinghoses: 'microweavecoolinghoses',
+  terrainenrichmentsystems: 'landenrichmentsystems',
+  mutomimager: 'muonimager',
+  hazardousenvironmentsuits: 'hesuits',
+  watersofshintara: 'thewatersofshintara',
+  bluemilk: 'lavianbrandy',
+  heliostaticfurnaces: 'microbialfurnaces',
+  marinesupplies: 'marineequipment',
+  atmosphericextractors: 'atmosphericprocessors',
+  basicnarcotics: 'narcotics',
+  hydrogenfuels: 'hydrogenfuel',
+};
+export const keyOf = (t) => {
+  const k = String(t || '')
+    .toLowerCase()
+    .replace(/^\$/, '')
+    .replace(/_name;$/, '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+  if (/^lowtemp.*diamonds?$/.test(k)) return 'lowtemperaturediamond';
+  return ID_ALIAS[k] || k;
+};
 const nameOf = (k, localised) => localised || (findCommodityByJournalName(`$${k}_name;`) || {}).name || canonicalCommodityName(k);
 
 function reset() {
@@ -56,8 +86,8 @@ export function initCarrierLedger(appDir) {
     n += 1;
     if (r.k === 'meta') { meta = { carrierId: r.carrierId ?? null, scannedThrough: r.scannedThrough ?? null, since: r.since ?? null }; carrierId = meta.carrierId; continue; }
     if (r.k === 'stats') { stats = { total: r.total ?? null, free: r.free ?? null, capacity: r.capacity ?? null, at: r.at }; continue; }
-    if (r.k === 'order') { noteOrder(r.at, r.c, r.side, r.n, false); continue; }
-    if (r.k === 'anchor') { const b = entry(r.c, r.n || null); b.basis = r.basis || 'you'; b.basisAt = r.at; continue; }
+    if (r.k === 'order') { noteOrder(r.at, keyOf(r.c), r.side, r.n, false); continue; }
+    if (r.k === 'anchor') { const b = entry(keyOf(r.c), r.n || null); b.basis = r.basis || 'you'; b.basisAt = r.at; continue; }
     if (r.k === 'tx') applyTx(r, false);
   }
   return { records: n };
@@ -98,6 +128,9 @@ function entry(c, localised) {
 
 function applyTx(r, write = true) {
   if (!r || !r.c || !Number.isFinite(r.d) || r.d === 0) return false;
+  // Records written before the aliases were known carry the game's raw id (`drones`,
+  // `mutomimager`); normalise on the way in so old and new land on the same balance.
+  r.c = keyOf(r.c);
   const id = `${r.at}|${r.kind}|${r.c}|${r.d}`;
   if (seen.has(id)) return false;
   seen.add(id);
@@ -111,7 +144,8 @@ function applyTx(r, write = true) {
   return true;
 }
 
-function noteOrder(at, c, side, localised, write = true) {
+function noteOrder(at, key, side, localised, write = true) {
+  const c = keyOf(key);
   const b = entry(c, localised);
   b.ordered = side === 'cancel' ? null : side;
   b.orderedAt = at;
@@ -165,7 +199,13 @@ export function noteCarrierEvent(e) {
       if (carrierId != null && e.MarketID === carrierId && applyTx({ k: 'tx', at: e.timestamp, kind: 'sell', c: keyOf(e.Type), n: e.Type_Localised || null, d: e.Count || 0 })) changed = true;
       break;
     case 'CarrierDepositFuel':
-      if (isMine(e) && applyTx({ k: 'tx', at: e.timestamp, kind: 'fuel', c: 'tritium', n: 'Tritium', d: -(e.Amount || 0) })) changed = true;
+      // NOT a cargo movement. Tritium leaves the carrier as an ordinary transfer to the ship and
+      // goes in the tank from there, so those tonnes are already accounted for; subtracting the
+      // deposit as well counted them twice. Measured on the commander's own carrier: 5,766 t
+      // transferred aboard, 4,220 t back to the ship = 1,546, against 1,456 really there — while
+      // subtracting the 5,566 t of deposits drove the ledger to −4,020. Kept in the event set
+      // only so the carrier's id can be learned from it.
+      if (isMine(e) && !carrierId && e.CarrierID) carrierId = e.CarrierID;
       break;
     case 'CarrierTradeOrder':
       if (isMine(e) && e.Commodity) {
@@ -308,6 +348,32 @@ export function setCarrierBaseline(commodity, tonnes, at = new Date().toISOStrin
   b.basis = 'you'; b.basisAt = at;
   append({ k: 'anchor', at, c, basis: 'you', n: b.name });
   return { commodityId: c, name: b.name, count: n, basis: 'you', basisAt: at };
+}
+
+/**
+ * A whole reconcile in one pass: what the carrier's own inventory screen says, commodity by
+ * commodity. Anything the ledger lists that is not in `counts` is set to zero when `zeroRest` is
+ * on — that is what clears goods the ledger thinks are aboard and are not.
+ */
+export function setCarrierBaselines(counts, { zeroRest = false, at = new Date().toISOString() } = {}) {
+  const applied = []; const failed = [];
+  const named = new Set();
+  for (const [name, tonnes] of Object.entries(counts || {})) {
+    const r = setCarrierBaseline(name, tonnes, at, name);
+    if (r) { applied.push(r); named.add(r.commodityId); } else failed.push(name);
+  }
+  const zeroed = [];
+  if (zeroRest) {
+    // Everything the page would still show — listed, uncounted (an old sell order with nothing
+    // behind it) or below zero — is stated as none aboard. A full walk of the carrier's own screen
+    // is the one moment "not in the list" honestly means "not there".
+    // Snapshot the quantity BEFORE zeroing: the balance object is mutated in place.
+    const stale = [...bal.entries()]
+      .filter(([c, b]) => !named.has(c) && (b.qty !== 0 || (b.soldEver && b.basis === 'ledger') || b.ordered))
+      .map(([c, b]) => ({ c, name: b.name, was: Math.round(b.qty) }));
+    for (const s of stale) if (setCarrierBaseline(s.c, 0, at, s.name)) zeroed.push({ commodityId: s.c, name: s.name, was: s.was });
+  }
+  return { applied: applied.length, zeroed, failed };
 }
 
 export function carrierLedgerReady() { return ready; }

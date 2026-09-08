@@ -544,7 +544,14 @@ export function SystemDetailPage() {
       .map((s) => ({ ...s, economies: s.economies ?? [], services: s.services ?? [] }));
 
     const existingMarketIds = new Set(stationsFromKB.map((s) => s.marketId));
-    const existingNames = new Set(stationsFromKB.map((s) => s.stationName.toLowerCase()));
+    // Every name a station in this system answers to — the one it carries now AND the ones it has
+    // shed. A rename keeps the market id, but an FSS signal records only a name, so without the
+    // history one station stands up as several rows (Sassoon Vision, Rao Refinery, Kalian Port).
+    const existingNames = new Set<string>();
+    for (const s of stationsFromKB) {
+      existingNames.add(s.stationName.toLowerCase());
+      for (const h of s.nameHistory ?? []) if (h?.name) existingNames.add(h.name.toLowerCase());
+    }
 
     // Fallback: also pull from visitedMarkets (persisted, reliable)
     // These are stations where the user has bought commodities

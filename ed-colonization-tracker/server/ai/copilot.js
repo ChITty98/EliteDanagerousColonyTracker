@@ -14,6 +14,9 @@ import { buildSnapshot, eventDetail, decorateScan, detectCompletion, detectBuild
 import { isCannedScenario, pickCanned } from './copilotCanned.js';
 import { detectTarsLore } from './copilotTars.js';
 import { detectMiningBeat } from './copilotMining.js';
+import { detectSurfaceBeat, setSurfaceKick } from './copilotSurface.js';
+import { nextCombatState } from './copilotMute.js';
+import { parseJournalLines } from '../journal/parser.js';
 import { detectRadarBeat } from './copilotRadar.js';
 import { fetchGalNet, getLatestNews } from './copilotNews.js';
 import { arbitrate, recordSpoken } from './copilotArbiter.js';
@@ -54,6 +57,10 @@ let _idleQuietLogged = false; // log the "paused ambient" message once per quiet
 // The Cockpit buttons (runOnDemand/runNews) bypass this deliberately — pressing a button IS presence.
 let inGame = false;
 let _inGameLogged = null;
+// Combat gate — the commander's rule: not a word while they are fighting. Music → Combat_* raises
+// it, the next non-combat track clears it (copilotMute.js). Awareness still ingests; only speech holds.
+let inCombat = false;
+let lastDeps = null; // the deps of the latest tick, so a timer-born surface beat can tick the co-pilot itself
 export function setInGame(v, why) {
   inGame = !!v;
   if (_inGameLogged !== inGame) {
@@ -62,6 +69,19 @@ export function setInGame(v, why) {
   }
 }
 
+// Timer-born surface beats (a recall confirmed once the departure window closes, the target
+// nudge) arrive between journal writes, and nothing ticks the co-pilot then — on foot, the next
+// event can be the ship LANDING half a minute later, and "on my way" delivered as she lands is a
+// bug. So the bridge asks for one synthetic tick: a batch with a single CopilotKick event, run
+// through the real parser (every typed array exists), recent by construction, and flagged so it
+// can never produce idle filler — it exists to drain the surface queue and nothing else.
+setSurfaceKick((kind) => {
+  if (!lastDeps) return;
+  const parsed = parseJournalLines([JSON.stringify({ timestamp: new Date().toISOString(), event: 'CopilotKick', kind })]);
+  parsed.kick = true;
+  runCopilot(parsed, lastDeps.readState(), lastDeps).catch((e) => console.error('[Copilot] kick:', e && e.message));
+});
+
 /**
  * React to this tick's events (or fill the quiet) in character. Fire-and-forget.
  * @param {{ allEvents?: any[] }} parsed
@@ -69,6 +89,7 @@ export function setInGame(v, why) {
  * @param {{ broadcastEvent: (e:any)=>void }} deps
  */
 export async function runCopilot(parsed, state, deps) {
+  if (deps) lastDeps = deps;
   const settings = (state && state.settings) || {};
   const enabled = !!settings.copilotEnabled;
   if (enabled && !_enabledLogged) { console.log('[Copilot] enabled — watching for moments'); _enabledLogged = true; }
@@ -96,9 +117,16 @@ export async function runCopilot(parsed, state, deps) {
     if (e.event === 'LoadGame') setInGame(true, 'LoadGame');
     else if (e.event === 'Shutdown') setInGame(false, 'Shutdown');
     else if (e.event === 'Music' && e.MusicTrack === 'MainMenu') setInGame(false, 'main menu');
+    const combat = nextCombatState(inCombat, e);
+    if (combat !== inCombat) {
+      inCombat = combat;
+      console.log('[Copilot] ' + (combat ? 'combat music (' + e.MusicTrack + ') — every line held until it ends' : 'combat over — lines resume'));
+    }
   }
   // No commander in the seat → no beats of any kind. Awareness above stays current regardless.
   if (!inGame) return;
+  // In a fight → not a word. The commander's rule; nothing outranks it, interrupts included.
+  if (inCombat) return;
 
   if (inFlight) return;
 
@@ -141,6 +169,8 @@ export async function runCopilot(parsed, state, deps) {
   if (quirk) candidates.push({ beat: quirk, ev: null, synthetic: true, place: placeFor(state, null) });
   const miningBeat = detectMiningBeat(); // catches, records, streaks — pushed by the mining assist
   if (miningBeat) candidates.push({ beat: miningBeat, ev: null, synthetic: true, place: placeFor(state, null) });
+  const surfaceBeat = detectSurfaceBeat(); // arrival, the hold filling, the ship going up, the target nudge — pushed by surface mining
+  if (surfaceBeat) candidates.push({ beat: surfaceBeat, ev: null, synthetic: true, place: placeFor(state, null) });
   const radarBeat = detectRadarBeat(); // rival builds / fresh site leads / frontier quiet
   if (radarBeat) candidates.push({ beat: radarBeat, ev: null, synthetic: true, place: placeFor(state, null) });
   const atmo = detectAtmo(parsed);
@@ -197,7 +227,7 @@ export async function runCopilot(parsed, state, deps) {
   // Idle is a low-priority candidate — the arbiter only lets it win during a
   // genuine lull (staleness lifts it over the decaying threshold). Capped so it
   // doesn't chatter into the void while you're AFK.
-  if (idleStreak < maxIdleStreak) {
+  if (idleStreak < maxIdleStreak && !parsed.kick) {
     const idle = peekIdle();
     candidates.push({ beat: { key: idle.key, priority: 16, interrupt: false, mood: idle.mood, _idle: true, intent: idle.intent, model: idle.model }, ev: null, place: null });
   }

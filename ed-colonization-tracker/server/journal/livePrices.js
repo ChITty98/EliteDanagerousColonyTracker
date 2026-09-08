@@ -28,17 +28,23 @@ let queue = [];
 let running = false;
 
 // Shared Ardent fetch for everything on the server (this module, the Sell page, the history
-// sampler): cached per URL, one request in flight at a time with FETCH_SPACING_MS between them,
-// a failure remembered for ten minutes so a down API is not hammered. Resolves to the parsed JSON
-// or null — never throws.
+// sampler): cached per URL, at most LANES requests in flight — each lane keeps FETCH_SPACING_MS
+// between its own calls — a failure remembered for ten minutes so a down API is not hammered, and
+// a URL asked for twice while queued fetched once. Resolves to the parsed JSON or null — never
+// throws. One lane was the Sell page's four-minute load: 43 commodities × 3 serial calls.
 const jsonCache = new Map(); // url -> { at, data }
-let chain = Promise.resolve();
+const LANES = 3;
+const lanes = Array.from({ length: LANES }, () => Promise.resolve());
+let laneIdx = 0;
+const inflight = new Map(); // url -> promise
 const MISS_MS = 10 * 60_000;
 export function ardentJson(pathOrUrl, ttlMs = TTL_MS) {
   const url = /^https?:/.test(pathOrUrl) ? pathOrUrl : `https://api.ardent-insight.com/v2${pathOrUrl}`;
   const hit = jsonCache.get(url);
   if (hit && Date.now() - hit.at < (hit.data == null ? MISS_MS : ttlMs)) return Promise.resolve(hit.data);
-  const run = chain.then(async () => {
+  if (inflight.has(url)) return inflight.get(url);
+  const lane = laneIdx++ % LANES;
+  const run = lanes[lane].then(async () => {
     const again = jsonCache.get(url);
     if (again && again !== hit && Date.now() - again.at < ttlMs) return again.data; // filled while queued
     let data = null;
@@ -47,10 +53,24 @@ export function ardentJson(pathOrUrl, ttlMs = TTL_MS) {
     await new Promise((r) => setTimeout(r, FETCH_SPACING_MS));
     return data;
   });
-  chain = run.catch(() => {});
+  lanes[lane] = run.catch(() => {});
+  inflight.set(url, run);
+  run.then(() => { if (inflight.get(url) === run) inflight.delete(url); }, () => { if (inflight.get(url) === run) inflight.delete(url); });
   return run;
 }
 export function ardentCacheStats() { return { urls: jsonCache.size }; }
+
+/**
+ * What the cache holds for a lookup RIGHT NOW, without fetching: { cached: true, data } when a
+ * fresh answer (or a fresh miss) is on hand, { cached: false } otherwise. The Sell page's fast
+ * first paint is built from this; whatever is missing is queued with ardentJson and fills in.
+ */
+export function ardentPeek(pathOrUrl, ttlMs = TTL_MS) {
+  const url = /^https?:/.test(pathOrUrl) ? pathOrUrl : `https://api.ardent-insight.com/v2${pathOrUrl}`;
+  const hit = jsonCache.get(url);
+  if (hit && Date.now() - hit.at < (hit.data == null ? MISS_MS : ttlMs)) return { cached: true, data: hit.data };
+  return { cached: false, data: null };
+}
 
 /** Sync read for the hot path. Null when never fetched or too stale to trust. */
 export function getLivePrice(key) {

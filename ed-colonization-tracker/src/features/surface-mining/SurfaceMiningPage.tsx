@@ -25,6 +25,8 @@ import { MATERIAL_BY_ID, MATERIAL_BY_DISPLAY_NAME } from '@/data/engineeringMate
 import { useAppStore } from '@/store';
 import { sseSubscribe } from '@/services/sseBus';
 import { cr, MiningHudCss, HBarChart } from '../mining/MiningHud';
+import { rigValue, allocateRigs } from './rigValue';
+import { planRoute, planRouteAnywhere, paceFrom, buildTerrainGraph, pathThrough, splitRuns } from './route';
 
 // ---- payload types --------------------------------------------------------------------------
 
@@ -139,7 +141,7 @@ interface SightingRow {
 interface NavTarget { lat: number; lon: number; label: string; kind: string; body: string | null }
 /** Where the target is from here, recomputed on every Status tick. turn: −180..180, + = right. */
 interface Compass { label: string; kind: string; distance: number; bearing: number; turn: number | null; arrived?: boolean; lat: number; lon: number }
-interface TrackPoint { at: string; lat: number; lon: number; srv: boolean }
+interface TrackPoint { at: string; lat: number; lon: number; srv: boolean; foot?: boolean }
 /** Least-total-driving point among a signal's worked deposits, tonnage-weighted. */
 interface Recall { lat: number; lon: number; distances: { id: string; commodity: string | null; metres: number }[] }
 /** What the breadcrumb track says about a stretch of driving. */
@@ -158,6 +160,7 @@ interface Grove {
 interface Snapshot {
   active: boolean;
   inSrv: boolean;
+  onFoot?: boolean;
   body: string | null;
   lat: number | null;
   lon: number | null;
@@ -281,24 +284,35 @@ function richestOf(totals: Totals): string | null {
 }
 
 const AMOUNTS = ['low', 'medium', 'high'] as const;
+/** The Rhino's mineral scanner sweeps this far either side of the drive (commander, 2026-09-06). */
+const SCANNER_REACH_M = 2000;
 const RARITY: Record<number, string> = { 1: 'Very Common', 2: 'Common', 3: 'Standard', 4: 'Rare' };
 
-/** Autocomplete for every "what does this yield" field — one alphabetical list, no blocks. */
-const DEPOSIT_COMMODITIES = COMMODITY_PRICES
+/**
+ * Commodities the game hands out from surface deposits that the MARKET files somewhere else.
+ * The picker below is built from market categories, which are only a proxy for "can come out
+ * of a deposit": Tritium and Water are Chemicals on the price table and were missing from every
+ * picker on this page (the commander tagged Water nine times by typing past the list).
+ */
+const SURFACE_DEPOSIT_EXTRAS = ['Tritium', 'Water'];
+
+/**
+ * Autocomplete for every "what does this yield" field — one alphabetical list, no blocks. The
+ * category proxy plus the known extras; the component widens it with everything the ledger has
+ * already seen at any site, so a name typed once is in the list from then on.
+ */
+const DEPOSIT_COMMODITIES_BASE = [...new Set(COMMODITY_PRICES
   .filter((c) => c.category === 'Surface Mining' || c.category === 'Metals' || c.category === 'Minerals')
   .map((c) => c.name)
+  .concat(SURFACE_DEPOSIT_EXTRAS.map(canonicalName)))]
   .sort((a, b) => a.localeCompare(b));
 
 /** Everything a signal is expected to hold — tagged from orbit or actually pulled — in table spelling. */
 const rowCommodities = (s: SiteRow) => new Set([...s.expected, ...Object.keys(s.commodities)].map(canonicalName));
 
-/**
- * A signal's expected value: the three highest-priced commodities it is expected to hold, one
- * tonne each — three because the Rhino's refinery holds three, so a six-commodity signal is
- * worked as its best three, not all six.
- */
-const REFINERY_SLOTS = 3;
-const rowScore = (s: SiteRow) => [...rowCommodities(s)].map((c) => priceOf(c) ?? 0).sort((a, b) => b - a).slice(0, REFINERY_SLOTS).reduce((t, p) => t + p, 0);
+/** A signal's expected value — the four rigs you could run on it. See rigValue.ts for the rule. */
+const rowScore = (s: SiteRow, rigs?: Map<string, number>) =>
+  rigValue(rowCommodities(s), priceOf, (c) => rigs?.get(c));
 
 /**
  * The ground colour of a body, sampled from a deposit photo: the bottom-left quadrant (terrain —
@@ -360,15 +374,30 @@ function SignalMap(props: {
   /** Pins and groves on this body — named points, steerable. */
   pois: { id: string; lat: number; lon: number; label: string; kind: string }[];
   onSteer: (t: { lat: number; lon: number; label: string; kind: string }) => void;
+  /** Typical SRV pace here, m/s, measured from the commander's own track on this signal. */
+  paceMps: number | null;
+  /** Suggest a driving order over this signal's rig points. */
+  showRoute: boolean;
+  /** Shade the ground the scanner has swept: the drive drawn SCANNER_REACH_M wide either side. */
+  showCover: boolean;
+  /** When this visit began — drives since then shade stronger than earlier evenings. */
+  visitSince: string | null;
 }) {
   const tint = useTerrainTint(props.photoUrl);
   const pts: { lat: number; lon: number }[] = [
     ...props.deposits.map((d) => ({ lat: d.lat, lon: d.lon })),
     ...(props.landing ? [props.landing] : []),
     ...(props.recall ? [props.recall] : []),
-    ...(props.live ? [props.live] : []),
     ...props.pois.map((p) => ({ lat: p.lat, lon: p.lon })),
   ];
+  // The live marker frames the map only while it is near the signal: the track is cut at 20 km for
+  // the same reason, and an SRV driving off to another site should not shrink this one to a dot.
+  if (props.live && props.radius) {
+    const c0 = pts.length ? { lat: pts.reduce((t, p) => t + p.lat, 0) / pts.length, lon: pts.reduce((t, p) => t + p.lon, 0) / pts.length } : props.live;
+    const rr = Math.PI / 180;
+    const far = Math.hypot((props.live.lon - c0.lon) * rr * Math.cos(c0.lat * rr), (props.live.lat - c0.lat) * rr) * props.radius;
+    if (far < 20000) pts.push(props.live);
+  }
   if (!pts.length || !props.radius) return null;
   const rad = Math.PI / 180;
   const lat0 = pts.reduce((t, p) => t + p.lat, 0) / pts.length;
@@ -390,6 +419,54 @@ function SignalMap(props: {
   const maxT = Math.max(1, ...props.deposits.map((d) => d.tonnes));
   const grid = span > 8000 ? 2000 : span > 3000 ? 1000 : span > 1200 ? 500 : 100; // metres per ring
   const isTarget = (p: { lat: number; lon: number }) => !!props.target && Math.abs(props.target.lat - p.lat) < 1e-6 && Math.abs(props.target.lon - p.lon) < 1e-6;
+  // The suggested order, from where you are, over EVERY rig point at this signal.
+  //
+  // Nothing is filtered out by tonnage. The journal has no notion of a deposit being exhausted —
+  // `tonnes` is what you have taken so far and `collections` is how many rigs you emptied, neither
+  // of which says the ground is spent. Dropping a deposit once it had given up a tonne would shed
+  // points from the route while you were still working them, which is precisely wrong on a signal
+  // you clear over four or five trips. You know when one is done; the app does not.
+  const route = (() => {
+    if (!props.showRoute || !props.radius) return null;
+    const todo = props.deposits
+      .map((d) => ({ id: d.id, lat: d.lat, lon: d.lon, label: d.commodity || d.taggedCommodity || richestOf(d.commodities) || '?' }));
+    if (todo.length < 2) return null;
+    // Where the drive starts. Point to point between rig points is the whole question — the recall
+    // spot is deliberately NOT part of it, it answers a different one (where to park). If you are
+    // on the body, start from you, else the ship; with neither, there is no anchor at all and the
+    // solver tries every rig point as the opening stop rather than picking one arbitrarily.
+    const from = props.live || props.landing || null;
+    // Legs you have already driven are timed from the track; the rest fall back to the straight
+    // line, which is a guess about ground nobody has crossed — a boulder does not show up in it.
+    // Cost every leg over the ground you have actually crossed. The breadcrumb track is the only
+    // evidence of what the SRV can get through — a straight line between two rig points is a claim
+    // about terrain nobody has driven, and on ground with ridges and boulders it is usually wrong.
+    const graph = props.track.length > 8 ? buildTerrainGraph(props.track, props.radius) : null;
+    const byId = new Map(todo.map((q) => [q.id, q]));
+    const shapes = new Map<string, { lat: number; lon: number }[]>();
+    const opts = {
+      radiusM: props.radius,
+      speedMps: props.paceMps ?? 18,
+      secondsFor: (fromId: string | null, toId: string) => {
+        if (!graph || !fromId) return null;
+        const a = byId.get(fromId); const b = byId.get(toId);
+        if (!a || !b) return null;
+        const via = pathThrough(graph, a, b);
+        if (!via) return null;
+        shapes.set(`${fromId}|${toId}`, via.shape);
+        return via.seconds;
+      },
+    };
+    const r = from ? planRoute(from, todo, opts) : planRouteAnywhere(todo, opts);
+    return r ? { ...r, shapes } : null;
+  })();
+  const routeFromLabel = props.live ? 'where you are' : props.landing ? 'the ship' : 'the best end to start from';
+  const routeBlocked = !props.radius
+    ? "this body's radius is not known yet"
+    : props.deposits.length < 2
+      ? `needs two placed rig points, this signal has ${props.deposits.length}`
+      : 'nothing to route';
+  const mmss = (sec: number) => (sec >= 3600 ? `${Math.floor(sec / 3600)}h ${Math.round((sec % 3600) / 60)}m` : `${Math.floor(sec / 60)}m`);
   return (
     <div className="rounded-lg border border-border bg-black/30 p-2">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto rounded" role="img" aria-label="signal map">
@@ -401,6 +478,23 @@ function SignalMap(props: {
             <text x={W / 2 + n * grid * scale + 3} y={H / 2 - 3} fill="rgba(148,163,184,0.5)" fontSize="9">{fmtM(n * grid)}</text>
           </g>
         ))}
+        {/* Scanner coverage: each continuous run of driving drawn as a stroke twice the reach wide
+            with round ends — exactly the union of scan discs along the path, so unshaded ground
+            inside the rings is a real gap. This visit strong, earlier evenings faint. */}
+        {props.showCover && track.length > 0 && (() => {
+          const w = Math.max(2, 2 * SCANNER_REACH_M * scale);
+          return (
+            <g>
+              {splitRuns(track).map((r, i) => {
+                const current = !!props.visitSince && r[r.length - 1].at >= props.visitSince;
+                const shade = current ? 'rgba(56,189,248,0.16)' : 'rgba(148,163,184,0.10)';
+                return r.length === 1
+                  ? <circle key={`cov-${i}`} cx={sx(r[0].x)} cy={sy(r[0].y)} r={w / 2} fill={shade} />
+                  : <polyline key={`cov-${i}`} points={r.map((p) => `${sx(p.x)},${sy(p.y)}`).join(' ')} fill="none" stroke={shade} strokeWidth={w} strokeLinecap="round" strokeLinejoin="round" />;
+              })}
+            </g>
+          );
+        })()}
         {track.length > 1 && (
           <polyline points={track.map((p) => `${sx(p.x)},${sy(p.y)}`).join(' ')} fill="none" stroke="rgba(148,163,184,0.45)" strokeWidth="1.2" />
         )}
@@ -410,6 +504,32 @@ function SignalMap(props: {
             <text x={sx(p.x) + 11} y={sy(p.y) + 4} fill="#fbbf24" fontSize="11">ship</text>
           </g>
         ); })()}
+        {route && (() => {
+          const from = (props.live || props.landing)!;
+          const seq = [from, ...route.order];
+          return (
+            <g>
+              {route.legs.map((leg, i) => {
+                const a = seq[i]; const b2 = seq[i + 1];
+                const idOf = (q: unknown) => (q as { id?: string }).id ?? null;
+                const key = idOf(a) && idOf(b2) ? `${idOf(a)}|${idOf(b2)}` : null;
+                const shape = leg.measured && route.shapes && key ? route.shapes.get(key) : null;
+                // A measured leg is drawn along the ground you took; a guess is drawn straight and
+                // dashed, so the two are never mistaken for each other.
+                const pts2 = (shape && shape.length > 1 ? shape : [a, b2]).map((q) => { const mm = toM(q); return `${sx(mm.x)},${sy(mm.y)}`; });
+                return (
+                  <polyline key={`leg-${i}`} points={pts2.join(' ')} fill="none"
+                    stroke={leg.measured ? 'rgba(56,189,248,0.9)' : 'rgba(56,189,248,0.4)'}
+                    strokeWidth={leg.measured ? 2.5 : 2} strokeLinejoin="round" strokeLinecap="round"
+                    strokeDasharray={leg.measured ? undefined : '7 5'} />
+                );
+              })}
+              {route.order.map((q, i) => { const m2 = toM(q); return (
+                <text key={`n-${q.id}`} x={sx(m2.x) - 15} y={sy(m2.y) - 10} fill="#38bdf8" fontSize="11" fontWeight="600">{i + 1}</text>
+              ); })}
+            </g>
+          );
+        })()}
         {props.deposits.map((d) => { const p = toM(d); const r = 5 + 12 * Math.sqrt(d.tonnes / maxT); const name = d.commodity || d.taggedCommodity || richestOf(d.commodities) || '?'; return (
           <g key={d.id} className="cursor-pointer" onClick={() => props.onSteer({ lat: d.lat, lon: d.lon, label: `${name} deposit`, kind: 'deposit' })}>
             <circle cx={sx(p.x)} cy={sy(p.y)} r={r} fill={`hsla(${commodityHue(name)},70%,55%,0.8)`} stroke={isTarget(d) ? '#38bdf8' : 'rgba(0,0,0,0.5)'} strokeWidth={isTarget(d) ? 3 : 1} />
@@ -438,18 +558,82 @@ function SignalMap(props: {
           </g>
         ); })()}
       </svg>
-      <div className="mt-1 text-[10px] text-muted-foreground">Local metres around this signal · north up · tap a deposit, the ship or the recall spot to steer there · the grey line is your drive (recorded from now on)</div>
+      <div className="mt-1 text-[10px] text-muted-foreground">
+        Local metres around this signal · north up · tap a deposit, the ship or the recall spot to steer there · the grey line is your drive · Covered shades the ground your scanner swept, this visit brighter than earlier ones
+        {route && <span className="ml-1 text-sky-300/80">· suggested order over all {route.order.length} rig points from {routeFromLabel}, {fmtM(route.metres)}, about {mmss(route.seconds)} · solid legs follow ground you have driven and are timed from it, dashed are straight-line guesses at {(props.paceMps ?? 18).toFixed(0)} m/s{props.paceMps == null ? ' (nothing driven here yet)' : ''}</span>}
+        {props.showRoute && !route && <span className="ml-1 text-amber-300/80">· no route: {routeBlocked}</span>}
+      </div>
     </div>
   );
 }
 
+/**
+ * The signal map with everything it needs, in one place. It is rendered from two positions — hoisted
+ * to the top of the page while you are actually standing on that signal, and inside the bodies tree
+ * the rest of the time — so it exists once and is called twice rather than written out twice.
+ */
+function SignalMapFor(props: {
+  body: BodyRow; site: SiteRow; deposits: DepositRow[]; track: TrackPoint[];
+  snap: Snapshot | null; showRoute: boolean; showCover: boolean;
+  onSteer: (t: { lat: number; lon: number; label: string; kind: string }) => void;
+  groves: { id: string; body: string; lat: number; lon: number; label: string }[];
+  pins: { id: string; body: string | null; lat: number; lon: number; label: string; kind: string }[];
+}) {
+  const { body: b, site: s2, snap } = props;
+  const siteDeposits = props.deposits.filter((d) => d.body === b.body && d.siteIndex === s2.index);
+  const bodyDeposits = props.deposits.filter((d) => d.body === b.body);
+  const radius = b.radius ?? snap?.radius ?? null;
+  return (
+    <SignalMap
+      deposits={siteDeposits.filter((d) => d.lat != null && d.lon != null && !d.uncertain)}
+      track={props.track}
+      landing={snap?.landing && snap.landing.body === b.body ? { lat: snap.landing.lat, lon: snap.landing.lon } : null}
+      // 'you' is a SURFACE position: in the SRV or on foot. In the ship it is the ship — the triangle
+      // already says where she is, and a ship on approach or in orbit would zoom the whole site away.
+      live={snap?.body === b.body && (snap.inSrv || snap.onFoot) && snap.lat != null && snap.lon != null ? { lat: snap.lat, lon: snap.lon, heading: snap.heading ?? null } : null}
+      recall={s2.recall ?? null}
+      target={snap?.target ?? null}
+      radius={radius}
+      photoUrl={siteDeposits.find((d) => d.imageUrl)?.imageUrl ?? bodyDeposits.find((d) => d.imageUrl)?.imageUrl ?? null}
+      pois={[
+        ...props.groves.filter((g) => g.body === b.body).map((g) => ({ id: g.id, lat: g.lat, lon: g.lon, label: g.label, kind: 'braintree' })),
+        ...props.pins.filter((q) => q.body === b.body && q.kind !== 'braintree').map((q) => ({ id: q.id, lat: q.lat, lon: q.lon, label: q.label, kind: q.kind })),
+      ]}
+      onSteer={props.onSteer}
+      paceMps={paceFrom(props.track, radius)}
+      showRoute={props.showRoute}
+      showCover={props.showCover}
+      visitSince={snap?.drop && snap.drop.body === b.body ? snap.drop.at : null}
+    />
+  );
+}
+
 /** Five tap targets, iPad-sized. 1 = easy, 5 = brutal. */
-function RatingPicker({ value, onPick, title }: { value: number | null; onPick: (n: number) => void; title?: string }) {
+/**
+ * What the driving numbers MEAN, in the commander's own words. Difficulty here is topography, not
+ * gravity — measured across the worked signals, the rating tracks surface gravity at r = 0.07, so
+ * nothing the app can compute predicts it. Writing the anchors on the buttons is what keeps a 2
+ * given tonight the same as a 2 given in March, which is the only way the rating is worth anything.
+ */
+const DRIVING_SCALE: Record<number, string> = {
+  1: 'Very flat, few rocks',
+  2: 'Flat with bumpy segments',
+  3: 'Broken ground for much of the drive',
+  4: 'Huge valleys to drive through',
+  5: 'Worse than the valleys',
+};
+const LANDING_SCALE: Record<number, string> = {
+  1: 'Set down anywhere', 2: 'Needed a look around', 3: 'Picked a spot carefully',
+  4: 'Hard to find a pad-flat patch', 5: 'Barely got down',
+};
+
+function RatingPicker({ value, onPick, title, scale }: { value: number | null; onPick: (n: number) => void; title?: string; scale?: Record<number, string> }) {
   return (
     <span className="inline-flex gap-1" title={title}>
       {[1, 2, 3, 4, 5].map((n) => (
         <button
           key={n} type="button" onClick={() => onPick(n)}
+          title={scale?.[n] ? `${n} — ${scale[n]}` : undefined}
           className={`h-7 w-7 rounded border text-xs tabular-nums ${value === n ? 'border-amber-400/70 bg-amber-500/20 text-amber-200' : 'border-white/15 text-slate-300 hover:border-amber-500/40'}`}
         >
           {n}
@@ -663,6 +847,25 @@ export function SurfaceMiningPage() {
   const [note, setNote] = useState<string | null>(null);
   const [rebuilding, setRebuilding] = useState(false);
   const [matQuery, setMatQuery] = useState('');
+  // The suggested driving order, off until asked for. It is worth most AFTER a few trips, when
+  // the track has crossed enough ground for the legs to be measured rather than guessed — so it is
+  // a button you press when you want it, not something that appears over the map uninvited.
+  const [showRoute, setShowRoute] = useState(false);
+  // Scanner coverage on/off, remembered per browser. The reach is not a choice: the Rhino's mineral
+  // scanner sweeps 2 km (commander, 2026-09-06), so that is the one width the corridor is drawn at.
+  const [showCover, setShowCover] = useState<boolean>(() => { try { return localStorage.getItem('surface.cover') === '1'; } catch { return false; } });
+  const toggleCover = () => setShowCover((v) => { try { localStorage.setItem('surface.cover', v ? '0' : '1'); } catch { /* per-browser nicety */ } return !v; });
+  const coverControls = (cls: string) => (
+    <button type="button" onClick={toggleCover}
+      title="Shade the 2 km the Rhino's scanner sweeps either side of the drive — unshaded ground inside the rings is a gap"
+      className={`${cls} rounded border px-2 py-0.5 text-[11px] ${showCover ? 'border-sky-400/60 bg-sky-500/15 text-sky-200' : 'border-white/15 text-slate-400 hover:border-sky-500/40'}`}>
+      {String.fromCodePoint(0x1F4E1)} Covered
+    </button>
+  );
+  // Where the signal map lives. 'auto' puts it at the top while you are standing on a signal and
+  // leaves it in the tree otherwise — the page you want on the ground is not the page you want when
+  // you are choosing where to go next. 'top' and 'tree' pin it either way.
+  const [mapWhere, setMapWhere] = useState<'auto' | 'top' | 'tree'>('auto');
   const [targetInput, setTargetInput] = useState('');
   const [expandedBody, setExpandedBody] = useState<string | null>(null);
   const [editingSite, setEditingSite] = useState<string | null>(null); // "body|index" whose tag chips are open
@@ -950,6 +1153,13 @@ export function SurfaceMiningPage() {
     setTargetInput('');
   };
 
+  // The signal you are standing on, if any — the live drop, else the last visit recorded here.
+  const activeSite = useMemo(() => {
+    if (!hereRow || currentSiteIndex == null) return null;
+    return hereRow.siteRows.find((r) => r.index === currentSiteIndex) ?? null;
+  }, [hereRow, currentSiteIndex]);
+  const mapOnTop = mapWhere === 'top' || (mapWhere === 'auto' && !!hereRow && !!activeSite);
+
   const surveyed = useMemo(() => bodies.filter((b) => b.surface && Object.keys(b.surface).length > 0), [bodies]);
   const needsScan = useMemo(() => surveyed.filter((b) => b.spots == null && inScope(b.system)), [surveyed, inScope]);
 
@@ -968,6 +1178,13 @@ export function SurfaceMiningPage() {
     const have = rowCommodities(s);
     return [...findSet].every((c) => have.has(c));
   }, [findSet]);
+
+  // The picker: the base list plus every commodity the ledger has seen at any site, in scope or not.
+  const depositCommodities = useMemo(() => {
+    const all = new Set<string>(DEPOSIT_COMMODITIES_BASE);
+    for (const b of bodies) for (const s of b.siteRows) for (const c of rowCommodities(s)) all.add(c);
+    return [...all].filter(Boolean).sort((a, b) => a.localeCompare(b));
+  }, [bodies]);
 
   // Every commodity any signal in scope holds, with how many signals hold it — the find chips.
   const commodityCounts = useMemo(() => {
@@ -1025,6 +1242,31 @@ export function SurfaceMiningPage() {
       .slice(0, 3);
   }, [visits, deposits, inScope]);
 
+  // Rigs per commodity at each signal — every deposit there counts, since they run together.
+  const rigsBySignal = useMemo(() => {
+    const m = new Map<string, Map<string, number>>();
+    for (const d of deposits) {
+      const c = canonicalName(d.commodity || Object.keys(d.commodities ?? {})[0] || '');
+      if (!c) continue;
+      const k = `${d.body}|${d.siteIndex ?? 'none'}`;
+      if (!m.has(k)) m.set(k, new Map());
+      const inner = m.get(k)!;
+      inner.set(c, (inner.get(c) ?? 0) + (d.rigs ?? 1));
+    }
+    return m;
+  }, [deposits]);
+  const scoreRow = useCallback(
+    (body: string, s: SiteRow) => rowScore(s, rigsBySignal.get(`${body}|${s.index}`)),
+    [rigsBySignal],
+  );
+  /** What the score is made of, for the tooltip — the bins that won, with their rig counts. */
+  const scoreDetail = useCallback((body: string, s: SiteRow) => {
+    const rigs = rigsBySignal.get(`${body}|${s.index}`);
+    return allocateRigs(rowCommodities(s), priceOf, (c) => rigs?.get(c))
+      .map((x) => `${x.commodity}${x.rigs > 1 ? ` ×${x.rigs} rigs` : ''} ${cr(x.value)}`)
+      .join(' + ');
+  }, [rigsBySignal]);
+
   const matRows = useMemo(() => {
     const held = rawHeld || {};
     const qy = matQuery.trim().toLowerCase();
@@ -1064,7 +1306,7 @@ export function SurfaceMiningPage() {
     <div className="p-4 space-y-5 max-w-[1400px]">
       <MiningHudCss />
       <datalist id="deposit-commodities">
-        {DEPOSIT_COMMODITIES.map((n) => <option key={n} value={n} />)}
+        {depositCommodities.map((n) => <option key={n} value={n} />)}
       </datalist>
 
       <SurfaceHero
@@ -1100,6 +1342,56 @@ export function SurfaceMiningPage() {
 
       {error && <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</div>}
       {note && <p className="text-xs text-amber-300">{note}</p>}
+
+      {/* ---- Working now: the map, hoisted, while you are on the ground at a signal ---- */}
+      {mapOnTop && hereRow && activeSite && (
+        <section className="edc-chamfer border border-sky-500/40 bg-card/70 px-4 py-3">
+          <div className="mb-2 flex flex-wrap items-center gap-3">
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-sky-300">Working now</div>
+              <div className="mt-0.5 text-sm font-semibold">
+                Signal {activeSite.index} on {short(hereRow.body, hereRow.system)}
+                <span className="ml-2 text-xs font-normal text-muted-foreground">{hereRow.system}</span>
+              </div>
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowRoute((v) => !v)}
+                title="Suggest a driving order over this signal's rig points, timed from the ground you have already driven"
+                className={`rounded border px-2 py-0.5 text-[11px] ${showRoute ? 'border-sky-400/60 bg-sky-500/15 text-sky-200' : 'border-white/15 text-slate-400 hover:border-sky-500/40'}`}
+              >
+                {String.fromCodePoint(0x1F6E3)} Route
+              </button>
+              {coverControls('')}
+              <button
+                type="button"
+                onClick={() => setMapWhere('tree')}
+                title="Send the map back down to the bodies list"
+                className="rounded border border-white/15 px-2 py-0.5 text-[11px] text-slate-400 hover:border-sky-500/40"
+              >
+                collapse
+              </button>
+            </div>
+          </div>
+          <SignalMapFor
+            body={hereRow} site={activeSite} deposits={deposits} track={summary?.track?.[hereRow.body] ?? []}
+            snap={snap} showRoute={showRoute} showCover={showCover}
+            groves={summary?.groves ?? []} pins={summary?.pins ?? []}
+            onSteer={(t) => setTarget({ ...t, body: hereRow.body })}
+          />
+        </section>
+      )}
+
+      {!mapOnTop && hereRow && activeSite && (
+        <button
+          type="button"
+          onClick={() => setMapWhere('auto')}
+          className="edc-chamfer border border-sky-500/30 bg-card/50 px-4 py-1.5 text-left text-[11px] text-sky-300/80 hover:border-sky-400/60"
+        >
+          {String.fromCodePoint(0x1F5FA)} Bring the map back up — Signal {activeSite.index} on {short(hereRow.body, hereRow.system)}
+        </button>
+      )}
 
       {/* ---- What you are looking at ---- */}
       {lock && (
@@ -1188,7 +1480,7 @@ export function SurfaceMiningPage() {
           <span className="mx-2 h-4 w-px bg-border" />
           <button
             type="button" onClick={() => setRankByValue((v) => !v)}
-            title="Sort signals by their three highest-priced expected commodities, one tonne each — three because the Rhino's refinery holds three. Prices are your best market this month, else the galactic average."
+            title="Sort signals by the three best commodities they can feed the refinery — three because it holds three commodities, each worth its price times the rigs you have confirmed running on it. Prices are your best market this month, else the galactic average."
             className={`rounded border px-2 py-0.5 ${rankByValue ? 'border-emerald-400/70 bg-emerald-500/20 text-emerald-100' : 'border-border text-muted-foreground hover:text-foreground'}`}
           >
             rank by expected value
@@ -1447,7 +1739,7 @@ export function SurfaceMiningPage() {
               // The signal rows to show: filtered by the find chips, ordered by number or by expected value.
               const rows = (findSet.size ? b.siteRows.filter(rowMatches) : b.siteRows)
                 .slice()
-                .sort((x, y) => (rankByValue ? (rowScore(y) - rowScore(x)) || (x.index - y.index) : x.index - y.index));
+                .sort((x, y) => (rankByValue ? (scoreRow(b.body, y) - scoreRow(b.body, x)) || (x.index - y.index) : x.index - y.index));
               const icyBody = /\b(icy|ice)\b/i.test(b.planetClass ?? '');
 
               return (
@@ -1531,10 +1823,10 @@ export function SurfaceMiningPage() {
                                       <span key={`l:${l.shipType ?? l.ship ?? '?'}`} className="ml-1.5 text-[11px] font-normal text-slate-300" title={`Landing ${l.score}/5 in ${l.ship ?? l.shipType ?? 'unknown hull'} (1 easy, 5 brutal)`}>{'🛬'}{l.score} {l.ship ?? l.shipType}{l.size ? ` ${l.size}` : ''}</span>
                                     ))}
                                     {s.ratings?.driving && (
-                                      <span className="ml-1.5 text-[11px] font-normal text-slate-300" title={`Driving ${s.ratings.driving.score}/5 (1 easy, 5 brutal)`}>{'🚗'}{s.ratings.driving.score}</span>
+                                      <span className="ml-1.5 text-[11px] font-normal text-slate-300" title={`Driving ${s.ratings.driving.score}/5 — ${DRIVING_SCALE[s.ratings.driving.score] ?? 'rated'}`}>{'🚗'}{s.ratings.driving.score}</span>
                                     )}
                                     {rankByValue && (
-                                      <span className="ml-2 text-[11px] font-normal tabular-nums text-emerald-300" title="Sum of galactic-average prices of the expected commodities — one deposit of each, one tonne each">{cr(rowScore(s))}</span>
+                                      <span className="ml-2 text-[11px] font-normal tabular-nums text-emerald-300" title={scoreDetail(b.body, s) || 'No priced commodity expected here yet'}>{cr(scoreRow(b.body, s))}</span>
                                     )}
                                   </td>
                                   <td className="px-3 py-2 text-xs">
@@ -1643,28 +1935,29 @@ export function SurfaceMiningPage() {
                                                 </span>
                                               ) : null}
                                           </span>
-                                          <RatingPicker value={landingNow} title="Landing difficulty in this hull — 1 easy, 5 brutal" onPick={(n) => rate(b, s.index, { landing: n })} />
+                                          <RatingPicker value={landingNow} scale={LANDING_SCALE} title="Landing difficulty in this hull — 1 easy, 5 brutal" onPick={(n) => rate(b, s.index, { landing: n })} />
                                           <span className="text-muted-foreground">Driving</span>
-                                          <RatingPicker value={s.ratings?.driving?.score ?? null} title="Driving difficulty once down — 1 easy, 5 brutal" onPick={(n) => rate(b, s.index, { driving: n })} />
-                                          <span className="text-[10px] text-muted-foreground/70">1 easy · 5 brutal</span>
+                                          <RatingPicker value={s.ratings?.driving?.score ?? null} scale={DRIVING_SCALE} title="Driving difficulty once down — topography, not gravity" onPick={(n) => rate(b, s.index, { driving: n })} />
+                                          <span className="text-[10px] text-muted-foreground/70" title="1 very flat · 2 flat with bumpy segments · 4 huge valleys">1 flat · 5 valleys</span>
+                                          <button
+                                            type="button"
+                                            onClick={() => setShowRoute((v) => !v)}
+                                            title="Suggest a driving order over the rig points still holding something, costed at this signal own measured pace"
+                                            className={`ml-auto rounded border px-2 py-0.5 text-[11px] ${showRoute ? 'border-sky-400/60 bg-sky-500/15 text-sky-200' : 'border-white/15 text-slate-400 hover:border-sky-500/40'}`}
+                                          >
+                                            {String.fromCodePoint(0x1F6E3)} Route
+                                          </button>
+                                          {coverControls('')}
                                         </div>
                                         {siteDeposits.length === 0 && siteMarks.length === 0 && (
                                           <div className="text-xs text-muted-foreground">Nothing placed at Signal {s.index} yet — a deposit appears here once you work it, or promote an F10 shot taken there.</div>
                                         )}
-                                        {siteDeposits.some((d) => d.lat != null) && (
-                                          <SignalMap
-                                            deposits={siteDeposits.filter((d) => d.lat != null && d.lon != null && !d.uncertain)}
-                                            track={summary?.track?.[b.body] ?? []}
-                                            landing={snap?.landing && snap.landing.body === b.body ? { lat: snap.landing.lat, lon: snap.landing.lon } : null}
-                                            live={snap?.body === b.body && snap.lat != null && snap.lon != null ? { lat: snap.lat, lon: snap.lon, heading: snap.heading ?? null } : null}
-                                            recall={s.recall ?? null}
-                                            target={snap?.target ?? null}
-                                            radius={b.radius ?? snap?.radius ?? null}
-                                            photoUrl={siteDeposits.find((d) => d.imageUrl)?.imageUrl ?? bodyDeposits.find((d) => d.imageUrl)?.imageUrl ?? null}
-                                            pois={[
-                                              ...(summary?.groves ?? []).filter((g) => g.body === b.body).map((g) => ({ id: g.id, lat: g.lat, lon: g.lon, label: g.label, kind: 'braintree' })),
-                                              ...(summary?.pins ?? []).filter((p) => p.body === b.body && p.kind !== 'braintree').map((p) => ({ id: p.id, lat: p.lat, lon: p.lon, label: p.label, kind: p.kind })),
-                                            ]}
+                                        {siteDeposits.some((d) => d.lat != null)
+                                          && !(mapOnTop && hereRow?.body === b.body && activeSite?.index === s.index) && (
+                                          <SignalMapFor
+                                            body={b} site={s} deposits={deposits} track={summary?.track?.[b.body] ?? []}
+                                            snap={snap} showRoute={showRoute} showCover={showCover}
+                                            groves={summary?.groves ?? []} pins={summary?.pins ?? []}
                                             onSteer={(t) => setTarget({ ...t, body: b.body })}
                                           />
                                         )}

@@ -35,6 +35,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { notePopulatedSystem } from '../radar/populatedStore.js';
 import {
   extractKnowledgeBaseFromEvents,
   readMarketJson,
@@ -375,6 +376,12 @@ function resolveCoords(ev, existing) {
 }
 
 function processPositionEvents(parsed, existing, patch, extraEvents) {
+  // Populated-systems upkeep from the commander's own journal — the same facts EDDN would relay,
+  // available even with the radar off. StarPos rides on FSDJump, Location and CarrierJump.
+  for (const ev of [...parsed.fsdJumpEvents, ...parsed.locationEvents, ...parsed.carrierJumpEvents]) {
+    if (!ev || !ev.StarSystem || !Array.isArray(ev.StarPos) || !(Number(ev.Population) > 0)) continue;
+    try { notePopulatedSystem({ name: ev.StarSystem, id64: ev.SystemAddress, pos: ev.StarPos, population: ev.Population, economy: ev.SystemEconomy_Localised || null, at: ev.timestamp }); } catch { /* best-effort */ }
+  }
   const updates = [];
   for (const ev of parsed.fsdJumpEvents) {
     updates.push({ source: 'FSDJump', systemName: ev.StarSystem, systemAddress: ev.SystemAddress, coordinates: resolveCoords(ev, existing), timestamp: ev.timestamp });
@@ -1206,6 +1213,20 @@ function applyDockToStationPatch(patch, existing, marketId, payload) {
     if (newStateHistory.length > DOCK_HISTORY_CAP) newStateHistory.shift();
   }
 
+  // A station can be renamed, and the market id is what stays the same. Keep the names it used to
+  // carry — the same way faction changes are kept — so a signal or a record naming the old station
+  // resolves to this one instead of standing up as a second entity. Construction-site names are
+  // the station's own earlier names too (Bawa Station → Atmo Sky Cairn Asc, same id).
+  const nextName = payload.stationName || null;
+  const prevName = (existingSt && existingSt.stationName) || null;
+  const nameChanged = !!(prevName && nextName && prevName !== nextName
+    && !/\$EXT_PANEL_ColonisationShip|Construction Site/i.test(nextName));
+  const newNameHistory = [...((existingSt && existingSt.nameHistory) || [])];
+  if (nameChanged && !newNameHistory.some((h) => h && h.name === prevName)) {
+    newNameHistory.push({ name: prevName, changedAt: now });
+    if (newNameHistory.length > DOCK_HISTORY_CAP) newNameHistory.shift();
+  }
+
   const base = existingSt || {
     stationName: payload.stationName,
     stationType: '',
@@ -1231,6 +1252,7 @@ function applyDockToStationPatch(patch, existing, marketId, payload) {
     factionState: currentState,
     factionHistory: newFactionHistory,
     stateHistory: newStateHistory,
+    nameHistory: newNameHistory,
     // Always overwrite services/economies with the latest dock — game state wins
     // over any stale cached value. Only overwrite when payload supplied them
     // (Docked has them, FSS-only KB events do not).

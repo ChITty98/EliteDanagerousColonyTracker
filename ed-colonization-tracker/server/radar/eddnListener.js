@@ -24,6 +24,7 @@ import {
 import { isColonisableAtmosphere, ICY_SUBTYPES } from '../journal/scorer.js';
 import { pushRadarBeat } from '../ai/copilotRadar.js';
 import { noteColonisationEvent } from '../chains/chainWatch.js';
+import { notePopulatedSystem } from './populatedStore.js';
 
 const EDDN_HOST = 'eddn.edcd.io';
 const EDDN_PORT = 9500;
@@ -115,6 +116,12 @@ function onRaw(body) {
   const pos = Array.isArray(m.StarPos) ? m.StarPos : null;
   const inRad = !!(pos && inRadius(pos));
   noteEddn(inRad);
+
+  // Populated-systems upkeep — every arrival any reporting pilot makes (own included: the layer
+  // is a map, not a rival count) carries StarPos + Population. The store gates to its bubble.
+  if (isJournal && sys && pos && Number(m.Population) > 0 && /^(FSDJump|Location|CarrierJump)$/.test(String(m.event || ''))) {
+    try { notePopulatedSystem({ name: sys, id64: m.SystemAddress, pos, population: m.Population, economy: m.SystemEconomy_Localised || null, at: m.timestamp }); } catch { /* never break the feed */ }
+  }
 
   // Chain Watch feeds GALAXY-WIDE — colonization events are rare and precious, and the
   // 200-ly gate below is a radar concern, not a frontier-tracking one. Own events still

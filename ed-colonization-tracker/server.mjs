@@ -15,7 +15,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { exec, spawnSync } from 'node:child_process';
+import { exec, execFile, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import {
   resolveJournalDir,
@@ -47,8 +47,10 @@ import {
 import { friendlyShip, padSizeFor } from './server/journal/extractor.js';
 import { initMarketMeans, bestSellFromSnapshots } from './server/journal/marketMeans.js';
 import { initMarketHistory, backfillSales, sampleKeys, needsSample, recordArdentSample, historyStats } from './server/journal/marketHistory.js';
-import { buildSellPlan, MAX_REACH_LY } from './server/journal/sellPlan.js';
-import { initCarrierLedger, ensureCarrierLedger, reconcileCarrierMarket, carrierCargoRecord, setCarrierBaseline } from './server/journal/carrierLedger.js';
+import { buildSellPlan, buildSellAt, sellPlanKey, MAX_REACH_LY } from './server/journal/sellPlan.js';
+import { initPopulatedStore, getPopulatedSystems, flushPopulatedStore } from './server/radar/populatedStore.js';
+import { readJournalEvents, buildCommanderLog, buildJourney, searchCommanderLog } from './server/journal/commanderLog.js';
+import { initCarrierLedger, ensureCarrierLedger, reconcileCarrierMarket, carrierCargoRecord, setCarrierBaseline, setCarrierBaselines } from './server/journal/carrierLedger.js';
 import {
   findCommodityByJournalName,
   findCommodityByDisplayName,
@@ -76,7 +78,7 @@ import {
   initSurfaceMining, getSurfaceSummary, backfillFromJournals as backfillSurfaceMining, markDeposit,
   recordSighting, finalizeSurfaceMining, getSurfaceSnapshot, setCurrentSite, recordSiteCount, bodyNameFromLedger,
   isRecordedScreenshot, retractSighting, recordRating, setHullSize, hullSizeFor, setNavTarget, clearNavTarget,
-  addPin, removePin,
+  addPin, removePin, depotShotFiles as surfaceDepotShotFiles,
 } from './server/journal/surfaceMining.js';
 // The nav lock names a body by BodyID only; this turns "Body": 14 into "1 a" for the hero band.
 import { resolveBodyNameById } from './server/journal/processors.js';
@@ -153,6 +155,7 @@ const JOURNAL_STATS_FILE = path.join(APP_DIR, 'journal-stats.json');
 const CHAIN_WATCH_FILE = path.join(APP_DIR, 'chain-watch.json');
 let journalStatsScanInFlight = false;
 const GALLERY_DIR = path.join(APP_DIR, 'colony-images');
+const sellRefreshes = new Map(); // sell-plan key -> in-flight background build (fast first paint, then fill)
 const GALLERY_META = path.join(APP_DIR, 'colony-gallery.json');
 
 // Ensure gallery directory exists
@@ -259,11 +262,13 @@ function adoptOrphanSurfaceShots(journalDir) {
 /**
  * Mark a gallery image as a UTILITY shot — taken to document something (a mining deposit's HUD
  * panel), not as a picture of the place. Representative thumbnails pick the first non-utility
- * image, so a photo of a rock face never becomes a system's hero shot. Set when an F10 marker is
- * promoted to a deposit, because that is the moment its purpose is known; at capture time the
- * same keypress might equally have been a Sights postcard.
+ * image, so a photo of a rock face never becomes a system's hero shot. Set as soon as an F10 shot
+ * is attached to a marker: a shot of a deposit panel is documentation whether or not the deposit
+ * was ever worked, and a scanned-and-abandoned signal leaves the same HUD picture behind.
+ * Re-encoding happens here for a WORKED deposit's shot; since 2026-09-06 every other gallery BMP
+ * is converted too (on arrival, and at startup for what is already on disk).
  */
-function flagGalleryUtility(imageId) {
+function flagGalleryUtility(imageId, { convert = true } = {}) {
   if (!imageId) return false;
   const meta = readGalleryMeta();
   let hit = false;
@@ -273,9 +278,9 @@ function flagGalleryUtility(imageId) {
     for (const e of arr) {
       if (!e || e.id !== imageId) continue;
       if (!e.utility) { e.utility = true; hit = true; }
-      // A deposit photo is documentation, not a postcard: re-encode the 32MB F10 BMP as JPEG.
+      // A worked deposit's photo is documentation for good: re-encode the 32MB F10 BMP as JPEG.
       // Runs for entries flagged earlier but still on .bmp too, so nothing stays huge by accident.
-      if (convertGalleryImageToJpeg(e)) hit = true;
+      if (convert && convertGalleryImageToJpeg(e)) hit = true;
     }
   }
   if (hit) writeGalleryMeta(meta);
@@ -283,21 +288,17 @@ function flagGalleryUtility(imageId) {
 }
 
 /**
- * Re-encode a gallery BMP as JPEG (quality 90) in place. F10 always writes BMP — 31.6MB per shot at
- * 3440x1440 — and deposit-panel shots are taken by the dozen. The commander's decision: Sights
- * postcards stay BMP; a shot is converted ONLY once it is promoted to a deposit (this is called
- * from flagGalleryUtility and nowhere else). The original in ED_Pictures is never touched; only the
- * gallery's copy changes. Uses the same PowerShell/System.Drawing path the voice code already
- * spawns, so it needs no new dependency inside the SEA exe.
+ * Re-encode a gallery BMP as JPEG (quality 90) in place. F10 always writes BMP — 31.6 MB per shot
+ * at 3440x1440. Every gallery copy is converted: deposit shots when promoted (flagGalleryUtility),
+ * postcards on arrival (recordGameScreenshot) and anything still on disk at startup
+ * (convertAllGalleryBmps) — the commander's call of 2026-09-06, reversing the earlier 'postcards
+ * stay BMP' (33 of them had grown to a gigabyte). The original in ED_Pictures is never touched;
+ * only the gallery's copy changes. Uses the same PowerShell/System.Drawing path the voice code
+ * already spawns, so it needs no new dependency inside the SEA exe. Measured on this machine:
+ * 31.6 MB → 1.2 MB in 0.7 s.
  */
-function convertGalleryImageToJpeg(entry) {
-  if (!entry || !entry.url || !/\.bmp$/i.test(entry.url)) return false;
-  const base = path.basename(entry.url);
-  const src = path.join(GALLERY_DIR, base);
-  if (!fs.existsSync(src)) return false;
-  const dstName = base.replace(/\.bmp$/i, '.jpg');
-  const dst = path.join(GALLERY_DIR, dstName);
-  const psq = (s) => `'${String(s).replace(/'/g, "''")}'`;
+function jpegConvertArgs(src, dst) {
+  const psq = (v) => `'${String(v).replace(/'/g, "''")}'`;
   const script = [
     'Add-Type -AssemblyName System.Drawing;',
     `$img=[System.Drawing.Image]::FromFile(${psq(src)});`,
@@ -306,15 +307,24 @@ function convertGalleryImageToJpeg(entry) {
     '$p.Param[0]=New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality,[long]90);',
     `$img.Save(${psq(dst)},$enc,$p); $img.Dispose();`,
   ].join(' ');
-  let r;
-  try {
-    r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: 30000, windowsHide: true });
-  } catch (e) {
-    console.warn('[Gallery] JPEG conversion failed to start:', e && e.message);
-    return false;
-  }
-  if (r.status !== 0 || !fs.existsSync(dst) || fs.statSync(dst).size < 1024) {
-    console.warn(`[Gallery] JPEG conversion failed for ${base}${r.stderr ? `: ${String(r.stderr).slice(0, 200)}` : ''}`);
+  return ['-NoProfile', '-NonInteractive', '-Command', script];
+}
+
+/** The gallery file pair for an entry still on .bmp, or null. */
+function bmpPairFor(entry) {
+  if (!entry || !entry.url || !/\.bmp$/i.test(entry.url)) return null;
+  const base = path.basename(entry.url);
+  const src = path.join(GALLERY_DIR, base);
+  if (!fs.existsSync(src)) return null;
+  const dstName = base.replace(/\.bmp$/i, '.jpg');
+  return { base, src, dstName, dst: path.join(GALLERY_DIR, dstName) };
+}
+
+/** After the encoder ran: verify the JPEG, point the entry at it, drop the BMP. */
+function finishJpegConversion(entry, pair, ok, stderr) {
+  const { base, src, dstName, dst } = pair;
+  if (!ok || !fs.existsSync(dst) || fs.statSync(dst).size < 1024) {
+    console.warn(`[Gallery] JPEG conversion failed for ${base}${stderr ? `: ${String(stderr).slice(0, 200)}` : ''}`);
     try { if (fs.existsSync(dst)) fs.unlinkSync(dst); } catch { /* ignore */ }
     return false;
   }
@@ -323,6 +333,78 @@ function convertGalleryImageToJpeg(entry) {
   try { fs.unlinkSync(src); } catch { /* keep both if the delete fails; the meta already points at the jpg */ }
   console.log(`[Gallery] ${base} → ${dstName} (${(before / 1048576).toFixed(1)}MB → ${(fs.statSync(dst).size / 1024).toFixed(0)}KB)`);
   return true;
+}
+
+function convertGalleryImageToJpeg(entry) {
+  const pair = bmpPairFor(entry);
+  if (!pair) return false;
+  let r;
+  try {
+    r = spawnSync('powershell.exe', jpegConvertArgs(pair.src, pair.dst), { timeout: 30000, windowsHide: true });
+  } catch (e) {
+    console.warn('[Gallery] JPEG conversion failed to start:', e && e.message);
+    return false;
+  }
+  return finishJpegConversion(entry, pair, r.status === 0, r.stderr);
+}
+
+/** Same conversion without blocking the server — the backfill and the on-arrival path use this. */
+function convertGalleryImageToJpegAsync(entry) {
+  const pair = bmpPairFor(entry);
+  if (!pair) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    execFile('powershell.exe', jpegConvertArgs(pair.src, pair.dst), { timeout: 60000, windowsHide: true }, (err, _stdout, stderr) => {
+      resolve(finishJpegConversion(entry, pair, !err, stderr || (err && err.message)));
+    });
+  });
+}
+
+/** Convert one gallery entry by id, re-reading the meta around the encode so no other write is lost. */
+async function convertGalleryEntryById(imageId) {
+  const meta = readGalleryMeta();
+  for (const arr of Object.values(meta)) {
+    if (!Array.isArray(arr)) continue;
+    const e = arr.find((x) => x && x.id === imageId);
+    if (!e) continue;
+    if (!/\.bmp$/i.test(e.url || '')) return false;
+    const ok = await convertGalleryImageToJpegAsync(e);
+    if (ok) {
+      // The meta may have been rewritten while the encoder ran; apply the one change to a fresh copy.
+      const fresh = readGalleryMeta();
+      for (const fa of Object.values(fresh)) {
+        if (!Array.isArray(fa)) continue;
+        const fe = fa.find((x) => x && x.id === imageId);
+        if (fe) fe.url = e.url;
+      }
+      writeGalleryMeta(fresh);
+    }
+    return ok;
+  }
+  return false;
+}
+
+/**
+ * Every gallery entry still on .bmp, converted one at a time in the background. Runs once after
+ * boot and on POST /api/gallery/convert. A second call while one is running just reports it.
+ */
+let galleryBmpBackfill = null; // { startedAt, converted, failed, total }
+async function convertAllGalleryBmps() {
+  if (galleryBmpBackfill && !galleryBmpBackfill.done) return { ...galleryBmpBackfill, running: true };
+  const ids = [];
+  for (const arr of Object.values(readGalleryMeta())) {
+    if (!Array.isArray(arr)) continue;
+    for (const e of arr) if (e && e.id && /\.bmp$/i.test(e.url || '')) ids.push(e.id);
+  }
+  galleryBmpBackfill = { startedAt: new Date().toISOString(), converted: 0, failed: 0, total: ids.length, done: ids.length === 0 };
+  if (!ids.length) return { ...galleryBmpBackfill };
+  console.log(`[Gallery] ${ids.length} BMP${ids.length === 1 ? '' : 's'} in the gallery — converting to JPEG in the background`);
+  for (const id of ids) {
+    try { (await convertGalleryEntryById(id)) ? galleryBmpBackfill.converted++ : galleryBmpBackfill.failed++; }
+    catch (e) { galleryBmpBackfill.failed++; console.warn('[Gallery] convert error:', e && e.message); }
+  }
+  galleryBmpBackfill.done = true;
+  console.log(`[Gallery] BMP backfill done — ${galleryBmpBackfill.converted} converted, ${galleryBmpBackfill.failed} failed`);
+  return { ...galleryBmpBackfill };
 }
 
 /** Move an image's meta entry between gallery keys (used when a buffered F10 shot
@@ -344,9 +426,9 @@ function moveGalleryImage(imageId, fromKey, toKey) {
  * In-game F10 Screenshot journal event → copy the BMP into the gallery and attach.
  * If a sighting from the same system was recorded within the window, the shot files
  * under the SIGHTING's gallery key; otherwise under the key derived from the event's
- * own System/Body (still findable on that system's page). BMPs are stored as-is —
- * browsers render them natively, and converting would drag an image library into
- * the SEA exe. (~10-30 MB each; noted in Settings copy.)
+ * own System/Body (still findable on that system's page). The copy is re-encoded to JPEG right
+ * after it lands (31.6 MB → ~1.2 MB); the .bmp URL announced first keeps resolving because the
+ * image route falls back to the .jpg sibling.
  */
 function recordGameScreenshot(ev) {
   const basename = path.basename(String(ev.Filename || '').replace(/\\/g, '/'));
@@ -393,6 +475,7 @@ function recordGameScreenshot(ev) {
   while (recentGameShots.length > 20) recentGameShots.shift();
   console.log(`[Sightings] F10 shot ${basename} → ${key}${match ? ' (attached to sighting)' : ''}`);
   broadcastEvent({ type: 'screenshot_saved', system: ev.System, body: ev.Body || null, url, attached: !!match, timestamp: ev.timestamp });
+  if (ext === 'bmp') convertGalleryEntryById(id).catch((e) => console.warn('[Gallery] on-arrival convert:', e && e.message));
 }
 
 let stateWriteTimer = null;
@@ -447,6 +530,38 @@ setInterval(() => {
   broadcastEvent({ type: 'heartbeat', timestamp: new Date().toISOString() });
 }, 30000);
 
+// The log is a full journal replay (~1 s for 585 files); cached until a journal file changes,
+// and never more often than once a minute while one is being written.
+let logCache = null;
+function commanderLogCached(journalDir, state) {
+  let stamp = '';
+  try {
+    const files = fs.readdirSync(journalDir).filter((f) => /^Journal.*\.log$/i.test(f));
+    let newest = 0;
+    for (const f of files) { try { newest = Math.max(newest, fs.statSync(path.join(journalDir, f)).mtimeMs); } catch { /* skip */ } }
+    stamp = `${files.length}|${Math.floor(newest / 60_000)}`;
+  } catch { stamp = 'none'; }
+  if (logCache && logCache.stamp === stamp && Date.now() - logCache.builtMs < 10 * 60_000) return logCache;
+  let gallery = {};
+  try { gallery = readGalleryMeta(); } catch { gallery = {}; }
+  // The Rhino's work is in the app's own surface ledger, not the journal — without it a night of
+  // mining reads as an empty sitting.
+  let surfaceVisits = [];
+  try { surfaceVisits = getSurfaceSummary(() => 0, null, null).visits || []; } catch { surfaceVisits = []; }
+  // Ring mining is the same: the journal says what was refined, the rock log says in which ring.
+  let rocks = [];
+  try { rocks = readRocks() || []; } catch { rocks = []; }
+  // Every F10 shot the mining log claims is a picture of a deposit panel, not of the place. The
+  // utility flag says the same thing, but only for markers that have been read back at least once —
+  // the filenames are the durable answer, and they keep HUD shots off the log's photo strips.
+  let depotShots = new Set();
+  try { depotShots = surfaceDepotShotFiles(); } catch { depotShots = new Set(); }
+  const events = readJournalEvents(journalDir);
+  const log = buildCommanderLog({ events, state, gallery, surfaceVisits, rocks, depotShots });
+  logCache = { stamp, builtMs: Date.now(), at: new Date().toISOString(), events, log };
+  return logCache;
+}
+
 function readStateFile() {
   try {
     if (fs.existsSync(STATE_FILE)) {
@@ -485,9 +600,60 @@ const APPEND_ONLY_KEYS = new Set([
   'materialInventory',        // ship engineering mats — derived from journals, hard to re-acquire
   'journalScan',              // squadron name/rank + ship usage (expensive journal scan)
   'dismissedTasks',           // "I am never doing that" — permanent by design, no un-dismiss path
+  // Same shape: nothing in the UI un-hides an installation, so a __remove here is never intent —
+  // it is a stale tab diffing an empty store against a baseline that had entries. The client's
+  // mass-wipe guard skips keys with fewer than 6 entries as noise, so small hide lists were being
+  // silently emptied on every race; every backup since 5 Aug had this at zero.
+  'hiddenInstallations',
   'populationOverrides',      // user-edited system populations
   'stationDistOverrides',     // user-edited station distances
 ]);
+
+/**
+ * Rebuild every station's former-name list from the journals, at boot, without being asked.
+ * A station keeps its market id through a rename, but an FSS signal records only a name — so
+ * without this the same station lists once per name it has ever had (Sassoon Vision, Rao Refinery
+ * and Kalian Port are one market id). Sync All does the same rebuild, but nobody should have to run
+ * one to stop seeing a station three times. Idempotent: re-running only ever adds names.
+ */
+function backfillStationNameHistory(journalDir) {
+  try {
+    const dh = extractDockHistory(journalDir);
+    const existing = (pendingState ?? readStateFile()).knownStations || {};
+    const upsert = {};
+    let renamed = 0;
+    for (const [mid, d] of dh) {
+      const prior = existing[String(mid)];
+      if (!prior) continue;
+      const merged = mergeNameHistory(prior.nameHistory, d.nameHistory);
+      const before = (prior.nameHistory || []).map((h) => h.name).join('|');
+      if (merged.map((h) => h.name).join('|') === before) continue;
+      // The dossier's name is whatever the last non-placeholder dock called it; the rest are history.
+      upsert[String(mid)] = Object.assign({}, prior, { nameHistory: merged, stationName: d.stationName || prior.stationName });
+      if (merged.length) renamed += 1;
+    }
+    const n = Object.keys(upsert).length;
+    if (n === 0) { console.log('[NameHistory] up to date'); return; }
+    applyStatePatch({ knownStations: { __upsert: upsert } });
+    console.log(`[NameHistory] rebuilt from journals — ${renamed} station(s) carry a former name (${n} record(s) updated)`);
+  } catch (e) {
+    console.error('[NameHistory] backfill failed:', e.message);
+  }
+}
+
+/**
+ * Union of two former-name lists, oldest first, deduped by name. The dossier's own record and the
+ * journal replay can each know a name the other missed — the client writes one on every dock, the
+ * extractor rebuilds the whole chain — and losing either would let a dead name resurface.
+ */
+function mergeNameHistory(prior, fresh) {
+  const out = [];
+  for (const h of [...(Array.isArray(prior) ? prior : []), ...(Array.isArray(fresh) ? fresh : [])]) {
+    if (!h || !h.name || out.some((x) => x.name === h.name)) continue;
+    out.push({ name: h.name, changedAt: h.changedAt || null });
+  }
+  return out.sort((a, b) => String(a.changedAt || '').localeCompare(String(b.changedAt || ''))).slice(-10);
+}
 
 // Sparse per-key merge. Incoming values can be marker objects with:
 //   { __upsert: {...}, __remove: [...], __idKey?: string } — map / array-by-id
@@ -1094,7 +1260,11 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const incoming = JSON.parse(body);
-        const merged = mergeStatePatch(readStateFile(), incoming);
+        // Read pendingState first, exactly as applyStatePatch does. A client PATCH landing inside
+        // the 500ms write debounce would otherwise merge onto stale DISK state and then replace
+        // pendingState wholesale — discarding whatever the watcher wrote in that window. Same
+        // class as the "lost market" bug the watcher path was already fixed for.
+        const merged = mergeStatePatch(pendingState ?? readStateFile(), incoming);
         writeStateDebounced(merged);
         // Broadcast state_updated to all other devices so they re-fetch
         const sourceIp = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString();
@@ -1188,6 +1358,9 @@ const server = http.createServer((req, res) => {
               merged.stateHistory = dh.stateHistory;
               // Latest non-ephemeral name from dock history
               merged.stationName = dh.stationName;
+              // ...and every name this market id has shed, so nothing that still says
+              // "Sassoon Vision" or "Boyle Mines" gets listed as a station of its own.
+              merged.nameHistory = mergeNameHistory(prior && prior.nameHistory, dh.nameHistory);
             } else if (prior) {
               // No dock history entry (rare — e.g. this station's only docks
               // were permanent ephemerals). Keep prior dossier fields.
@@ -1197,6 +1370,7 @@ const server = http.createServer((req, res) => {
               merged.factionHistory = prior.factionHistory;
               merged.stateHistory = prior.stateHistory;
               merged.influenceHistory = prior.influenceHistory;
+              merged.nameHistory = prior.nameHistory;
             }
             // Protect against a KB-sourced construction placeholder clobbering a
             // resolved name
@@ -1790,6 +1964,17 @@ const server = http.createServer((req, res) => {
         const settings = existing.settings || {};
         if (!settings.myFleetCarrier) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'no carrier set in Settings' })); return; }
         try { ensureCarrierLedger({ journalDir: resolveJournalDir(settings.journalDirOverride), carrierId: settings.myFleetCarrierMarketId || null, callsign: settings.myFleetCarrier }); } catch { /* best-effort */ }
+        // A whole reconcile in one request, or a single commodity.
+        if (input.counts && typeof input.counts === 'object') {
+          const summary = setCarrierBaselines(input.counts, { zeroRest: !!input.zeroRest });
+          const record = carrierCargoRecord();
+          writeStateDebounced(mergeStatePatch(existing, { carrierCargo: { __upsert: { [settings.myFleetCarrier]: record } } }));
+          broadcastEvent({ type: 'state_updated', source: 'carrier-baseline', timestamp: new Date().toISOString() });
+          console.log(`[CarrierLedger] reconciled: ${summary.applied} set${summary.zeroed.length ? `, ${summary.zeroed.length} cleared` : ''}${summary.failed.length ? `, ${summary.failed.length} unrecognised` : ''}`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...summary, ledger: record.ledger }));
+          return;
+        }
         const item = setCarrierBaseline(input.commodity, input.tonnes, new Date().toISOString(), input.name || null);
         if (!item) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'commodity and a whole number of tonnes (0–25000) required' })); return; }
         const record = carrierCargoRecord();
@@ -1806,7 +1991,78 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Commander's Log — every sitting and every weighted event, from the journals, deterministic.
+  // Windowed: the page asks for a span (the whole history is ~1.2 MB, too much for an iPad on
+  // every load), and always gets the all-time milestones, which are small. The journey adds jump
+  // positions and pins for the map. Rebuilt only when a journal file changes.
+  if ((pathname === '/api/commander-log' || pathname === '/api/commander-log/journey') && req.method === 'GET') {
+    try {
+      const existing = readStateFile();
+      const journalDir = resolveJournalDir((existing.settings || {}).journalDirOverride);
+      const params = new URL(req.url, 'http://localhost').searchParams;
+      const days = Math.max(0, Number(params.get('days')) || 0);
+      const since = days > 0 ? Date.now() - days * 86400e3 : 0;
+      const built = commanderLogCached(journalDir, existing);
+      if (pathname === '/api/commander-log/journey') {
+        const journey = buildJourney(built.events, built.log, { minWeight: params.get('min') || 'major', sinceMs: since });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ generatedAt: built.at, ...journey }));
+        return;
+      }
+      // A search covers the whole history, not the window — the point of asking is usually "when
+      // was the first time", and that is always outside the last thirty days.
+      const q = params.get('q');
+      if (q && q.trim()) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ generatedAt: built.at, home: built.log.home, search: searchCommanderLog(built.log, q) }));
+        return;
+      }
+      const all = built.log.events;
+      const inWindow = (t) => !since || Date.parse(t) >= since;
+      const sittings = built.log.sittings.filter((s) => inWindow(s.startedAt));
+      // Milestones are the spine of the past: every huge event, plus major ones outside the window
+      // so the older chapters still have their called-out moments without shipping everything.
+      const milestones = all.filter((e) => e.weight === 'huge' || (e.weight === 'major' && !inWindow(e.at)));
+      const byKind = {}; const byWeight = {};
+      for (const e of all) { byKind[e.kind] = (byKind[e.kind] || 0) + 1; byWeight[e.weight] = (byWeight[e.weight] || 0) + 1; }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        generatedAt: built.at, days, home: built.log.home,
+        fleet: built.log.fleet, fleetAt: built.log.fleetAt, rank: built.log.rank,
+        sittings, milestones,
+        totals: {
+          sittings: built.log.sittings.length, events: all.length, byKind, byWeight,
+          first: built.log.sittings.length ? built.log.sittings[built.log.sittings.length - 1].startedAt : null,
+          last: built.log.sittings.length ? built.log.sittings[0].startedAt : null,
+        },
+      }));
+    } catch (e) {
+      console.error('[CommanderLog] failed:', e);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message || String(e) }));
+    }
+    return;
+  }
+
   // Sell Cargo — hold + carrier priced here / locally / across the galaxy, trade nearby, history.
+  // Sell at ONE system: everything held, priced at the best station there — one cached Ardent call.
+  if (pathname === '/api/sell/at' && req.method === 'GET') {
+    (async () => {
+      try {
+        const existing = readStateFile();
+        const journalDir = resolveJournalDir((existing.settings || {}).journalDirOverride);
+        const system = new URL(req.url, 'http://localhost').searchParams.get('system') || '';
+        const out = await buildSellAt({ state: existing, journalDir, system });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(out));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message || String(e) }));
+      }
+    })();
+    return;
+  }
+
   if (pathname === '/api/sell/plan' && req.method === 'GET') {
     (async () => {
       try {
@@ -1814,13 +2070,27 @@ const server = http.createServer((req, res) => {
         const journalDir = resolveJournalDir((existing.settings || {}).journalDirOverride);
         const params = new URL(req.url, 'http://localhost').searchParams;
         const range = Math.min(500, Math.max(5, Number(params.get('range')) || 50));
+        const fast = params.get('fast') === '1';
         let searched = [];
         try { searched = JSON.parse(params.get('searched') || '[]'); } catch { searched = []; }
         try { backfillSales(journalDir); } catch { /* best-effort */ }
-        const plan = await buildSellPlan({
+        const opts = {
           state: existing, journalDir, rangeLy: range,
           searched: Array.isArray(searched) ? searched.slice(0, 20) : [],
-        });
+        };
+        const plan = await buildSellPlan({ ...opts, fast });
+        // A partial fast plan: finish it in the background, once per distinct request, and tell every
+        // page when the complete one is cached so it can refetch (the fast path then returns it whole).
+        if (fast && plan.partial) {
+          const key = sellPlanKey(opts);
+          if (!sellRefreshes.has(key)) {
+            const job = buildSellPlan(opts)
+              .then(() => broadcastEvent({ type: 'sell_plan_updated', timestamp: new Date().toISOString() }))
+              .catch((e) => console.warn('[Sell] background plan failed:', e && e.message))
+              .finally(() => sellRefreshes.delete(key));
+            sellRefreshes.set(key, job);
+          }
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(plan));
       } catch (e) {
@@ -1875,10 +2145,11 @@ const server = http.createServer((req, res) => {
           if (Number.isFinite(at)) hit = entries.find((e) => Math.abs(Date.parse(e.addedAt) - at) <= 120000) || null;
         }
         if (!hit) return m;
-        // A photo inside a WORKED deposit is deposit documentation by construction — it sits within
-        // 300m of a rig you emptied. Flag it utility so it stays out of the place galleries, the
-        // same as a promoted marker. Idempotent, so repeating it on every read costs nothing.
-        if ((m.tonnes || 0) > 0 && (!hit.utility || /\.bmp$/i.test(hit.url || ''))) flagGalleryUtility(hit.id);
+        // Any photo attached to a marker is deposit documentation by construction — the HUD panel
+        // is why the key was pressed. Flag it so it stays out of the place galleries and the log.
+        // A WORKED deposit's shot is also re-encoded; a scanned-and-left one keeps its BMP.
+        const worked = (m.tonnes || 0) > 0;
+        if (!hit.utility || (worked && /\.bmp$/i.test(hit.url || ''))) flagGalleryUtility(hit.id, { convert: worked });
         return { ...m, imageUrl: hit.url, imageId: hit.id };
       };
       summary.marks = (summary.marks || []).map(attachImage);
@@ -2812,10 +3083,26 @@ const server = http.createServer((req, res) => {
   }
 
   // Gallery API: GET /api/gallery — returns metadata
+  // The Map's Populated layer — the seeded + live-updated set, its own file beside colony-data.json.
+  if (pathname === '/api/populated-systems' && req.method === 'GET') {
+    flushPopulatedStore();
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
+    res.end(JSON.stringify(getPopulatedSystems()));
+    return;
+  }
+
   if (pathname === '/api/gallery' && req.method === 'GET') {
     const meta = readGalleryMeta();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(meta));
+    return;
+  }
+
+  // Gallery API: POST /api/gallery/convert — re-encode every BMP still in the gallery (background)
+  if (pathname === '/api/gallery/convert' && req.method === 'POST') {
+    convertAllGalleryBmps().catch((e) => console.warn('[Gallery] backfill:', e && e.message));
+    res.writeHead(202, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(galleryBmpBackfill || { total: 0 }));
     return;
   }
 
@@ -2875,7 +3162,10 @@ const server = http.createServer((req, res) => {
 
   // Serve gallery images (no token needed — like static files)
   if (pathname.startsWith('/gallery-images/')) {
-    const filename = path.basename(pathname.slice('/gallery-images/'.length));
+    const requested = path.basename(pathname.slice('/gallery-images/'.length));
+    // A BMP converted since the page loaded is served as its JPEG — the URL a client holds stays good.
+    const jpgSibling = /\.bmp$/i.test(requested) ? requested.replace(/\.bmp$/i, '.jpg') : null;
+    const filename = !fs.existsSync(path.join(GALLERY_DIR, requested)) && jpgSibling && fs.existsSync(path.join(GALLERY_DIR, jpgSibling)) ? jpgSibling : requested;
     const filePath = path.join(GALLERY_DIR, filename);
     fs.readFile(filePath, (err, data) => {
       if (err) { res.writeHead(404); res.end('Not found'); return; }
@@ -3189,6 +3479,11 @@ server.listen(PORT, '0.0.0.0', () => {
     // place a surface position exists (never archived, so it must be sampled live).
     initSurfaceMining(APP_DIR, jd);
     initMarketMeans(APP_DIR);
+    // The Map's Populated layer: seeded from the Spansh regional dump, kept current from the stream.
+    { const p = initPopulatedStore(APP_DIR); console.log(`[Populated] ${p.count} systems on file${p.count ? '' : ' — run scripts/gen-populated-systems.mjs to seed'}`); }
+    backfillStationNameHistory(jd);
+    // Gallery BMPs → JPEG, one at a time, once the boot work is out of the way.
+    setTimeout(() => { convertAllGalleryBmps().catch((e) => console.warn('[Gallery] backfill:', e && e.message)); }, 20_000);
 // Carrier cargo ledger beside the exe: balances rebuilt from the file now, journals replayed on the
 // first companion-file tick (that is where the journal dir and the carrier's identity are known).
 {

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { rigValue } from '@/features/surface-mining/rigValue';
 import { findCommodityPrice } from '@/data/commodityPrices';
 import { Link } from 'react-router-dom';
 import { useAppStore } from '@/store';
@@ -343,12 +344,14 @@ export function ArchitectDomainPage() {
   // (one deposit of each commodity per signal, at galactic average). Same source as the
   // Surface Mining page.
   interface SurfaceGrove { body: string; system: string | null; label?: string | null; source?: string; harvest?: { units: number } | null }
+  interface SurfaceDeposit { body: string; siteIndex?: number | null; commodity?: string | null; rigs?: number | null }
   interface SurfaceBodyRow {
     body: string; system: string | null; sitesKnown: number | null; sitesManual?: boolean;
     siteRows: { index: number; expected: string[]; commodities: Record<string, number> }[];
     drive?: { highest: { alt: number; how: string } | null } | null;
   }
   const [surfaceBodies, setSurfaceBodies] = useState<SurfaceBodyRow[]>([]);
+  const [surfaceDeposits, setSurfaceDeposits] = useState<SurfaceDeposit[]>([]);
   useEffect(() => {
     let t: string | null = null;
     try { t = sessionStorage.getItem('colony-token') || localStorage.getItem('colony-token'); } catch { /* no storage */ }
@@ -357,6 +360,7 @@ export function ArchitectDomainPage() {
       .then((d) => {
         if (d && Array.isArray(d.bodies)) setSurfaceBodies(d.bodies as SurfaceBodyRow[]);
         if (d && Array.isArray(d.groves)) setSurfaceGroves(d.groves as SurfaceGrove[]);
+        if (d && Array.isArray(d.deposits)) setSurfaceDeposits(d.deposits as SurfaceDeposit[]);
       })
       .catch(() => { /* no records, nothing else changes */ });
   }, []);
@@ -373,15 +377,25 @@ export function ArchitectDomainPage() {
     }
     const price = (c: string) => { const p = findCommodityPrice(c); return p && p.avgSell > 0 ? p.avgSell : 0; };
     const nameOf = (c: string) => findCommodityPrice(c)?.name ?? c;
-    // Per signal, its three highest-priced commodities — the Rhino's refinery holds three, so
-    // a six-commodity signal is worked as its best three.
+    // Per signal, what four rigs on it would be worth — see rigValue.ts for the rule. Every deposit
+    // at the signal contributes its confirmed rigs; an unconfirmed one runs a single rig.
+    const rigsBySignal = new Map<string, Map<string, number>>();
+    for (const d of surfaceDeposits) {
+      const c = d.commodity ? nameOf(d.commodity) : null;
+      if (!c) continue;
+      const k = `${d.body}|${d.siteIndex ?? 'none'}`;
+      if (!rigsBySignal.has(k)) rigsBySignal.set(k, new Map());
+      const inner = rigsBySignal.get(k)!;
+      inner.set(c, (inner.get(c) ?? 0) + (d.rigs ?? 1));
+    }
     const scored = inDomain.map((b) => {
       let total = 0; let signals = 0;
       for (const r of b.siteRows) {
         const names = new Set([...r.expected, ...Object.keys(r.commodities || {})].map(nameOf));
         if (!names.size) continue;
         signals += 1;
-        total += [...names].map(price).sort((x, y) => y - x).slice(0, 3).reduce((t, p) => t + p, 0);
+        const rigs = rigsBySignal.get(`${b.body}|${r.index}`);
+        total += rigValue(names, price, (n) => rigs?.get(n));
       }
       return { b, total, signals };
     }).filter((x) => x.total > 0);
@@ -404,7 +418,7 @@ export function ArchitectDomainPage() {
       });
     }
     return out;
-  }, [surfaceBodies, colonyNames]);
+  }, [surfaceBodies, surfaceDeposits, colonyNames]);
   // The ring with the most hotspots — what the ground holds, from your own DSS scans. The panel
   // below ranks all of them; this is the one-card answer.
   const ringRecords = useMemo((): DomainRecord[] => {

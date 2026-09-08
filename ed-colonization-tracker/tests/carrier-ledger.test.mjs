@@ -58,7 +58,9 @@ describe('carrier ledger', () => {
     // could have bought any of it without a journal line — so it is named, not counted.
     expect(by.steel).toBeUndefined();
     expect(inv.unknown).toEqual([{ commodityId: 'steel', name: 'Steel', qty: 70, ordered: 'sell' }]);
-    expect(inv.negatives).toEqual([{ commodityId: 'tritium', name: 'Tritium', qty: -10 }]); // fuel from cargo it never saw arrive
+    // A fuel deposit is not a cargo movement — the tritium already left as a transfer to the ship.
+    expect(inv.negatives).toEqual([]);
+    expect(inv.items.find((i) => i.commodityId === 'tritium')).toBeUndefined();
     expect(inv.stats.total).toBe(100);
     expect(inv.itemised).toBe(30);
     expect(inv.unaccounted).toBe(70);
@@ -113,6 +115,20 @@ describe('carrier ledger', () => {
     expect(after.txCount).toBe(before.txCount);
     expect(keyOf('$lowtemperaturediamond_name;')).toBe('lowtemperaturediamond');
     expect(keyOf('CMMComposite')).toBe('cmmcomposite');
+    // A name typed off the carrier's own screen has to land on the journal's key, or a baseline
+    // creates a second entry beside the one the transfers built.
+    expect(keyOf('Micro Controllers')).toBe(keyOf('$microcontrollers_name;'));
+    expect(keyOf('Micro-weave Cooling Hoses')).toBe('microweavecoolinghoses');
+    expect(keyOf('Damaged Escape Pod')).toBe('damagedescapepod');
+    expect(keyOf('Low Temp. Diamonds')).toBe('lowtemperaturediamond');
+    expect(keyOf('Low Temperature Diamonds')).toBe('lowtemperaturediamond');
+    // Eight commodities the game names differently inside than on screen — normalising cannot
+    // join these, so they are aliased explicitly (found in the commander's own ledger).
+    expect(keyOf('drones')).toBe(keyOf('Limpet'));
+    expect(keyOf('coolinghoses')).toBe(keyOf('Micro-weave Cooling Hoses'));
+    expect(keyOf('terrainenrichmentsystems')).toBe(keyOf('Land Enrichment Systems'));
+    expect(keyOf('mutomimager')).toBe(keyOf('Muon Imager'));
+    expect(keyOf('hazardousenvironmentsuits')).toBe(keyOf('H.E. Suits'));
   });
 
   it('a baseline typed by the commander anchors what the journal cannot count, and survives a restart', () => {

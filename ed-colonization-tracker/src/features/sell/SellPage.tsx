@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { COMMODITY_PRICES } from '@/data/commodityPrices';
 import { COMMODITIES } from '@/data/commodities';
+import { sseSubscribe } from '@/services/sseBus';
 
 interface Offer {
   price: number; station: string | null; system: string | null; marketId?: number | null;
@@ -29,9 +30,16 @@ interface Plan {
   totals: { tonnes: number; here: number; local: number; galaxy: number };
   trade: { systems: number; load: number | null; rows: TradeRow[] };
   history: Record<string, { today: number; days: DayPoint[] }>;
+  /** Fast first paint: built from cache alone; `pending` lookups are filling in behind it. */
+  partial?: boolean; pending?: number;
   error?: string;
 }
 interface Searched { name: string; tonnes: number }
+interface SellAtRow {
+  key: string; name: string; ship: number; carrier: number; tonnes: number;
+  offer: Offer | null; mean: number; vsMean: number | null; demandShort: boolean; value: number; elsewhere: Offer | null; listedHere: boolean;
+}
+interface SellAt { at: string; system: string | null; distance: number | null; known: boolean; stations: string[]; rows: SellAtRow[]; total: number; error?: string }
 
 const token = () => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } };
 const q = (p: string) => { const t = token(); return t ? `${p}${p.includes('?') ? '&' : '?'}token=${t}` : p; };
@@ -170,11 +178,13 @@ export function SellPage() {
   const setRange = (n: number) => { setRangeState(n); try { localStorage.setItem(LS_RANGE, String(n)); } catch { /* ignore */ } };
   const setSearched = (next: Searched[]) => { setSearchedState(next); try { localStorage.setItem(LS_SEARCH, JSON.stringify(next)); } catch { /* ignore */ } };
 
+  // Fast first paint: the server answers from your own snapshots and whatever Ardent already told
+  // it, marks the plan partial, and fills the rest in behind; sell_plan_updated says when to refetch.
   const load = useCallback(async (r: number, s: Searched[]) => {
     const seq = ++reqSeq.current;
     setLoading(true); setError(null);
     try {
-      const res = await fetch(q(`/api/sell/plan?range=${r}&searched=${encodeURIComponent(JSON.stringify(s))}`));
+      const res = await fetch(q(`/api/sell/plan?range=${r}&searched=${encodeURIComponent(JSON.stringify(s))}&fast=1`));
       const d = (await res.json()) as Plan;
       if (seq !== reqSeq.current) return;
       if (d && !d.error) setPlan(d); else setError(d?.error || `HTTP ${res.status}`);
@@ -186,6 +196,39 @@ export function SellPage() {
   }, []);
 
   useEffect(() => { void load(range, searched); }, [range, searched, load]);
+  useEffect(() => sseSubscribe('sell_plan_updated', () => { void load(range, searched); }), [range, searched, load]);
+
+  // ---- sell at one system ----
+  const [atQuery, setAtQuery] = useState('');
+  const [at, setAt] = useState<SellAt | null>(null);
+  const [atLoading, setAtLoading] = useState(false);
+  const atSeq = useRef(0);
+  const loadAt = useCallback(async (system: string) => {
+    const name = system.trim();
+    if (!name) { setAt(null); return; }
+    const seq = ++atSeq.current;
+    setAtLoading(true);
+    try {
+      const res = await fetch(q(`/api/sell/at?system=${encodeURIComponent(name)}`));
+      const d = (await res.json()) as SellAt;
+      if (seq === atSeq.current) setAt(d);
+    } catch (e) {
+      if (seq === atSeq.current) setAt({ at: new Date().toISOString(), system: name, distance: null, known: false, stations: [], rows: [], total: 0, error: e instanceof Error ? e.message : String(e) });
+    } finally {
+      if (seq === atSeq.current) setAtLoading(false);
+    }
+  }, []);
+  useEffect(() => sseSubscribe('sell_plan_updated', () => { if (at?.system) void loadAt(at.system); }), [at?.system, loadAt]);
+  // Systems already on the page — the buyers the plan found, where you are, where you docked.
+  const atSuggestions = useMemo(() => {
+    const s = atQuery.trim().toLowerCase();
+    const names = new Set<string>();
+    if (plan?.dock?.system) names.add(plan.dock.system);
+    if (plan?.me?.system) names.add(plan.me.system);
+    for (const r of plan?.rows ?? []) for (const o of [r.here, r.local, r.galaxy, r.top]) if (o?.system) names.add(o.system);
+    for (const t of plan?.trade.rows ?? []) if (t.sell?.system) names.add(t.sell.system);
+    return [...names].filter((n) => !s || n.toLowerCase().includes(s)).filter((n) => n.toLowerCase() !== s).slice(0, 8);
+  }, [atQuery, plan]);
 
   const suggestions = useMemo(() => {
     const s = query.trim().toLowerCase();
@@ -228,7 +271,7 @@ export function SellPage() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-bold tracking-wide">{'💰'} SELL CARGO</h1>
-            {loading ? <span className="text-[10px] tracking-widest text-amber-300">LOOKING UP…</span> : plan ? <span className="text-[10px] tracking-widest text-muted-foreground">PRICED {when(plan.at).toUpperCase()}</span> : null}
+            {plan?.partial ? <span className="text-[10px] tracking-widest text-amber-300" title="Shown from your own markets and what Ardent already answered; the rest is filling in">CHECKING ARDENT · {plan.pending} PENDING</span> : loading ? <span className="text-[10px] tracking-widest text-amber-300">LOOKING UP…</span> : plan ? <span className="text-[10px] tracking-widest text-muted-foreground">PRICED {when(plan.at).toUpperCase()}</span> : null}
           </div>
           <div className="text-[11px] text-muted-foreground">your markets (30 days) · Ardent live listings (EDDN) · carriers excluded</div>
         </div>
@@ -407,6 +450,97 @@ export function SellPage() {
         <p className="text-[11px] text-muted-foreground/70">
           Stock must cover a load at the buy side and demand at the sell side. Your own records win over Ardent when they are newer, and add the stations Ardent has never heard of. Read the freshness on each leg before you fly it.
         </p>
+      </section>
+
+      {/* ---- sell at one system ---- */}
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <h2 className="text-sm font-semibold tracking-wide">SELL AT…</h2>
+          <span className="text-xs text-muted-foreground">everything you hold, priced at one system — what else should ride along</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <div className="relative">
+            <input
+              value={atQuery} onChange={(e) => setAtQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void loadAt(atQuery); } }}
+              placeholder="System, e.g. LFT 65"
+              className="w-64 rounded border border-border bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground/60"
+            />
+            {atQuery.trim() && atSuggestions.length > 0 && (
+              <div className="absolute left-0 top-full z-10 mt-1 w-64 rounded border border-border bg-card shadow-lg">
+                {atSuggestions.map((n) => (
+                  <button key={n} type="button" onClick={() => { setAtQuery(n); void loadAt(n); }} className="block w-full px-2 py-1.5 text-left text-sm hover:bg-muted/40">{n}</button>
+                ))}
+              </div>
+            )}
+          </div>
+          <button type="button" onClick={() => void loadAt(atQuery)} disabled={atLoading || !atQuery.trim()} className="rounded border border-sky-500/40 bg-muted/20 px-3 py-1 text-xs text-sky-300 hover:bg-muted/50 disabled:opacity-50">
+            {atLoading ? 'Pricing…' : 'Price it'}
+          </button>
+          {!atQuery.trim() && atSuggestions.length > 0 && (
+            <span className="text-[11px] text-muted-foreground">try: {atSuggestions.slice(0, 5).map((n) => <button key={n} type="button" onClick={() => { setAtQuery(n); void loadAt(n); }} className="ml-1 text-sky-300 hover:underline">{n}</button>)}</span>
+          )}
+        </div>
+        {at && at.error ? <p className="text-xs text-red-300">{at.error}</p> : null}
+        {at && !at.error && (
+          <div className="space-y-1">
+            <div className="text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">{at.system}</span>
+              {at.distance != null ? <> · {ly(at.distance)}</> : null}
+              {at.stations.length ? <> · {at.stations.length} station{at.stations.length === 1 ? '' : 's'} with prices: {at.stations.slice(0, 4).join(', ')}{at.stations.length > 4 ? '…' : ''}</> : null}
+              {!at.known ? <span className="ml-1 text-amber-300/80">no market data for this system in Ardent or your records</span> : null}
+            </div>
+            <div className="overflow-x-auto rounded border border-border">
+              <table className="w-full min-w-[720px] text-xs">
+                <thead>
+                  <tr className="text-left text-[10px] uppercase tracking-wider text-muted-foreground">
+                    <th className="px-2 py-2">Commodity</th>
+                    <th className="px-2 py-2">You hold</th>
+                    <th className="px-2 py-2">Best there</th>
+                    <th className="px-2 py-2">vs mean</th>
+                    <th className="px-2 py-2">Value</th>
+                    <th className="px-2 py-2">Best elsewhere</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {at.rows.length === 0 && <tr><td colSpan={6} className="px-2 py-4 text-center text-muted-foreground">Nothing held.</td></tr>}
+                  {at.rows.map((r) => {
+                    const dim = !r.offer || (r.vsMean != null && r.vsMean < 1);
+                    return (
+                      <tr key={r.key} className={`border-t border-border/60 ${dim ? 'text-muted-foreground/70' : ''}`}>
+                        <td className="px-2 py-2 align-top font-medium">{r.name}</td>
+                        <td className="px-2 py-2 align-top tabular-nums text-muted-foreground">
+                          {r.ship > 0 ? <div>{r.ship} ship</div> : null}
+                          {r.carrier > 0 ? <div>{r.carrier} carrier</div> : null}
+                        </td>
+                        <OfferCell o={r.offer} best={!!r.offer && r.vsMean != null && r.vsMean >= 1.2} tonnes={0} note={r.listedHere ? 'no demand there' : 'not traded there'} />
+                        <td className="px-2 py-2 align-top tabular-nums">
+                          {r.vsMean != null ? <span className={r.vsMean >= 1.2 ? 'text-emerald-200' : r.vsMean < 1 ? 'text-red-300/80' : ''}>×{r.vsMean.toFixed(2)}</span> : '—'}
+                          {r.mean > 0 ? <div className="text-[10px] text-muted-foreground">mean {fmt(r.mean)}</div> : null}
+                          {r.demandShort && r.offer ? <div className="text-[10px] text-amber-300/80">demand {fmt(r.offer.demand || 0)} t &lt; {fmt(r.tonnes)} t held</div> : null}
+                        </td>
+                        <td className="px-2 py-2 align-top tabular-nums">{r.value > 0 ? cr(r.value) : '—'}</td>
+                        <OfferCell o={r.elsewhere} best={!!r.elsewhere && !!r.offer && r.elsewhere.price > r.offer.price * 1.1} tonnes={0} note="not looked up yet" />
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                {at.total > 0 && (
+                  <tfoot>
+                    <tr className="border-t border-border font-medium">
+                      <td className="px-2 py-2" colSpan={4}>Sell everything it wants</td>
+                      <td className="px-2 py-2 tabular-nums">{cr(at.total)}</td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+            <p className="text-[11px] text-muted-foreground/70">
+              Green is 1.2× the galactic mean or better; red is under it. "Best elsewhere" is the plan's galaxy-wide buyer when it has been looked up, so you can see what selling here gives up. Demand is checked against everything you hold.
+            </p>
+          </div>
+        )}
       </section>
     </div>
   );

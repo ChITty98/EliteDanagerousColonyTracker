@@ -27,6 +27,7 @@ import { CopilotPage } from '@/features/copilot/CopilotPage';
 import { MiningPage } from '@/features/mining/MiningPage';
 import { SurfaceMiningPage } from '@/features/surface-mining/SurfaceMiningPage';
 import { SellPage } from '@/features/sell/SellPage';
+import { CommanderLogPage } from '@/features/log/CommanderLogPage';
 import { RadarPage } from '@/features/radar/RadarPage';
 import { ScoutMapPage } from '@/features/scouting/ScoutMapPage';
 import { ChainWatchPage } from '@/features/chains/ChainWatchPage';
@@ -59,6 +60,7 @@ export const router = createBrowserRouter([
       { path: 'mining', element: <MiningPage /> },
       { path: 'surface-mining', element: <SurfaceMiningPage /> },
       { path: 'sell', element: <SellPage /> },
+      { path: 'log', element: <CommanderLogPage /> },
       { path: 'radar', element: <RadarPage /> },
       { path: 'scout-map', element: <ScoutMapPage /> },
       { path: 'chains', element: <ChainWatchPage /> },

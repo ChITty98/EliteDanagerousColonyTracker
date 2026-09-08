@@ -1,6 +1,7 @@
 import { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import { useAppStore } from '@/store';
 import { getSystemTier } from '@/features/dashboard/tierUtils';
+import { GALACTIC_REGION_LINES, GALACTIC_REGION_LABELS, GALACTIC_REGION_SOURCE } from '@/data/galacticRegions';
 
 interface MapPoint {
   name: string;
@@ -8,11 +9,29 @@ interface MapPoint {
   z: number; // negated galactic Z for SVG (positive = up = toward galactic center)
   y: number; // galactic Y (for tooltip)
   rawZ: number; // original galactic Z for display
-  kind: 'colony' | 'ship' | 'sol' | 'home' | 'scouted' | 'landmark';
+  kind: 'colony' | 'ship' | 'sol' | 'home' | 'scouted' | 'landmark' | 'target';
   tier?: number;
   tierLabel?: string;
   tierIcon?: string;
   installations?: number;
+  score?: number | null;   // watched targets carry their scouting score
+  status?: string | null;  // ...and whether something is closing in on them
+}
+
+/** The Populated layer: /api/populated-systems — seeded from the Spansh dump, kept current from the journal stream. */
+interface PopulatedSet {
+  generatedAt: string | null; source: string | null; centre: { name: string; x: number; y: number; z: number };
+  radiusLy: number; bubbles?: { name: string; radiusLy: number }[]; live: number; count: number;
+  systems: { name: string; x: number; y: number; z: number; pop: number; economy: string | null; live?: boolean }[];
+}
+
+/** Server-owned: the threat watcher writes these into colony-data.json; the client only reads them. */
+interface WatchedSystem {
+  id: string;
+  name: string;
+  score?: number | null;
+  status?: string | null;
+  coordinates?: { x: number; y: number; z: number } | null;
 }
 
 // Tier SVG colors
@@ -31,10 +50,20 @@ export function ColonyMapPage() {
   const settings = useAppStore((s) => s.settings);
   const scoutedSystems = useAppStore((s) => s.scoutedSystems);
   const manualColonized = useAppStore((s) => s.manualColonizedSystems);
+  // Watched systems are written by the server's threat watcher and arrive through hydration; they
+  // are deliberately not in the store's partialize list (the client never authors them), so the
+  // shape is declared here rather than pulled into the persisted-state type.
+  const watchedSystems = useAppStore((s) => (s as unknown as { watchedSystems?: Record<string, WatchedSystem> }).watchedSystems);
 
   // Toggles
   const [showFavorites, setShowFavorites] = useState(false);
   const [showSagA, setShowSagA] = useState(false);
+  const [showColonies, setShowColonies] = useState(true);
+  const [showTargets, setShowTargets] = useState(false);
+  const [showGalaxy, setShowGalaxy] = useState(false);
+  const [showRegions, setShowRegions] = useState(false);
+  const [showLandmarks, setShowLandmarks] = useState(false);
+  const [showPopulated, setShowPopulated] = useState(false);
   const [hoveredPoint, setHoveredPoint] = useState<MapPoint | null>(null);
 
   // Pan/zoom state
@@ -145,6 +174,25 @@ export function ColonyMapPage() {
       }
     }
 
+    // Watched targets — the systems being tracked for a claim, threat status and all.
+    if (showTargets) {
+      for (const w of Object.values(watchedSystems || {})) {
+        if (!w || !w.coordinates) continue;
+        const key = w.name.toLowerCase();
+        if (colonySystems.has(key)) continue;
+        pts.push({
+          name: w.name,
+          x: w.coordinates.x,
+          z: -w.coordinates.z,
+          y: w.coordinates.y,
+          rawZ: w.coordinates.z,
+          kind: 'target',
+          score: w.score ?? null,
+          status: w.status ?? null,
+        });
+      }
+    }
+
     // Sagittarius A*
     if (showSagA) {
       pts.push({ name: 'Sagittarius A*', x: 25.21875, z: -25899.96875, y: -20.90625, rawZ: 25899.96875, kind: 'landmark' });
@@ -163,7 +211,7 @@ export function ColonyMapPage() {
     }
 
     return pts;
-  }, [projects, knownSystems, knownStations, commanderPosition, settings.homeSystem, scoutedSystems, manualColonized, showFavorites, showSagA]);
+  }, [projects, knownSystems, knownStations, commanderPosition, settings.homeSystem, scoutedSystems, manualColonized, showFavorites, showSagA, showTargets, watchedSystems]);
 
   // Auto-fit view to colony points on mount (exclude Sol to avoid stretching)
   useEffect(() => {
@@ -348,6 +396,161 @@ export function ColonyMapPage() {
   // System list panel toggle
   const [showList, setShowList] = useState(false);
 
+  // ---- The journey: where you have actually been, and what happened along the way -------------
+  // Path points are jump positions from the journals (server/journal/commanderLog.js); pins are
+  // the weighted events that landed in a system with a known position. Loaded on demand — it is
+  // a full journal replay server-side, cached there, and nobody needs it unless they ask.
+  interface JourneyPin { at: string; weight: string; kind: string; system: string; pos: [number, number, number]; line: string }
+  interface Journey { path: { at: string; system: string; pos: [number, number, number]; carrier?: boolean }[]; pins: JourneyPin[] }
+  const [journey, setJourney] = useState<Journey | null>(null);
+  // Populated systems — seeded from the Spansh regional dump and kept current from the journal
+  // stream (server/radar/populatedStore.js). Fetched once, the first time the layer is switched on.
+  const [populated, setPopulated] = useState<PopulatedSet | null>(null);
+  const [populatedLoading, setPopulatedLoading] = useState(false);
+  useEffect(() => {
+    if (!showPopulated || populated || populatedLoading) return;
+    setPopulatedLoading(true);
+    let t: string | null = null;
+    try { t = sessionStorage.getItem('colony-token'); } catch { /* no storage */ }
+    fetch(t ? `/api/populated-systems?token=${t}` : '/api/populated-systems')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d && Array.isArray(d.systems)) setPopulated(d as PopulatedSet); })
+      .catch(() => { /* the layer simply stays empty */ })
+      .finally(() => setPopulatedLoading(false));
+  }, [showPopulated, populated, populatedLoading]);
+  // Three population bands, each ONE path of small squares — thousands of points pan without lag.
+  const populatedPaths = useMemo(() => {
+    if (!populated) return null;
+    const bands: { min: number; r: number; fill: string; opacity: number; d: string[] }[] = [
+      { min: 10_000_000, r: 0.9, fill: '#fbbf24', opacity: 0.9, d: [] },
+      { min: 1_000_000, r: 0.7, fill: '#f59e0b', opacity: 0.7, d: [] },
+      { min: 0, r: 0.55, fill: '#a16207', opacity: 0.55, d: [] },
+    ];
+    for (const s of populated.systems) {
+      const b = bands.find((x) => s.pop >= x.min)!;
+      const r = b.r * pointScale;
+      b.d.push(`M${(s.x - r).toFixed(2)} ${(-s.z - r).toFixed(2)}h${(2 * r).toFixed(2)}v${(2 * r).toFixed(2)}h${(-2 * r).toFixed(2)}z`);
+    }
+    return bands.map((b) => ({ fill: b.fill, opacity: b.opacity, d: b.d.join('') }));
+  }, [populated, pointScale]);
+
+  const [showJourney, setShowJourney] = useState(false);
+  const [journeyLoading, setJourneyLoading] = useState(false);
+  const [hoveredPin, setHoveredPin] = useState<JourneyPin | null>(null);
+  useEffect(() => {
+    if (!showJourney || journey || journeyLoading) return;
+    setJourneyLoading(true);
+    let t: string | null = null;
+    try { t = sessionStorage.getItem('colony-token'); } catch { /* no storage */ }
+    fetch(t ? `/api/commander-log/journey?min=major&token=${t}` : '/api/commander-log/journey?min=major')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d && Array.isArray(d.path)) setJourney(d as Journey); })
+      .catch(() => { /* the layer simply stays empty */ })
+      .finally(() => setJourneyLoading(false));
+  }, [showJourney, journey, journeyLoading]);
+
+  // One polyline per continuous run: a carrier jump or a gap of more than 500 ly is a break, not
+  // a line across the galaxy. Drawn in the X/Z plane like everything else on this map.
+  //
+  // SVG's y grows downward, so every colony point on this map is stored with its galactic z NEGATED
+  // (`z: -coordinates.z`). The journey arrives as raw galactic coordinates and has to be put through
+  // the same flip, or the two layers face opposite ways and nothing lines up.
+  const projZ = (z: number) => -z;
+  const journeyLegs = useMemo(() => {
+    if (!journey) return [];
+    const legs: string[][] = [];
+    let leg: string[] = [];
+    let prev: [number, number, number] | null = null;
+    for (const p of journey.path) {
+      const jump = prev ? Math.hypot(p.pos[0] - prev[0], p.pos[1] - prev[1], p.pos[2] - prev[2]) : 0;
+      if (prev && (p.carrier || jump > 500)) { if (leg.length > 1) legs.push(leg); leg = []; }
+      leg.push(`${p.pos[0].toFixed(1)},${projZ(p.pos[2]).toFixed(1)}`);
+      prev = p.pos;
+    }
+    if (leg.length > 1) legs.push(leg);
+    return legs;
+  }, [journey]);
+  // Galaxy-layer text is sized as a fraction of the view, not in light years, so the region
+  // names stay legible at any zoom instead of being right only when the whole disc is on screen.
+  const galaxyFont = Math.max(viewBox.w * 0.016, 0.5);
+
+  const PIN_COLOR: Record<string, string> = { huge: '#fbbf24', major: '#38bdf8' };
+
+  // A representative galaxy, not a survey. Sol is the origin of ED's coordinates and Sagittarius A*
+  // sits 25,900 ly away on +z, so the disc is drawn as a circle about that point and the arms as
+  // logarithmic spirals from the bar — r = r0·e^(kθ), pitch ~12°, the shape a barred spiral makes.
+  // The phase is chosen so an arm runs through Sol, which is what puts the Orion Spur where you
+  // expect it. Arm names and layout follow the galactic-regions reference at edastro.com/galmap;
+  // the geometry here is redrawn, approximate, and good only for orientation.
+  const GC = { x: 25.21875, z: -25899.96875 };   // Sagittarius A* in this map's coordinates
+    // Landmarks, placed from REAL coordinates or not at all. Each entry names the systems that make
+  // up the place; the label sits at the centroid of the ones actually in your data. A prefix that
+  // matches nothing renders nothing — so a name listed here can never appear at a made-up position,
+  // and a nebula you have not visited simply stays off the map until you do.
+  const LANDMARK_SOURCES: { label: string; match: string[]; exact?: string[] }[] = [
+    { label: 'Colonia', match: [], exact: ['colonia'] },
+    { label: 'Pleiades Nebula', match: ['pleiades sector'], exact: ['merope', 'maia', 'asterope', 'electra', 'celaeno', 'atlas', 'pleione', 'taygeta'] },
+    { label: 'Coalsack Nebula', match: ['coalsack sector', 'musca dark region'] },
+    { label: 'California Nebula', match: ['california sector'] },
+    { label: "Barnard's Loop", match: ['barnards loop sector', "barnard's loop sector"] },
+    { label: 'Witch Head Nebula', match: ['witch head sector'] },
+    { label: 'Horsehead Nebula', match: ['horsehead sector', 'hind sector'] },
+    { label: 'Rosette Nebula', match: ['omicron sector'] },
+    { label: 'Eagle Nebula', match: ['eagle sector'] },
+    { label: 'Omega Nebula', match: ['omega sector'] },
+    { label: 'Crab Nebula', match: ['crab sector'] },
+    { label: 'Veil Nebula', match: ['veil west sector', 'veil east sector'] },
+    { label: "Elephant's Trunk Nebula", match: ["elephant's trunk sector"] },
+    { label: 'Cone Nebula', match: ['cone sector'] },
+    { label: 'Heart Nebula', match: ['heart sector'] },
+    { label: 'Soul Nebula', match: ['soul sector'] },
+    { label: 'Shinrarta Dezhra', match: [], exact: ['shinrarta dezhra'] },
+    { label: 'Beagle Point', match: [], exact: ['beagle point'] },
+    { label: 'Sagittarius A*', match: [], exact: ['sagittarius a*'] },
+  ];
+  const LANDMARKS = useMemo(() => {
+    const all: { name: string; x: number; z: number }[] = [];
+    for (const sys of Object.values(knownSystems)) {
+      if (sys.coordinates) all.push({ name: (sys.systemName || '').toLowerCase(), x: sys.coordinates.x, z: sys.coordinates.z });
+    }
+    for (const sys of Object.values(scoutedSystems)) {
+      if (sys.coordinates) all.push({ name: (sys.name || '').toLowerCase(), x: sys.coordinates.x, z: sys.coordinates.z });
+    }
+    const out: { label: string; x: number; z: number; n: number }[] = [];
+    for (const L of LANDMARK_SOURCES) {
+      const hits = all.filter((s2) => (L.exact || []).includes(s2.name) || L.match.some((m) => s2.name.startsWith(m)));
+      if (!hits.length) continue;
+      const x = hits.reduce((a, h) => a + h.x, 0) / hits.length;
+      const z = hits.reduce((a, h) => a + h.z, 0) / hits.length;
+      out.push({ label: L.label, x, z: -z, n: hits.length });
+    }
+    return out;
+  }, [knownSystems, scoutedSystems]);
+
+  const GALAXY = useMemo(() => {
+    const k = Math.tan((12 * Math.PI) / 180);
+    const r0 = 4000, rMax = 46000, phase = 7.214;
+    // Four arms, unnamed on purpose: the real-astronomy arm names are not what the game shows you,
+    // and the labels that ARE meaningful — the galactic regions — come from your own scouted data
+    // below, where every name is one Spansh actually returned for a system you visited.
+    const arms = [{ turn: 0 }, { turn: Math.PI / 2 }, { turn: Math.PI }, { turn: (3 * Math.PI) / 2 }];
+    const maxT = Math.log(rMax / r0) / k;
+    return arms.map((a) => {
+      const pts: string[] = [];
+      let label = { x: 0, z: 0 };
+      for (let i = 0; i <= 90; i++) {
+        const t = (i / 90) * maxT;
+        const r = r0 * Math.exp(k * t);
+        const ang = t - phase + a.turn;
+        const x = GC.x + r * Math.cos(ang);
+        const z = GC.z + r * Math.sin(ang);
+        pts.push(`${x.toFixed(0)},${z.toFixed(0)}`);
+        if (i === 66) label = { x, z };
+      }
+      return { points: pts.join(' '), label };
+    });
+  }, []);
+
   return (
     <div className="flex flex-col" style={{ height: 'calc(100vh - 1rem)' }}>
       {/* Map — full area */}
@@ -374,8 +577,78 @@ export function ColonyMapPage() {
           </defs>
           <rect x={viewBox.x - viewBox.w} y={viewBox.y - viewBox.h} width={viewBox.w * 3} height={viewBox.h * 3} fill="url(#grid)" />
 
+          {/* The galaxy, approximate — under everything, purely for orientation */}
+          {showGalaxy && (
+            <g pointerEvents="none">
+              <defs>
+                <radialGradient id="disc">
+                  <stop offset="0%" stopColor="#c4b5fd" stopOpacity={0.16} />
+                  <stop offset="55%" stopColor="#818cf8" stopOpacity={0.07} />
+                  <stop offset="100%" stopColor="#1e1b4b" stopOpacity={0} />
+                </radialGradient>
+              </defs>
+              <circle cx={GC.x} cy={GC.z} r={46000} fill="url(#disc)" />
+              <circle cx={GC.x} cy={GC.z} r={46000} fill="none" stroke="#6366f1" strokeWidth={40} opacity={0.18} />
+              {GALAXY.map((arm, i) => (
+                <polyline key={`arm-${i}`} points={arm.points} fill="none" stroke="#a5b4fc" strokeWidth={900} opacity={0.1} strokeLinecap="round" />
+              ))}
+              {/* The bar through the core */}
+              <ellipse cx={GC.x} cy={GC.z} rx={7000} ry={2600} transform={`rotate(28 ${GC.x} ${GC.z})`} fill="#fcd34d" opacity={0.13} />
+              <circle cx={GC.x} cy={GC.z} r={1200} fill="#fde68a" opacity={0.22} />
+              <text x={GC.x} y={GC.z - galaxyFont * 1.4} fill="#fcd34d" opacity={0.65} fontSize={galaxyFont} textAnchor="middle">Sagittarius A*</text>
+            </g>
+          )}
+
+          {/* The 42 galactic regions — real borders, from the community region map, not placed by eye.
+              Same z-flip as every other point on this map. Rim lines are the edge of the disc. */}
+          {showRegions && (
+            <g pointerEvents="none">
+              {GALACTIC_REGION_LINES.map((line, i) => {
+                const pts: string[] = [];
+                for (let j = 1; j < line.length; j += 2) pts.push(`${line[j]},${-line[j + 1]}`);
+                return (
+                  <polyline key={`rgn-${i}`} points={pts.join(' ')} fill="none"
+                    stroke={line[0] ? '#6366f1' : '#a5b4fc'} strokeOpacity={line[0] ? 0.35 : 0.55}
+                    strokeWidth={Math.max(viewBox.w * 0.0012, 0.3)} strokeLinejoin="round" />
+                );
+              })}
+              {GALACTIC_REGION_LABELS.map(([name, x, z]) => (
+                <text key={`rgl-${name}`} x={x} y={-z} fill="#c7d2fe" opacity={0.8}
+                  fontSize={galaxyFont * 0.8} textAnchor="middle" style={{ pointerEvents: 'none' }}>{name}</text>
+              ))}
+            </g>
+          )}
+
+          {/* Populated systems — under the landmarks and colonies, so they read as the ground the
+              bubble sits on. Same x / −z projection as everything else. */}
+          {showPopulated && populatedPaths && (
+            <g pointerEvents="none">
+              {populatedPaths.map((b, i) => <path key={`pop-${i}`} d={b.d} fill={b.fill} opacity={b.opacity} />)}
+            </g>
+          )}
+
+          {/* Landmarks — Colonia, the nebulae, Founders World. Positions are the centroid of the
+              systems you actually have coordinates for, so nothing here is placed by eye. */}
+          {showLandmarks && LANDMARKS.map((L) => (
+            <g key={`lm-${L.label}`} pointerEvents="none">
+              <circle cx={L.x} cy={L.z} r={2.6 * pointScale} fill="none" stroke="#f0abfc" strokeWidth={0.35 * pointScale} opacity={0.55} strokeDasharray={`${1.2 * pointScale},${1.2 * pointScale}`} />
+              <text x={L.x} y={L.z - 4 * pointScale} fill="#f0abfc" fontSize={2.2 * pointScale} textAnchor="middle" opacity={0.85}>{L.label}</text>
+            </g>
+          ))}
+
+          {/* The journey — under everything else, so the colonies still read first */}
+          {showJourney && journeyLegs.map((leg, i) => (
+            <polyline key={`leg-${i}`} points={leg.join(' ')} fill="none" stroke="#a78bfa" strokeWidth={0.35 * pointScale} opacity={0.45} strokeLinejoin="round" />
+          ))}
+          {showJourney && journey?.pins.map((p, i) => (
+            <g key={`pin-${p.at}-${i}`} onMouseEnter={() => setHoveredPin(p)} onMouseLeave={() => setHoveredPin(null)} style={{ cursor: 'help' }}>
+              <circle cx={p.pos[0]} cy={projZ(p.pos[2])} r={(p.weight === 'huge' ? 3.5 : 2) * pointScale} fill={PIN_COLOR[p.weight] || '#94a3b8'} opacity={0.18} />
+              <circle cx={p.pos[0]} cy={projZ(p.pos[2])} r={(p.weight === 'huge' ? 1.4 : 0.9) * pointScale} fill={PIN_COLOR[p.weight] || '#94a3b8'} />
+            </g>
+          ))}
+
           {/* Connection lines */}
-          {connections.map((c, i) => (
+          {showColonies && connections.map((c, i) => (
             <g key={`conn-${i}`}>
               <line
                 x1={c.from.x} y1={c.from.z}
@@ -397,7 +670,10 @@ export function ColonyMapPage() {
           ))}
 
           {/* Points */}
-          {points.map((pt) => {
+          {/* The colonies. Turning them off leaves the journey and its pins to read on their own —
+              a hundred labelled sites drown the events they sit under. Sol, Sag A* and where the
+              commander is stay put, so the map keeps its landmarks either way. */}
+          {points.filter((pt) => showColonies || pt.kind !== 'colony').map((pt) => {
             if (pt.kind === 'sol') {
               return (
                 <g key="sol"
@@ -475,6 +751,23 @@ export function ColonyMapPage() {
                 </g>
               );
             }
+            if (pt.kind === 'target') {
+              // A watched target reads as a ring, not a dot — it is a place you have not taken yet.
+              // Amber when something is closing on it, which is the whole reason it is watched.
+              const c = pt.status === 'threatened' ? '#f59e0b' : '#a78bfa';
+              return (
+                <g key={`target-${pt.name}`}
+                  onMouseEnter={() => setHoveredPoint(pt)}
+                  onMouseLeave={() => setHoveredPoint(null)}
+                >
+                  <circle cx={pt.x} cy={pt.z} r={2.4 * pointScale} fill="none" stroke={c} strokeWidth={0.45 * pointScale} opacity={0.9} />
+                  <circle cx={pt.x} cy={pt.z} r={0.6 * pointScale} fill={c} />
+                  <text x={pt.x} y={pt.z - 3.4 * pointScale} fill={c} fontSize={2 * pointScale} textAnchor="middle" opacity={0.85}>
+                    {pt.name}{pt.score != null ? ` · ${pt.score}` : ''}
+                  </text>
+                </g>
+              );
+            }
             // Colony
             const color = TIER_COLORS[pt.tier || 1];
             const r = (2 + (pt.tier || 1) * 0.5) * pointScale;
@@ -540,7 +833,109 @@ export function ColonyMapPage() {
             />
             Sag A*
           </label>
+          <label
+            className="flex items-center gap-1 px-2 py-1 rounded bg-background/80 border border-border text-xs text-muted-foreground cursor-pointer"
+            title="Turn the colony sites off to read the journey and its pins on their own"
+          >
+            <input
+              type="checkbox"
+              checked={showColonies}
+              onChange={(e) => setShowColonies(e.target.checked)}
+              className="rounded border-border w-3 h-3"
+            />
+            Colonies
+          </label>
+          <label
+            className="flex items-center gap-1 px-2 py-1 rounded bg-background/80 border border-border text-xs text-muted-foreground cursor-pointer"
+            title="Systems you are watching for a claim — amber when something is closing on one"
+          >
+            <input
+              type="checkbox"
+              checked={showTargets}
+              onChange={(e) => setShowTargets(e.target.checked)}
+              className="rounded border-border w-3 h-3"
+            />
+            Targets
+            {showTargets && <span className="text-violet-300/80">{Object.keys(watchedSystems || {}).length}</span>}
+          </label>
+          <label
+            className="flex items-center gap-1 px-2 py-1 rounded bg-background/80 border border-border text-xs text-muted-foreground cursor-pointer"
+            title="An approximate galaxy for orientation — disc, bar and four arms. Layout after edastro.com/galmap; the geometry is redrawn, not surveyed."
+          >
+            <input
+              type="checkbox"
+              checked={showGalaxy}
+              onChange={(e) => setShowGalaxy(e.target.checked)}
+              className="rounded border-border w-3 h-3"
+            />
+            Galaxy
+          </label>
+          <label
+            className="flex items-center gap-1 px-2 py-1 rounded bg-background/80 border border-border text-xs text-muted-foreground cursor-pointer"
+            title={`The 42 galactic regions with their real borders. ${GALACTIC_REGION_SOURCE}`}
+          >
+            <input
+              type="checkbox"
+              checked={showRegions}
+              onChange={(e) => setShowRegions(e.target.checked)}
+              className="rounded border-border w-3 h-3"
+            />
+            Regions
+          </label>
+          <label
+            className="flex items-center gap-1 px-2 py-1 rounded bg-background/80 border border-border text-xs text-muted-foreground cursor-pointer"
+            title="Colonia, the nebulae and Founders World, placed from the coordinates in your own data"
+          >
+            <input
+              type="checkbox"
+              checked={showLandmarks}
+              onChange={(e) => setShowLandmarks(e.target.checked)}
+              className="rounded border-border w-3 h-3"
+            />
+            Landmarks
+            {showLandmarks && <span className="text-fuchsia-300/80">{LANDMARKS.length}</span>}
+          </label>
+          <label
+            className="flex items-center gap-1 px-2 py-1 rounded bg-background/80 border border-border text-xs text-muted-foreground cursor-pointer"
+            title={populated ? `Populated systems within ${(populated.bubbles && populated.bubbles.length ? populated.bubbles : [{ name: populated.centre.name, radiusLy: populated.radiusLy }]).map((b) => `${b.radiusLy} ly of ${b.name}`).join(' and ')}: ${populated.count.toLocaleString()} on file (${populated.live} added or refreshed live from the journal stream)${populated.source ? `, seeded from ${populated.source}` : ''}${populated.generatedAt ? ` on ${populated.generatedAt.slice(0, 10)}` : ''}. Brighter = bigger population.` : 'Populated systems — seeded from your Spansh dump, kept current from the journal stream'}
+          >
+            <input
+              type="checkbox"
+              checked={showPopulated}
+              onChange={(e) => setShowPopulated(e.target.checked)}
+              className="rounded border-border w-3 h-3"
+            />
+            Populated
+            {showPopulated && populated && <span className="text-amber-300/80">{populated.count.toLocaleString()}</span>}
+            {showPopulated && populatedLoading && <span className="text-muted-foreground/60">…</span>}
+            {showPopulated && !populatedLoading && populated && populated.count === 0 && <span className="text-muted-foreground/60">not seeded</span>}
+          </label>
+          <label
+            className="flex items-center gap-1 px-2 py-1 rounded bg-background/80 border border-border text-xs text-muted-foreground cursor-pointer"
+            title="Every jump you have made, from the journals, with a pin on the big moments"
+          >
+            <input
+              type="checkbox"
+              checked={showJourney}
+              onChange={(e) => setShowJourney(e.target.checked)}
+              className="rounded border-border w-3 h-3"
+            />
+            {journeyLoading ? 'Journey…' : 'Journey'}
+            {journey && showJourney && (
+              <span className="text-violet-300/80">{journey.path.length.toLocaleString()} · {journey.pins.length} pins</span>
+            )}
+          </label>
         </div>
+
+        {/* What a pin is — the log's own line, shown on hover */}
+        {hoveredPin && (
+          <div className="absolute bottom-2 left-2 z-10 max-w-md rounded-lg border border-violet-500/40 bg-background/95 px-3 py-2 text-xs">
+            <div className="text-[10px] uppercase tracking-wider text-violet-300/80">
+              {new Date(hoveredPin.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} {new Date(hoveredPin.at).getFullYear() + 1286} · {hoveredPin.weight}
+            </div>
+            <div className="mt-0.5 text-foreground">{hoveredPin.line}</div>
+          </div>
+        )}
 
         {/* System list overlay */}
         {showList && (

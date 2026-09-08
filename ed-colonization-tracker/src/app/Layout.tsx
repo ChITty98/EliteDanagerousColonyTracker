@@ -12,9 +12,10 @@ import { UpdateBanner } from '@/features/update/UpdateBanner';
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '\u25C6' },
   { to: '/domain', label: "Architect's Domain", icon: '\u{1F3DB}\u{FE0F}' },
-  { to: '/map', label: 'Colony Map', icon: '\u{1F30C}' },
+  { to: '/map', label: 'Map', icon: '\u{1F30C}' },
   { to: '/system-view', label: 'System View', icon: '\u{2604}\u{FE0F}' },
   { to: '/sights', label: 'Sights', icon: '\u{1F4F8}' },
+  { to: '/log', label: "Commander's Log", icon: '\u{1F4D6}' },
   { to: '/projects', label: 'Projects', icon: '\u25A3' },
   { to: '/fleet-carrier', label: 'Fleet Carrier', icon: '\u2693' },
   { to: '/scouting', label: 'Expansion', icon: '\u{1F52D}' },

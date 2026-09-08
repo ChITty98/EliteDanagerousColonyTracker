@@ -32,6 +32,7 @@ import { rawMaterial } from './rawMaterials.js';
 import { getNavLock } from './navLock.js';
 import { galacticAvgSell, canonicalCommodityName } from './commodityPricesMirror.js';
 import { friendlyShip, padSizeFor } from './extractor.js';
+import { pushSurfaceBeat, pickTargetCommodity, shipMoveKind, surfaceTempFromState, BURST_DEPARTURE_WINDOW_MS, RECALL_ARRIVAL_MS } from '../ai/copilotSurface.js';
 
 /** One key per commodity however the journal or a finger spelled it — "Low Temp. Diamonds" and
  *  "Low Temperature Diamonds" are the same deposit. */
@@ -68,8 +69,8 @@ let lastCompassSent = null; // { distance, bearing, turn, ms } — what the over
 let farNotified = false;    // said "too far" once; quiet until closer
 const COMPASS_FAR_M = 50_000;
 const COMPASS_REFRESH_MS = 3000; // keeps the 4 s overlay line alive without a change
-const TRACK_MIN_MS = 10_000;
-const TRACK_MIN_M = 25;
+const TRACK_MIN_MS = 5_000;   // denser while driving: the coverage corridor hugs the ground actually driven
+const TRACK_MIN_M = 15;
 const TRACK_MAX_ALT_M = 5000;
 const ARRIVE_M = 50;
 
@@ -278,7 +279,7 @@ export function setCurrentSite({ body, siteIndex, system, systemAddress, moved }
   };
   appendRecord(rec);
   flushNow();
-  lastDrop = rec;
+  lastDrop = rec; noteSurfaceArrival(rec);
   if (isMove || !session.startedAt || session.body !== b) session = { startedAt: at, body: b, tonnes: 0, commodities: {}, lastRefineAt: 0 };
   return rec;
 }
@@ -455,8 +456,27 @@ export function isInSrvNow() {
 export function isRecordedScreenshot(basename) {
   const b = String(basename || '').toLowerCase();
   if (!b) return false;
-  return readSurfaceRecords().some((r) => r && r.k === 'mark' && r.file
-    && String(r.file).replace(/\\/g, '/').split('/').pop().toLowerCase() === b);
+  return depotShotFiles().has(b);
+}
+
+/**
+ * Every screenshot filename the surface ledger claims, lowercased. A shot named by a marker is a
+ * picture of a deposit's HUD panel — documentation of a rock, not a picture of the place — so the
+ * places that show off a body (the gallery's hero shots, the Commander's Log) leave them out.
+ * The gallery's own utility flag says the same thing but is only set when a marker is read back;
+ * these filenames are on disk from the moment the marker is written.
+ */
+export function depotShotFiles() {
+  const out = new Set();
+  for (const r of readSurfaceRecords()) {
+    if (!r) continue;
+    const files = Array.isArray(r.files) ? r.files : [];
+    for (const f of (r.file ? [r.file, ...files] : files)) {
+      const b = String(f || '').replace(/\\/g, '/').split('/').pop().toLowerCase();
+      if (b) out.add(b);
+    }
+  }
+  return out;
 }
 
 /** Status.json is the ONLY source of surface position. Read at burst start, never guessed. */
@@ -607,6 +627,142 @@ function emitMaterialOverlay(ev, ctx, deps) {
  * `ctx` supplies the system the journal already resolved plus a material-count lookup:
  * { system, systemAddress, materialCount }.
  */
+// ---- co-pilot bridge ------------------------------------------------------------------------
+// The co-pilot is overhead in the ship. These are the moments it has something to say on the
+// radio, pushed to copilotSurface.js where the canned pools live. Nothing here generates text.
+const ARRIVE_ONCE_MS = 6 * 3600e3;     // one arrival line per signal per evening
+const TARGET_NUDGE_MS = 7 * 60e3;      // "still looking for that iridium" — seven minutes on site, the commander's number
+const HOLD_BEAT_AT = 0.8;              // the hold line, once per trip, as the Rhino nears full
+const SHIP_NEAR_M = 1000;              // the ship counts as "with you" when landed within this
+const arrivedSeen = new Map();         // body|site -> ms
+let holdBeatFired = false;
+const LIVE_MS = 120_000;              // a beat comes from an event written just now, never from a replayed journal
+let shipSpot = null;                  // { lat, lon, body, radius, at } — where the ship IS as far as the app can tell:
+                                      // the deploy point, an unmanned touchdown, or where a recall brought her (she
+                                      // hovers ~30 m up through Rhino ops and never writes a Touchdown). null after
+                                      // a relog — she is not there until recalled — and after an auto-departure.
+let shipBurst = null;                 // { atMs, timer } — an SAASignalsFound burst seen from the SRV / on foot: her AI
+                                      // just took over. Recall or departure is decided when the window closes.
+let arriveTimer = null;
+let targetWatch = null;                // { body, siteIndex, commodity, startedAt, fired }
+let nudgeTimer = null;
+
+/** The latest driving score the commander gave this signal, or null. */
+function latestDrivingFor(body, siteIndex) {
+  let best = null;
+  for (const r of readSurfaceRecords()) {
+    if (!r || r.k !== 'rating' || r.driving == null || r.body !== body || r.siteIndex !== siteIndex) continue;
+    if (!best || String(r.at) >= String(best.at)) best = r;
+  }
+  return best ? best.driving : null;
+}
+
+/**
+ * What the commander is at this signal FOR: the most valuable commodity the ledger has on file
+ * here — sighted from orbit or pulled before — and only if it clears the value floor. Everything
+ * else at the site (the copper, the haematite) is not what anyone drove out here for, so it is
+ * never the thing to nudge about. The rule itself lives in copilotSurface.pickTargetCommodity.
+ */
+function loggedCommodityFor(body, siteIndex) {
+  const names = new Set();
+  for (const r of readSurfaceRecords()) {
+    if (!r || r.body !== body || r.siteIndex !== siteIndex) continue;
+    if (r.k === 'sight' && r.commodity) names.add(canonicalCommodityName(r.commodity));
+    if (r.k === 'collect') {
+      for (const c of Object.keys(r.commodities || {})) names.add(canonicalCommodityName(c));
+      if (r.commodity) names.add(canonicalCommodityName(r.commodity));
+    }
+  }
+  return pickTargetCommodity(names, (c) => galacticAvgSell(c));
+}
+
+function noteSurfaceArrival(rec) {
+  if (!rec || !rec.body || rec.siteIndex == null) return;
+  const k = `${rec.body}|${rec.siteIndex}`;
+  const now = Date.now();
+  if (now - (arrivedSeen.get(k) || 0) < ARRIVE_ONCE_MS) return;
+  arrivedSeen.set(k, now);
+  pushSurfaceBeat('arrive', { body: rec.body, siteIndex: rec.siteIndex, driving: latestDrivingFor(rec.body, rec.siteIndex) });
+  const commodity = loggedCommodityFor(rec.body, rec.siteIndex);
+  targetWatch = commodity ? { body: rec.body, siteIndex: rec.siteIndex, commodity, startedAt: now, fired: false } : null;
+  if (!nudgeTimer) { nudgeTimer = setInterval(maybeTargetNudge, 60_000); if (nudgeTimer.unref) nudgeTimer.unref(); }
+}
+
+/** Time-based: a while on site, and the logged commodity still has not come up this visit. */
+function maybeTargetNudge() {
+  if (!targetWatch || targetWatch.fired) return;
+  const want = targetWatch.commodity.toLowerCase();
+  const got = Object.keys((session && session.commodities) || {}).map((c) => canonicalCommodityName(c).toLowerCase());
+  if (got.includes(want)) { targetWatch.fired = true; return; }   // found it — nothing to nudge
+  if (Date.now() - targetWatch.startedAt < TARGET_NUDGE_MS) return;
+  targetWatch.fired = true;
+  pushSurfaceBeat('target', { commodity: want, siteIndex: targetWatch.siteIndex }, { kick: true });
+}
+
+function noteSurfaceHold(count) {
+  const threshold = Math.ceil(RHINO_HOLD_T * HOLD_BEAT_AT);
+  if (count < threshold) { if (count === 0) holdBeatFired = false; return; }
+  if (holdBeatFired) return;
+  holdBeatFired = true;
+  // "near" = the app knows where she is (shipSpot) and the SRV is within reach of it. She never
+  // lands during Rhino ops, so this is never about a touchdown: it is the deploy point, or where
+  // the last recall brought her. After a relog shipSpot is null — she is not there — so: far.
+  const pos = readSurfacePosition();
+  const near = !!(shipSpot && pos && pos.lat != null && shipSpot.lat != null
+    && (!shipSpot.body || !pos.body || shipSpot.body === pos.body)
+    && metresBetween(pos.lat, pos.lon, shipSpot.lat, shipSpot.lon, pos.radius || shipSpot.radius || 0) <= SHIP_NEAR_M);
+  pushSurfaceBeat('hold', { ship: near ? 'near' : 'far' });
+}
+
+function spotFrom(pos, at) {
+  if (!pos || pos.lat == null) return null;
+  return { lat: pos.lat, lon: pos.lon, body: pos.body || null, radius: pos.radius ?? null, at: at || new Date().toISOString() };
+}
+
+function isLiveEvent(ev) {
+  const ms = Date.parse(ev && ev.timestamp);
+  return Number.isFinite(ms) && Date.now() - ms <= LIVE_MS;
+}
+
+/**
+ * THE RECALL TELL. There is no journal event for recalling the ship, but the moment her AI takes
+ * over the game re-emits SAASignalsFound for every mapped body in range — and the commander is
+ * sitting in an SRV or standing on the surface, where the DSS cannot fire. Two things follow a
+ * burst: an unmanned Liftoff within 3 s (she is LEAVING — the SRV drove out of range) or nothing
+ * (she is COMING — a landing ~30 s later on foot, a boarding 40–75 s later from the Rhino).
+ * Verified over every journal on this PC. So: wait out the departure window, then it's a recall.
+ */
+function noteShipBurst(ev) {
+  if (!isLiveEvent(ev)) return;                       // a replayed journal never speaks
+  const pos = readSurfacePosition();
+  const away = pos ? (pos.inSrv || pos.onFoot) : journalSrv;
+  if (!away) return;                                  // in the ship this is your own scanner
+  if (shipBurst) return;                              // one burst = one event per body in range, same second
+  const atMs = Date.parse(ev.timestamp);
+  const timer = setTimeout(() => {
+    shipBurst = null;
+    pushSurfaceBeat('recall', {}, { kick: true });
+    // She comes to the commander: half a minute on, wherever the SRV is IS where she is.
+    if (arriveTimer) clearTimeout(arriveTimer);
+    arriveTimer = setTimeout(() => { arriveTimer = null; const p = spotFrom(readSurfacePosition()); if (p) shipSpot = p; }, RECALL_ARRIVAL_MS);
+    if (arriveTimer.unref) arriveTimer.unref();
+  }, BURST_DEPARTURE_WINDOW_MS);
+  if (timer.unref) timer.unref();
+  shipBurst = { atMs, timer };
+}
+
+/** Out of the SRV onto the surface. The temperature is whatever the app has ON FILE for the body. */
+function noteOnFoot(ev) {
+  if (!isLiveEvent(ev)) return;
+  const body = ev.Body || null;
+  let tempK = null;
+  try {
+    const state = overlayDeps && typeof overlayDeps.readState === 'function' ? overlayDeps.readState() : null;
+    tempK = surfaceTempFromState(state, ev.SystemAddress, body);
+  } catch { tempK = null; }
+  pushSurfaceBeat('foot', { body, tempK });
+}
+
 export function ingestSurfaceMining(parsed, ctx = {}, deps = null) {
   if (deps) overlayDeps = deps;
   const events = (parsed && parsed.allEvents) || [];
@@ -618,6 +774,7 @@ export function ingestSurfaceMining(parsed, ctx = {}, deps = null) {
     // --- opportunities: the DSS signal count for a body, dropped by every other consumer -------
     // checklist.js reads only ev.Genuses from SAASignalsFound and skips when empty, and
     // miningIndex only ingests /Ring/i bodies — so this signal type reached nothing.
+    if (ev.event === 'SAASignalsFound') noteShipBurst(ev); // the recall / departure tell — see noteShipBurst
     if (ev.event === 'SAASignalsFound' && Array.isArray(ev.Signals)) {
       const spot = ev.Signals.find((s) => s && /PlanetaryMiningLocation/i.test(String(s.Type || '')));
       if (spot && ev.BodyName) {
@@ -724,7 +881,7 @@ export function ingestSurfaceMining(parsed, ctx = {}, deps = null) {
           bodyId: site ? site.bodyId : null,
         };
         appendRecord(rec);
-        lastDrop = rec;
+        lastDrop = rec; noteSurfaceArrival(rec);
         // A drop starts a visit: the hero's "since you landed" counters restart here.
         session = { startedAt: rec.at, body: rec.body, tonnes: 0, commodities: {}, lastRefineAt: 0 };
         trip = { startedAt: null, tonnes: 0, commodities: {} };
@@ -765,7 +922,7 @@ export function ingestSurfaceMining(parsed, ctx = {}, deps = null) {
         bodyId: ev.BodyID ?? (prev ? prev.bodyId ?? null : null),
       };
       appendRecord(rec);
-      lastDrop = rec;
+      lastDrop = rec; noteSurfaceArrival(rec);
       session = { startedAt: rec.at, body: rec.body, tonnes: 0, commodities: {}, lastRefineAt: 0 };
       trip = { startedAt: null, tonnes: 0, commodities: {} };
       if (deps && typeof deps.broadcastEvent === 'function') {
@@ -784,12 +941,34 @@ export function ingestSurfaceMining(parsed, ctx = {}, deps = null) {
     // 26–29km "from drop". LaunchSRV fires with the ship parked, and Status.json then holds the
     // landed position. That is the anchor distances are measured from.
     // --- the hold, and the trips that empty it -------------------------------------------------
+    // The ship lifting off WITHOUT the commander at the stick: she went up on her own because the
+    // SRV drove out of range. Her AI announced itself 3 s earlier with the SAASignalsFound burst;
+    // this Liftoff is what says she is leaving rather than coming, so the pending recall is void.
+    if (ev.event === 'Liftoff' && ev.PlayerControlled === false) {
+      if (shipBurst && shipMoveKind(shipBurst.atMs, Date.parse(ev.timestamp)) === 'departure') { clearTimeout(shipBurst.timer); shipBurst = null; }
+      shipSpot = null;
+      if (isLiveEvent(ev)) pushSurfaceBeat('ship-away', {});
+      continue;
+    }
+    // An on-foot recall ends with her setting down beside the commander: that IS where she is.
+    if (ev.event === 'Touchdown' && ev.PlayerControlled === false && ev.Latitude != null) {
+      const p = readSurfacePosition();
+      shipSpot = { lat: ev.Latitude, lon: ev.Longitude, body: ev.Body || null, radius: p ? p.radius ?? null : null, at: ev.timestamp || new Date().toISOString() };
+    }
+    if (ev.event === 'Disembark' && ev.SRV === true && ev.OnPlanet === true) { noteOnFoot(ev); continue; }
     if (ev.event === 'Cargo' && ev.Vessel === 'SRV' && typeof ev.Count === 'number') {
       srvHold = ev.Count;
+      noteSurfaceHold(ev.Count);
       journalSrv = true; // the game only reports the SRV's hold while you are in it
       continue;
     }
     if (ev.event === 'SRVDestroyed' || ev.event === 'LoadGame') journalSrv = false;
+    if (ev.event === 'LoadGame') {
+      // A relog: she is not there. Nothing places her again until a deploy, a touchdown or a recall.
+      holdBeatFired = false; shipSpot = null;
+      if (shipBurst) { clearTimeout(shipBurst.timer); shipBurst = null; }
+      if (arriveTimer) { clearTimeout(arriveTimer); arriveTimer = null; }
+    }
     // A drop-off is the thing that actually ends something: the trip. Either you drove to the
     // hovering ship and transferred (CargoTransfer toship), or you boarded with cargo (DockSRV).
     if (ev.event === 'CargoTransfer' || ev.event === 'DockSRV') {
@@ -798,7 +977,10 @@ export function ingestSurfaceMining(parsed, ctx = {}, deps = null) {
         : [];
       if (ev.event === 'CargoTransfer' && !toShip.length) continue; // carrier moves are the ship's business
       if (trip.tonnes > 0) endTrip(ev, ev.event === 'DockSRV' ? 'boarded' : 'transfer', toShip, deps);
-      if (ev.event === 'DockSRV') { srvHold = 0; journalSrv = false; }
+      if (ev.event === 'DockSRV') {
+        srvHold = 0; journalSrv = false; holdBeatFired = false;
+        const p = spotFrom(readSurfacePosition(), ev.timestamp); if (p) shipSpot = p; // boarded: she is exactly here
+      }
       continue;
     }
 
@@ -821,6 +1003,7 @@ export function ingestSurfaceMining(parsed, ctx = {}, deps = null) {
         };
         appendRecord(rec);
         lastLanding = rec;
+        shipSpot = { lat: rec.lat, lon: rec.lon, body: rec.body, radius: rec.radius ?? null, at: rec.at }; // she hovers where the Rhino dropped from
       }
       continue;
     }
@@ -1030,6 +1213,42 @@ function expandBursts(recs) {
 }
 
 /**
+ * QUEUED REFINERY OUTPUT — the commander's read (2026-09-06): a full hold cannot take the
+ * refinery's finished bins, so they wait; the moment a transfer empties the hold they drop in —
+ * one or two MiningRefined lines within a second or two of the CargoTransfer, with the Rhino
+ * parked at the ship. Live, that opened a fresh collection AT THE SHIP: 2 t of Thortveitite
+ * 1.4 km from its rig on 1 a, 1 t of Iridium on 2 d. Those tonnes came out of the rig just
+ * worked. Read-time, like the visit partition, so the ledger keeps what was written and the
+ * records already on file are repaired too: a collection that opens inside the window after a
+ * transfer takes the position of the latest earlier collection of the SAME commodity on the
+ * same body and says so. A different commodity, or nothing recent to credit, stays where it was
+ * recorded — a rig placed beside the ship is real (the 12 t of Platinum 20 s after a transfer).
+ */
+const QUEUED_AFTER_TRANSFER_MS = 10_000;
+const QUEUED_LOOKBACK_MS = 30 * 60_000;
+function creditQueuedOutput(recs) {
+  const transfers = recs.filter((r) => r && r.k === 'trip' && r.reason === 'transfer' && r.at)
+    .map((r) => ({ at: Date.parse(r.at), body: r.body || null }));
+  if (!transfers.length) return recs;
+  const collects = recs.filter((r) => r && r.k === 'collect' && r.at && r.lat != null).sort((a, b) => (a.at < b.at ? -1 : 1));
+  const moved = new Map();
+  for (const r of collects) {
+    const t = Date.parse(r.at);
+    const xfer = transfers.find((x) => t >= x.at && t - x.at <= QUEUED_AFTER_TRANSFER_MS && (!x.body || !r.body || x.body === r.body));
+    if (!xfer) continue;
+    let src = null;
+    for (const c of collects) {
+      if (c === r || moved.has(c) || c.body !== r.body || c.commodity !== r.commodity || c.at >= r.at) continue;
+      if (t - Date.parse(c.at) > QUEUED_LOOKBACK_MS) continue;
+      if (!src || c.at > src.at) src = c;
+    }
+    if (!src) continue;
+    moved.set(r, { ...r, lat: src.lat, lon: src.lon, radius: src.radius ?? r.radius, queued: true, queuedFrom: { lat: r.lat, lon: r.lon } });
+  }
+  return moved.size ? recs.map((r) => moved.get(r) || r) : recs;
+}
+
+/**
  * Re-join collections that were sliced by a summary read (the finaliser used to run on every
  * poll): consecutive records of the same commodity at the same spot whose gap is inside the
  * burst window. Read-time only — the ledger is append-only and keeps what was written. The merged
@@ -1078,6 +1297,7 @@ function metresBetween(aLat, aLon, bLat, bLon, radiusM) {
 // controls a "same site / drove elsewhere" LABEL, and the real distance is always shown, so the
 // commander can see for themselves what a site's radius turns out to be.
 const SAME_SITE_M = 3000;
+const SITE_RADIUS_M = 5000; // a planetary mining location is ~5 km from centre to edge (commander, 2026-09-06) — the coverage window
 
 // The Rhino and planetary mining deposits shipped in game version 4.4.1.0; the commander's first
 // evidence of it is a RestockVehicle for mev_rhino at 2026-09-02T14:58:17Z. Nothing before that
@@ -1185,6 +1405,7 @@ export function getSurfaceSnapshot() {
   return {
     active,
     inSrv,
+    onFoot: !!(pos && pos.onFoot),
     body: pos ? pos.body : null,
     lat: pos ? pos.lat : null,
     lon: pos ? pos.lon : null,
@@ -1254,8 +1475,10 @@ export function tickCompass() {
   const now = Date.now();
   const deps = overlayDeps;
 
-  // Breadcrumb: near the surface, at most one point per 10 s, and only after moving 25 m.
-  if (TRACK_PATH && (pos.altitude == null || pos.altitude < TRACK_MAX_ALT_M) && pos.body) {
+  // Breadcrumb: the DRIVE — in the SRV or on foot — at most one point per 10 s, and only after
+  // moving 25 m. Never the ship: the altitude gate alone let an approach glide under 5 km be
+  // drawn as a drive, priced as a fast measured leg by the route planner, and folded into the pace.
+  if (TRACK_PATH && (pos.inSrv || pos.onFoot) && (pos.altitude == null || pos.altitude < TRACK_MAX_ALT_M) && pos.body) {
     const moved = lastTrack ? metresBetween(lastTrack.lat, lastTrack.lon, pos.lat, pos.lon, pos.radius) : null;
     if (!lastTrack || (now - lastTrack.ms >= TRACK_MIN_MS && (moved == null || moved >= TRACK_MIN_M))) {
       lastTrack = { ms: now, lat: pos.lat, lon: pos.lon };
@@ -1332,17 +1555,37 @@ function readTrackAll() {
   return byBody;
 }
 
-/** Breadcrumbs for the given bodies, last 48 h, newest 3000 per body — the map's line. */
-export function readTrack(bodies) {
+/**
+ * Breadcrumbs for the given bodies — the map's line, the coverage corridor, the route planner's
+ * terrain graph and the pace all read this. SRV and on-foot samples only: anything the file holds
+ * from the ship (older builds sampled every low pass) is not a drive and stays out. Two windows:
+ * the last 48 h anywhere on the body, and — so "ground my scanner never covered" means something
+ * across evenings — every sample within a site's radius (~5 km) of one of its deposits, whatever its age.
+ * Newest 6000 per body.
+ */
+export function readTrack(bodies, anchors = null) {
   const all = readTrackAll();
   const since = Date.now() - 48 * 3600_000;
   const out = {};
   for (const [body, pts] of Object.entries(all)) {
     if (bodies && !bodies.has(body)) continue;
-    const recent = pts.filter((p) => Date.parse(p.at) >= since);
-    out[body] = recent.length > 3000 ? recent.slice(-3000) : recent;
+    const near = (anchors && anchors.get(body)) || [];
+    const keep = pts.filter((p) => (p.srv || p.foot) && (Date.parse(p.at) >= since
+      || near.some((a) => (metresBetween(p.lat, p.lon, a.lat, a.lon, a.radius) ?? Infinity) <= SITE_RADIUS_M)));
+    out[body] = keep.length > 6000 ? keep.slice(-6000) : keep;
   }
   return out;
+}
+
+/** body → the deposits on it, as track anchors (position + the body radius the record carried). */
+export function trackAnchorsFor(deposits) {
+  const map = new Map();
+  for (const d of deposits || []) {
+    if (!d || !d.body || d.lat == null || d.lon == null || !d.radius) continue;
+    if (!map.has(d.body)) map.set(d.body, []);
+    map.get(d.body).push({ lat: d.lat, lon: d.lon, radius: d.radius });
+  }
+  return map;
 }
 
 /**
@@ -1429,8 +1672,21 @@ function groveNear(pos, bodyId) {
  * with the least total driving to them (Weiszfeld, in local metres on the body's radius). Terrain
  * is unknown to us; whether a ship can set down there is the commander's call on arrival.
  */
-function recallSpotFor(pts, radius) {
-  if (!radius || pts.length < 2) return null;
+/**
+ * How much of a signal has to be worked before a recall spot means anything.
+ *
+ * It is a SHARE, not a count. Two deposits out of nineteen put the median between whichever two you
+ * happened to hit first, nowhere near where the signal's centre of mass ends up — which is why it
+ * kept landing in odd places. But two out of two is not a guess at all: if you are shuttling
+ * between a pair, the midpoint of that pair is exactly the right place to put the ship. A floor of
+ * three would have refused the one case where the answer is obvious.
+ */
+const RECALL_MIN_SHARE = 1 / 3;
+
+function recallSpotFor(pts, radius, knownAtSignal) {
+  if (!radius || pts.length < 2) return null;          // two points to have a midpoint at all
+  const known = knownAtSignal || pts.length;
+  if (pts.length < Math.ceil(known * RECALL_MIN_SHARE)) return null;
   const rad = Math.PI / 180;
   const lat0 = pts.reduce((t, p) => t + p.lat, 0) / pts.length;
   const lon0 = pts.reduce((t, p) => t + p.lon, 0) / pts.length;
@@ -1487,7 +1743,7 @@ export function getSurfaceSummary(priceFn, resolveBody, bestSellFn) {
       commodities: { ...open.commodities }, tonnes: open.tonnes, materials: { ...open.materials }, live: true,
     });
   }
-  const recs = coalesceCollections(expandBursts(stored));
+  const recs = coalesceCollections(creditQueuedOutput(expandBursts(stored)));
   // Tag retractions: a sighting is active only if no later `unsight` names the same signal and
   // commodity; tagging again after a retraction re-activates it. Both lines stay in the ledger.
   const retractedAt = new Map(); // body|siteIndex|commodity → latest retraction time
@@ -1657,6 +1913,7 @@ export function getSurfaceSummary(priceFn, resolveBody, bestSellFn) {
     const d = {
       id, body: c.body, system: first.system || (bodies.get(c.body) || {}).system || null,
       lat: first.lat, lon: first.lon,
+      radius: first.radius ?? null, // the body radius the record carried — distances from this deposit
       tonnes: 0, collections: 0, commodities: {}, materials: {},
       firstAt: first.at, lastAt: first.at,
       at: first.at,
@@ -1989,8 +2246,10 @@ export function getSurfaceSummary(priceFn, resolveBody, bestSellFn) {
   // Recall spot per signal: the least-total-driving point among its worked deposits.
   for (const b of bodiesOut) {
     for (const r of b.siteRows) {
-      const pts = depositsOut.filter((d) => d.body === b.body && d.siteIndex === r.index && d.tonnes > 0 && !d.uncertain && d.lat != null && d.lon != null);
-      r.recall = recallSpotFor(pts, b.radius || (pts[0] && pts[0].radius) || null);
+      const here = depositsOut.filter((d) => d.body === b.body && d.siteIndex === r.index && !d.uncertain && d.lat != null && d.lon != null);
+      const pts = here.filter((d) => d.tonnes > 0);
+      r.recall = recallSpotFor(pts, b.radius || (pts[0] && pts[0].radius) || null, here.length);
+      r.recallAfter = r.recall ? null : Math.max(2, Math.ceil(here.length * RECALL_MIN_SHARE)) - pts.length;
     }
     // Lifetime driving on the body, and the highest ground reached (jump-proofed).
     const pts = trackAll[b.body] || [];
@@ -2042,7 +2301,7 @@ export function getSurfaceSummary(priceFn, resolveBody, bestSellFn) {
     bodies: bodiesOut,
     deposits: depositsOut,
     // Breadcrumbs (48 h) for the bodies on the page, and the current steering target.
-    track: readTrack(trackBodies),
+    track: readTrack(trackBodies, trackAnchorsFor(depositsOut)),
     target: navTarget,
     rigCapacity: getRigCapacity(),
     pins: pinsOut,

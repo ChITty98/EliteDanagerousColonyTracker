@@ -57,6 +57,10 @@ export interface KnownStation {
   factionHistory?: { name: string; changedAt: string }[]; // recent controlling-faction changes (cap 5)
   stateHistory?: { state: string; changedAt: string }[]; // recent FactionState changes (cap 10)
   influenceHistory?: { ts: string; influence: number }[]; // influence snapshots at dock time (cap 10)
+  // Names this market id has shed. A station keeps its id through a rename, so anything that names
+  // the station by a dead name (an FSS signal, an old record) resolves here instead of standing up
+  // as a second entity: Sassoon Vision → Rao Refinery → Kalian Port is one station, not three.
+  nameHistory?: { name: string; changedAt: string }[]; // former names, oldest first (cap 10)
 }
 
 export interface MarketItem {

@@ -817,8 +817,8 @@ export default {
   ],
   "disembark": [
    "Off you go — I'll be right here, keeping the seat warm and absolutely not touching your settings.",
-   "Noted: you're heading out, I'm staying in. Fair division of labour, given that {body} looks cold and I'm a robot.",
-   "Door's open. I'll have the heat up for when you get back — I ran {body}'s surface temperature and 'brisk' is doing a lot of heavy lifting.",
+   "Noted: you're heading out, I'm staying in. Fair division of labour, given that {body} is outside and I'm a robot.",
+   "Door's open. I'll have the heat up for when you get back — force of habit, not a forecast.",
    "Have a good walk. I'll mind the ship, reorganize the cargo manifest, and pretend I wasn't going to do that anyway.",
    "On your way. I'll keep her idling — and if anyone asks, I'm definitely supposed to be parked here.",
    "Understood. You go be a person on a planet; I'll stay here and be a robot in a ship. We've found our respective niches.",

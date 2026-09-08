@@ -8,13 +8,24 @@
 // and the highest sell within range for every commodity Ardent or the commander's own records
 // list there, ranked by profit per load of the current ship.
 //
+// SPEED (2026-09-06, "the sell cargo page is very slow"): with 43 commodities aboard the carrier
+// the plan made three serial Ardent calls per commodity through a one-lane queue — four minutes.
+// Now ONE nearby call per commodity (a carrier jump out; "within your range" is the same rows cut
+// at rangeLy, so the range buttons cost nothing), the galaxy-wide call, three fetch lanes in
+// livePrices, and the assembled plan cached ten minutes against where you are and what you hold.
+//
+// FAST FIRST PAINT (2026-09-07, "start the load with markets that have been previously loaded"):
+// `fast: true` builds the plan from your own snapshots and whatever Ardent answers are already in
+// the hour cache, marks it partial, and queues the misses in the background. The route broadcasts
+// sell_plan_updated when the full build lands; the page refetches the fast plan, now complete.
+//
 // Own records matter because the domain's stations (Atmo Sky Cairn …) are not reliably on EDDN;
 // Ardent matters because the domain is not the galaxy. Ardent's live listings DO know the 2026
 // commodities (its summary report does not). Every lookup goes through ardentJson — cached an
 // hour, one in flight, fail-quiet — and is injectable for tests.
 import { readShipCargo, friendlyShip } from './extractor.js';
-import { ardentJson } from './livePrices.js';
-import { canonicalCommodityName } from './commodityPricesMirror.js';
+import { ardentJson, ardentPeek } from './livePrices.js';
+import { canonicalCommodityName, galacticAvgSell } from './commodityPricesMirror.js';
 import { FRESH_MARKET_MS, MAX_REACH_LY } from './marketMeans.js';
 import { keyOf, recordArdentSample, needsSample, seriesFor, track } from './marketHistory.js';
 
@@ -105,7 +116,57 @@ const bestPrice = (r) => Math.max(r.here ? r.here.price : 0, r.local ? r.local.p
  * @param {(path:string)=>Promise<any>} [o.fetchJson] Ardent fetch — injected in tests
  * @param {number} [o.now]
  */
-export async function buildSellPlan({ state, journalDir, rangeLy = 50, searched = [], fetchJson = ardentJson, now = Date.now() }) {
+const PLAN_TTL_MS = 10 * 60_000;
+const planCache = new Map(); // key -> { at, plan }
+export function _clearPlanCache() { planCache.clear(); }
+
+export function sellPlanKey(opts) {
+  const { state, journalDir, rangeLy = 50, searched = [] } = opts || {};
+  const st = state || {};
+  const me = st.commanderPosition || null;
+  const dock = st.currentDock || null;
+  const fc = (st.settings || {}).myFleetCarrier || null;
+  const carrier = fc && st.carrierCargo ? st.carrierCargo[fc] : null;
+  let shipSig = '';
+  try { const sc = journalDir ? readShipCargo(journalDir) : null; shipSig = ((sc && sc.items) || []).map((i) => `${i.name || i.commodityId}:${i.count}`).sort().join(','); } catch { shipSig = '?'; }
+  const carrierSig = ((carrier && carrier.items) || []).map((i) => `${i.name || i.commodityId}:${i.count}`).sort().join(',');
+  const hereAt = dock && st.marketSnapshots && st.marketSnapshots[dock.marketId] ? st.marketSnapshots[dock.marketId].updatedAt || '' : '';
+  return [me && me.systemName, rangeLy, dock && dock.marketId, hereAt, JSON.stringify(searched || []), shipSig, carrierSig].join('|');
+}
+
+export async function buildSellPlan(opts) {
+  const { fetchJson = ardentJson, fast = false, peek = ardentPeek } = opts || {};
+  // FAST: a complete cached plan wins; otherwise build from the cache alone and say what is missing.
+  if (fast) {
+    const key = sellPlanKey(opts);
+    const hit = planCache.get(key);
+    if (hit && Date.now() - hit.at < PLAN_TTL_MS) return hit.plan;
+    const missing = new Set();
+    const cachedOnly = async (p) => {
+      const c = peek(p);
+      if (c.cached) return c.data;
+      missing.add(p);
+      if (fetchJson === ardentJson) ardentJson(p).catch(() => {}); // queue the real fetch; nobody waits on it
+      return null;
+    };
+    const plan = await buildSellPlanUncached({ ...opts, fetchJson: cachedOnly });
+    plan.partial = missing.size > 0;
+    plan.pending = missing.size;
+    if (!plan.partial && fetchJson === ardentJson) planCache.set(key, { at: Date.now(), plan });
+    return plan;
+  }
+  // Cached only on the real fetcher — an injected one is a test, and tests want every call made.
+  if (fetchJson !== ardentJson) return buildSellPlanUncached(opts);
+  const key = sellPlanKey(opts);
+  const hit = planCache.get(key);
+  if (hit && Date.now() - hit.at < PLAN_TTL_MS) return hit.plan;
+  const plan = await buildSellPlanUncached(opts);
+  planCache.set(key, { at: Date.now(), plan });
+  if (planCache.size > 20) planCache.delete(planCache.keys().next().value);
+  return plan;
+}
+
+async function buildSellPlanUncached({ state, journalDir, rangeLy = 50, searched = [], fetchJson = ardentJson, now = Date.now() }) {
   const st = state || {};
   const settings = st.settings || {};
   const me = st.commanderPosition || null;
@@ -156,20 +217,22 @@ export async function buildSellPlan({ state, journalDir, rangeLy = 50, searched 
       if (c && c.sellPrice > 0) here = { price: c.sellPrice, demand: c.demand ?? null, station: hereSnap.stationName, system: hereSnap.systemName, distance: 0, at: hereSnap.updatedAt, source: 'yours' };
     }
 
+    // NEARBY — one call, one carrier jump out. "Within your range" is the same rows cut at rangeLy.
+    const ardentCarrier = refSystem ? await fetchJson(`/system/name/${enc(refSystem)}/commodity/name/${enc(r.key)}/nearby/imports?maxDistance=${CARRIER_RANGE_LY}&fleetCarriers=false`) : null;
+    const nearRows = withDist(ardentCarrier);
+    const ardentLocal = Array.isArray(ardentCarrier) ? nearRows.filter((x) => x && x.distance != null && x.distance <= rangeLy) : null;
     // LOCAL — own fresh rows within range, plus Ardent's buyers within range.
-    const ardentLocal = refSystem ? await fetchJson(`/system/name/${enc(refSystem)}/commodity/name/${enc(r.key)}/nearby/imports?maxDistance=${rangeLy}&fleetCarriers=false`) : null;
-    const localRows = [...mine.filter((x) => x.distance != null && x.distance <= rangeLy), ...withDist(ardentLocal)];
+    const localRows = [...mine.filter((x) => x.distance != null && x.distance <= rangeLy), ...(ardentLocal || [])];
     const localBest = bestSell(localRows, load);
     const local = pick(localBest, 'sell');
     if (local && localBest.own) local.onlyYours = !(Array.isArray(ardentLocal) && ardentLocal.some((x) => x && x.marketId === localBest.marketId));
 
-    // GALAXY — one carrier jump out, and the overall top of book (sampled into the history daily).
-    const ardentCarrier = refSystem ? await fetchJson(`/system/name/${enc(refSystem)}/commodity/name/${enc(r.key)}/nearby/imports?maxDistance=${CARRIER_RANGE_LY}&fleetCarriers=false`) : null;
+    // GALAXY — the carrier-jump rows above, and the overall top of book (sampled into the history daily).
     const ardentAll = await fetchJson(`/commodity/name/${enc(r.key)}/imports?fleetCarriers=false`);
     // Unknown distance (no position yet) is allowed through; a known distance beyond reach is not.
     const reachable = withDist(ardentAll).filter((x) => x && (x.distance == null || x.distance <= MAX_REACH_LY));
     if (Array.isArray(ardentAll) && needsSample(r.key, now)) recordArdentSample(r.key, reachable, now);
-    const carrierRows = [...mine.filter((x) => x.distance != null && x.distance <= CARRIER_RANGE_LY), ...withDist(ardentCarrier)];
+    const carrierRows = [...mine.filter((x) => x.distance != null && x.distance <= CARRIER_RANGE_LY), ...nearRows];
     const galaxy = pick(bestSell(carrierRows, load), 'sell');
     const top = pick(bestSell(reachable, load), 'sell');
     const known = Array.isArray(ardentAll) || Array.isArray(ardentLocal) || Array.isArray(ardentCarrier);
@@ -212,6 +275,79 @@ export async function buildSellPlan({ state, journalDir, rangeLy = 50, searched 
  * the populated systems the commander knows (plus the current one) and the commander's own fresh
  * records, which override Ardent when newer and add the stations Ardent lacks.
  */
+/**
+ * SELL AT — everything you hold, priced at ONE chosen system: the best-paying station there for
+ * each commodity (Ardent's full listing for the system plus your own snapshot if you docked), the
+ * price against the galactic mean, demand against your tonnes, and what the best buyer elsewhere
+ * pays (the cached galaxy-wide list, when the plan has fetched it). "I'm going to LFT 65 for the
+ * Rhodplumsite — what else should ride along?" One Ardent call, cached an hour.
+ */
+export async function buildSellAt({ state, journalDir, system, fetchJson = ardentJson, peek = ardentPeek, now = Date.now() }) {
+  const st = state || {};
+  const name = String(system || '').trim();
+  if (!name) return { system: null, error: 'system required', rows: [], stations: [] };
+  const me = st.commanderPosition || null;
+  const myCoords = (me && me.coordinates) || null;
+  const fc = (st.settings || {}).myFleetCarrier || null;
+  const carrier = fc && st.carrierCargo ? st.carrierCargo[fc] : null;
+  let shipCargo = null;
+  try { shipCargo = journalDir ? readShipCargo(journalDir) : null; } catch { shipCargo = null; }
+  const held = new Map();
+  const rowFor = (label) => {
+    const key = keyOf(label);
+    let r = held.get(key);
+    if (!r) { r = { key, name: canonicalCommodityName(label), ship: 0, carrier: 0 }; held.set(key, r); }
+    return r;
+  };
+  for (const it of (shipCargo && shipCargo.items) || []) rowFor(it.name || it.commodityId).ship += it.count || 0;
+  for (const it of (carrier && carrier.items) || []) rowFor(it.name || it.commodityId).carrier += it.count || 0;
+
+  const listing = await fetchJson(`/system/name/${enc(name)}/commodities`);
+  const info = await fetchJson(`/system/name/${enc(name)}`);
+  const coords = info && Number.isFinite(info.systemX) ? { x: info.systemX, y: info.systemY, z: info.systemZ } : coordsOf(st, name);
+  const distance = dist(myCoords, coords);
+  const sysName = (info && info.systemName) || (Array.isArray(listing) && listing[0] && listing[0].systemName) || name;
+  const ardentRows = (Array.isArray(listing) ? listing : []).filter((x) => x && !isFC(x) && x.marketId).map((x) => ({ ...x, commodityName: keyOf(x.commodityName), distance }));
+  const own = ownRows(st, now).filter((r) => r.systemName && r.systemName.toLowerCase() === sysName.toLowerCase());
+  const stations = [...new Set([...ardentRows, ...own].map((r) => r.stationName).filter(Boolean))];
+
+  const rows = [];
+  for (const r of held.values()) {
+    const tonnes = r.ship + r.carrier;
+    if (!(tonnes > 0)) continue;
+    const candidates = [...own.filter((x) => x.commodityName === r.key), ...ardentRows.filter((x) => x.commodityName === r.key)];
+    // Own reading beats Ardent's for the same station when it is newer.
+    const byStation = new Map();
+    for (const c of candidates) {
+      const k = c.marketId || c.stationName;
+      const prev = byStation.get(k);
+      if (!prev || Date.parse(c.updatedAt || 0) >= Date.parse(prev.updatedAt || 0)) byStation.set(k, c);
+    }
+    const best = bestSell([...byStation.values()], 1);
+    const offer = pick(best, 'sell');
+    const mean = galacticAvgSell(r.name) || 0;
+    // The best buyer anywhere, from the plan's cached galaxy-wide list — only when it is on hand.
+    const all = peek(`/commodity/name/${enc(r.key)}/imports?fleetCarriers=false`);
+    const elsewhereBest = all.cached && Array.isArray(all.data) ? bestSell(all.data.filter((x) => x && !isFC(x)).map((x) => ({ ...x, distance: myCoords ? dist(myCoords, { x: x.systemX, y: x.systemY, z: x.systemZ }) : null })), 1) : null;
+    const elsewhere = elsewhereBest ? pick(elsewhereBest, 'sell') : null;
+    rows.push({
+      key: r.key, name: r.name, ship: r.ship, carrier: r.carrier, tonnes,
+      offer, mean,
+      vsMean: offer && mean > 0 ? offer.price / mean : null,
+      demandShort: !!(offer && offer.demand != null && offer.demand < tonnes),
+      value: offer ? offer.price * tonnes : 0,
+      elsewhere,
+      listedHere: byStation.size > 0,
+    });
+  }
+  rows.sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
+  const total = rows.reduce((t, r) => t + r.value, 0);
+  return {
+    at: new Date(now).toISOString(), system: sysName, coords, distance: distance != null ? Math.round(distance) : null,
+    known: Array.isArray(listing) || own.length > 0, stations, rows, total,
+  };
+}
+
 export async function tradeNearby({ st, own, myCoords, refSystem, rangeLy, capacity, fetchJson }) {
   if (!refSystem) return { systems: 0, load: capacity, rows: [] };
   const systems = new Map();

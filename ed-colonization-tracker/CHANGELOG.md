@@ -2,6 +2,24 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.58.0] — 2026-09-07
+
+### Added
+- **Commander's Log.** A deterministic timeline of the whole journal history: builds with station photos and a searchable *builds* tag, Dodecs and large ports weighted by your Domain Highlights, loop hauls ("around X, out to Y"), missions, exobiology and bio sales, community goals joined and delivered, vehicle firsts (SRVs and the fighter), surface presence on relog, and a searchable station list. Station renames resolve by market id, so Cavallo Nero Corona, Kalian Port and Fokker Mine are one station each. Installations fold FSS signals against the rename history at startup.
+- **Map.** Renamed from Colony Map. Journey z-flip fixed; Colonies, Targets, Galaxy, Landmarks and **Regions** toggles, the regions being the 42 real borders from the klightspeed community map (MIT, vendored). Arm names dropped; landmarks only from real coordinates.
+- **Map — Populated layer.** Every populated system across 700 ly of HIP 47126 and 500 ly of Praea Euq AT-U d2-47, seeded from your Spansh regional dump (`scripts/gen-populated-systems.mjs`, about 6,450 systems) and kept current from the journal stream: every FSDJump, Location or CarrierJump with a population, from EDDN or your own journal, upserts `populated-systems.json` (its own file, never colony-data.json). Three population bands, one path each. The store adopts a reseed written while the exe runs.
+- **Surface mining.** Rig cap (4 rigs, 3 per commodity, richest first) shared by the page and the Domain; a time-costed route planner over the ground you actually drove; the recall spot gated by share; the map hoisted to a *Working now* panel while you are on a signal; driving-scale labels in your own words; a **Covered** layer shading the 2 km the Rhino's scanner sweeps either side of the drive, this visit brighter than earlier evenings; breadcrumbs every 5 s or 15 m while driving, and every drive sample within a site's 5 km radius kept regardless of age. Tritium and Water in the commodity pickers, which also learn every name the ledger has seen.
+- **Co-pilot.** Surface beats: arrival by driving band, the hold filling (near or far, never promising to move the ship), the ship going up on its own, the seven-minute nudge for the most valuable logged commodity; a **recall** line off the one tell the game leaks (the SAASignalsFound burst when her AI takes over — a Liftoff inside 5 s means she is leaving, nothing means she is coming, about 30 s out); on-foot lines keyed by the body's scanned temperature; **silence during combat music**. Strict wording: no numbers, no invented terrain, never "you rated", never a promise to land.
+- **Sell Cargo — Sell at…** Type a system and see everything you hold priced at its best station: price against the galactic mean, demand against your tonnes, the value, and what the best buyer elsewhere pays. "I'm going to LFT 65 for the Rhodplumsite — what else should ride along?"
+
+### Changed
+- **Sell Cargo is fast.** One nearby Ardent call per commodity instead of two (the range buttons no longer refetch), three fetch lanes instead of one queue, the assembled plan cached ten minutes, and a fast first paint from your own markets and Ardent's cache with the rest filling in behind (`sell_plan_updated` over SSE). Measured before: 251 s cold.
+- **Gallery images are JPEG.** Every F10 BMP in the gallery is re-encoded at quality 90 (31.6 MB → about 1.2 MB): on arrival, at startup for what is already on disk, and on demand (`POST /api/gallery/convert`). Old `.bmp` URLs keep resolving. Originals in Pictures untouched. Reverses the v1.36 "postcards stay BMP" decision.
+- **Carrier ledger.** Eight commodities whose game id is a different word from their display name now reconcile; Tritium deposits are no longer subtracted twice; a one-pass reconcile screen on the Fleet Carrier page.
+
+### Fixed
+- Surface: an approach glide under 5 km was drawn, routed and paced as a drive; queued refinery bins that drop in a second after a transfer credited a deposit at the ship instead of the rig they came from (read-time repair, history included); "you" plotted on the signal map from the ship, zooming the site away; hidden installations never persisted.
+- Commander's Log: Aleumoxii "first discovery" that was only a first visit (`WasMapped` guard).
 ## [1.57.0] — 2026-09-04
 
 ### Added

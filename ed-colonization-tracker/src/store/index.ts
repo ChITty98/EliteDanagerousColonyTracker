@@ -1148,6 +1148,17 @@ export const useAppStore = create<AppState>()(
           newInfluenceHistory.push({ ts: now, influence: payload.influence });
           if (newInfluenceHistory.length > DOCK_HISTORY_CAP) newInfluenceHistory.shift();
         }
+        // A rename keeps the market id. Track the names this id has shed, the same way faction
+        // changes are tracked, so anything still naming the old station resolves to this one
+        // instead of standing up as a second entity beside it.
+        const prevName = existing?.stationName ?? null;
+        const nameChanged = !!(prevName && payload.stationName && prevName !== payload.stationName
+          && !/\$EXT_PANEL_ColonisationShip|Construction Site/i.test(payload.stationName));
+        const newNameHistory = [...(existing?.nameHistory ?? [])];
+        if (nameChanged && !newNameHistory.some((h) => h.name === prevName)) {
+          newNameHistory.push({ name: prevName as string, changedAt: now });
+          if (newNameHistory.length > DOCK_HISTORY_CAP) newNameHistory.shift();
+        }
 
         // Persist. If no existing entry, create a minimal one so dock-tracking
         // works even before upsertKnownStations fires (race with KB updates).
@@ -1174,6 +1185,7 @@ export const useAppStore = create<AppState>()(
             factionHistory: newFactionHistory,
             stateHistory: newStateHistory,
             influenceHistory: newInfluenceHistory,
+            nameHistory: newNameHistory,
           };
           return { knownStations: { ...s.knownStations, [marketId]: updated } };
         });

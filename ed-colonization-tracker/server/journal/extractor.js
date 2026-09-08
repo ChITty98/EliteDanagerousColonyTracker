@@ -724,6 +724,7 @@ export function extractDockHistory(journalDir) {
           currentFactionState: state != null ? state : null,
           factionHistory: [],
           stateHistory: [],
+          nameHistory: [],
         });
         continue;
       }
@@ -734,6 +735,14 @@ export function extractDockHistory(journalDir) {
         // is known we don't want a later re-read of an old Construction Site
         // dock to revert the label.
         if (ev.StationName && !isPlaceholder) {
+          // The market id is the station's identity; the name is just what it is called today.
+          // Keep the ones it has shed so an old record naming it never becomes a second station:
+          // Sassoon Vision → Rao Refinery → Kalian Port is one id, and only the last name is real.
+          if (existing.stationName && existing.stationName !== ev.StationName
+            && !existing.nameHistory.some((h) => h.name === existing.stationName)) {
+            existing.nameHistory.push({ name: existing.stationName, changedAt: ev.timestamp });
+            if (existing.nameHistory.length > 10) existing.nameHistory.shift();
+          }
           existing.stationName = ev.StationName;
         }
       }

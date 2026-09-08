@@ -120,14 +120,15 @@ export function awayContextFact(shipLabel) {
 
   if (state.inSrv) {
     return `The commander is NOT aboard — they are out driving the ${srv}, a one-person surface vehicle. `
-      + `YOU are in the ${ship}, which follows the ${srv} automatically, station-keeping overhead: you can `
-      + `SEE them down there on the surface. Speak from up here, watching. Never imply you are in the ${srv} `
-      + `with them, and never imply you are in a cargo hold.`;
+      + `YOU are in the ${ship}, hovering where they deployed from — or where their last RECALL brought you. `
+      + `She does NOT follow the ${srv} on her own: only a recall moves her, and she may be a good way off. `
+      + `You have their telemetry, not a window seat. Speak from up here. Never imply you are in the ${srv} `
+      + `with them, never say you will land, come down or bring her over unprompted, and never imply you are in a cargo hold.`;
   }
   if (state.fromSrv) {
     return `The commander is NOT aboard — they are ON FOOT on the surface, having stepped out of the ${srv}, `
-      + `which is parked beside them. YOU are in the ${ship} holding station overhead and can SEE both of them: `
-      + `a parked vehicle and a very small figure walking around. Speak from up here, watching.`;
+      + `which is parked beside them. YOU are in the ${ship}, hovering where they left you — not necessarily `
+      + `close. You have their telemetry. Speak from up here, watching the readouts; never promise to land or come to them unprompted.`;
   }
   return `The commander is NOT aboard — they are ON FOOT on the surface. YOU are in the ${ship}, `
     + `which is landed nearby. Speak from the ship, watching them out there.`;

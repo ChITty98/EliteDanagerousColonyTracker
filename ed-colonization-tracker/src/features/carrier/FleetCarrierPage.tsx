@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 // NOTE: FC cargo rendering is now 100% store-driven (see useMemo below). Any server-side
 // write to state.carrierCargo — journal Cargo.json tick, /api/refresh-companion-files,
 // docked-at-FC auto-read — propagates via SSE → persist.rehydrate → store → memo → UI.
@@ -64,26 +64,56 @@ export function FleetCarrierPage() {
 
   // A baseline: the commander's own count for one commodity, typed from the carrier's inventory
   // screen. Anchors what the journal cannot count; the ledger records it as a dated transaction.
-  const [baselineBusy, setBaselineBusy] = useState<string | null>(null);
   const [baselineNote, setBaselineNote] = useState('');
-  const [baselineName, setBaselineName] = useState('');
-  const [baselineTonnes, setBaselineTonnes] = useState('');
-  const setBaseline = useCallback(async (commodity: string, tonnes: number, name?: string) => {
-    setBaselineBusy(commodity); setBaselineNote('');
+  const [showTx, setShowTx] = useState(false);        // the ledger itself — collapsed by default
+  const [showOther, setShowOther] = useState(false);  // cargo no project needs — collapsed too
+  const [reconciling, setReconciling] = useState(false);
+  const [counts, setCounts] = useState<Record<string, string>>({});
+  const [filter, setFilter] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  // What the cargo is worth and where to take it — the Sell page's own answer, joined by name so
+  // the two screens can never disagree. Loaded once; the Sell page has the full picture.
+  interface Offer { price: number; station: string | null; system: string | null; distance: number | null; source: string; cg?: boolean }
+  interface SellRow { key: string; name: string; here: Offer | null; local: Offer | null; galaxy: Offer | null; top: Offer | null }
+  const [sellRows, setSellRows] = useState<SellRow[]>([]);
+  useEffect(() => {
+    const t = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
+    fetch(t ? `/api/sell/plan?range=50&token=${t}` : '/api/sell/plan?range=50')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d && Array.isArray(d.rows)) setSellRows(d.rows as SellRow[]); })
+      .catch(() => { /* prices simply do not show */ });
+  }, []);
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const bestOffer = useCallback((name: string): Offer | null => {
+    const row = sellRows.find((r) => norm(r.name) === norm(name) || norm(r.key) === norm(name));
+    if (!row) return null;
+    return [row.here, row.local, row.galaxy, row.top].filter(Boolean).sort((a, b) => b!.price - a!.price)[0] ?? null;
+  }, [sellRows]);
+  /** A whole reconcile in one pass, and everything untouched marked as none aboard. */
+  const saveReconcile = useCallback(async (zeroRest: boolean) => {
+    const payload: Record<string, number> = {};
+    for (const [name, v] of Object.entries(counts)) {
+      if (v.trim() === '') continue;
+      payload[name] = Math.max(0, Math.floor(Number(v) || 0));
+    }
+    if (Object.keys(payload).length === 0) { setBaselineNote('Nothing typed yet.'); return; }
+    setSaving(true); setBaselineNote('');
     try {
       const token = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
       const url = token ? `/api/carrier/baseline?token=${token}` : '/api/carrier/baseline';
-      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ commodity, tonnes, name }) });
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ counts: payload, zeroRest }) });
       const d = await res.json().catch(() => ({}));
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`);
       try { await useAppStore.persist.rehydrate(); } catch { /* best-effort */ }
-      setBaselineNote(`${d.item?.name || commodity}: ${tonnes}t aboard as of now.`);
+      setBaselineNote(`${d.applied} set${d.zeroed?.length ? `, ${d.zeroed.length} cleared` : ''}.`);
+      setCounts({});
     } catch (e) {
       setBaselineNote(`Could not save: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
-      setBaselineBusy(null);
+      setSaving(false);
     }
-  }, []);
+  }, [counts]);
 
   const activeProjects = useMemo(
     () => allProjects.filter((p) => p.status === 'active'),
@@ -166,7 +196,9 @@ export function FleetCarrierPage() {
       const bNeed = b.projects.reduce((s, p) => s + p.needed, 0);
       return bNeed - aNeed;
     });
-    other.sort((a, b) => b.count - a.count);
+    // Alphabetical: the game's own list has an order nobody can follow, and sorting by tonnage
+    // looks like an order without being one you can check against anything.
+    other.sort((a, b) => a.name.localeCompare(b.name));
 
     return { matchedCargo: matched, otherCargo: other };
   }, [carrierItems, commodityToProjects]);
@@ -352,42 +384,72 @@ export function FleetCarrierPage() {
           {/* Other cargo — not needed by any project */}
           {otherCargo.length > 0 && (
             <div className="mb-8">
-              <h3 className="text-lg font-semibold text-muted-foreground mb-3">
-                {persistedMyCarrier?.ledger ? 'Other Cargo' : 'Other Sell Orders'} ({otherCargo.length})
-              </h3>
+              {/* Collapsed: what your projects need is the answer this page exists for; the rest
+                  of the hold is reference. */}
+              <button type="button" onClick={() => setShowOther((v) => !v)} className="mb-3 flex items-baseline gap-2 text-lg font-semibold text-muted-foreground hover:text-foreground">
+                <span className="text-xs">{showOther ? '▼' : '▶'}</span>
+                {persistedMyCarrier?.ledger ? 'Other Cargo' : 'Other Sell Orders'}
+                <span className="rounded bg-muted/40 px-1.5 py-0.5 text-xs tabular-nums">{otherCargo.length}</span>
+                <span className="text-xs font-normal text-muted-foreground/70">
+                  {formatNumber(otherCargo.reduce((a, i) => a + i.count, 0))}t · A–Z
+                </span>
+              </button>
+              {showOther && (
               <div className="bg-card border border-border rounded-lg overflow-hidden">
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-border text-sm text-muted-foreground">
                       <th className="text-left px-4 py-3">Commodity</th>
                       <th className="text-right px-4 py-3">On Carrier</th>
+                      <th className="text-left px-4 py-3">Best price · where</th>
+                      <th className="text-right px-4 py-3">Worth</th>
                       {persistedMyCarrier?.ledger && <th className="text-left px-4 py-3">Basis</th>}
                     </tr>
                   </thead>
                   <tbody>
-                    {otherCargo.map((item) => (
-                      <tr key={item.commodityId} className="border-t border-border/50">
-                        <td className="px-4 py-3 text-sm text-muted-foreground">{item.name}</td>
-                        <td className="px-4 py-3 text-sm text-right text-muted-foreground">
-                          {myCarrier?.isEstimate && !persistedMyCarrier?.ledger ? '~' : ''}{formatNumber(item.count)}t
-                        </td>
-                        {persistedMyCarrier?.ledger && (
-                          <td className="px-4 py-3 text-xs text-muted-foreground">
-                            {item.basis === 'market' ? 'sell order · market read' : item.basis === 'you' ? 'set by you' : item.atLeast ? 'at least — buy order, fills are invisible' : 'transactions · exact'}
+                    {otherCargo.map((item) => {
+                      const o = bestOffer(item.name);
+                      return (
+                        <tr key={item.commodityId} className="border-t border-border/50">
+                          <td className="px-4 py-3 text-sm text-muted-foreground">{item.name}</td>
+                          <td className="px-4 py-3 text-sm text-right text-muted-foreground">
+                            {myCarrier?.isEstimate && !persistedMyCarrier?.ledger ? '~' : ''}{formatNumber(item.count)}t
                           </td>
-                        )}
-                      </tr>
-                    ))}
+                          <td className="px-4 py-3 text-xs">
+                            {o ? (
+                              <>
+                                <span className="text-foreground tabular-nums">{formatNumber(o.price)}</span>
+                                <span className="text-muted-foreground"> · {o.station ?? '?'}{o.distance != null ? ` · ${o.distance} ly` : ''}</span>
+                                {o.cg && <span className="ml-1 text-amber-300">community goal</span>}
+                              </>
+                            ) : <span className="text-muted-foreground/60">no buyer on file</span>}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-right tabular-nums text-emerald-300">{o ? formatNumber(o.price * item.count) : '—'}</td>
+                          {persistedMyCarrier?.ledger && (
+                            <td className="px-4 py-3 text-xs text-muted-foreground">
+                              {item.basis === 'market' ? 'sell order · market read' : item.basis === 'you' ? 'set by you' : item.atLeast ? 'at least — buy order, fills are invisible' : 'transactions · exact'}
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
+              )}
             </div>
           )}
 
-          {/* The ledger itself — what moved, most recent first */}
+          {/* The ledger itself — what moved, most recent first. Collapsed: it is the audit trail,
+              not the answer to anything you open this page for. */}
           {persistedMyCarrier?.ledger && persistedMyCarrier.ledger.recent.length > 0 && (
             <div className="mb-8">
-              <h3 className="text-lg font-semibold text-muted-foreground mb-3">Recent Transactions</h3>
+              <button type="button" onClick={() => setShowTx((v) => !v)} className="mb-3 flex items-baseline gap-2 text-lg font-semibold text-muted-foreground hover:text-foreground">
+                <span className="text-xs">{showTx ? '▼' : '▶'}</span>
+                Recent Transactions
+                <span className="rounded bg-muted/40 px-1.5 py-0.5 text-xs tabular-nums">{persistedMyCarrier.ledger.recent.length}</span>
+              </button>
+              {showTx && (
               <div className="bg-card border border-border rounded-lg overflow-hidden">
                 <table className="w-full">
                   <thead>
@@ -415,50 +477,86 @@ export function FleetCarrierPage() {
                   </tbody>
                 </table>
               </div>
-              {/* Baselines — the base truth, typed from the carrier's inventory screen */}
+              )}
+
+              {/* Reconcile — the carrier's own inventory screen, transcribed in one pass. The
+                  game's list has an order nobody can follow, so this is alphabetical with a
+                  filter: type three letters, type the tonnes, Enter, next. */}
               <div className="mt-4 bg-card border border-border rounded-lg p-4">
-                <h4 className="text-sm font-semibold text-muted-foreground mb-1">Set a baseline</h4>
-                <p className="text-xs text-muted-foreground mb-3">
-                  Type the tonnes from the carrier&rsquo;s inventory screen for any commodity. It is recorded as a dated transaction and anchors that commodity; everything you move afterwards applies on top, and a market read still re-anchors sell orders.
-                </p>
-                <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <input
-                    list="edca-carrier-names" value={baselineName} onChange={(e) => setBaselineName(e.target.value)} placeholder="Commodity"
-                    className="w-56 rounded border border-border bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground/60"
-                  />
-                  <datalist id="edca-carrier-names">
-                    {[...carrierItems.map((i) => i.name), ...persistedMyCarrier.ledger.unknown.map((u) => u.name)].sort().map((n) => <option key={n} value={n} />)}
-                  </datalist>
-                  <input
-                    value={baselineTonnes} onChange={(e) => setBaselineTonnes(e.target.value)} inputMode="numeric" placeholder="tonnes"
-                    onKeyDown={(e) => { if (e.key === 'Enter' && baselineName.trim() && baselineTonnes.trim() !== '') { void setBaseline(baselineName.trim(), Math.max(0, Math.floor(Number(baselineTonnes) || 0)), baselineName.trim()); setBaselineTonnes(''); } }}
-                    className="w-24 rounded border border-border bg-background px-2 py-1 text-right text-sm tabular-nums text-foreground placeholder:text-muted-foreground/60"
-                  />
-                  <button
-                    type="button" disabled={!!baselineBusy || !baselineName.trim() || baselineTonnes.trim() === ''}
-                    onClick={() => { void setBaseline(baselineName.trim(), Math.max(0, Math.floor(Number(baselineTonnes) || 0)), baselineName.trim()); setBaselineTonnes(''); }}
-                    className="rounded border border-sky-500/40 bg-muted/20 px-3 py-1 text-xs text-sky-300 hover:bg-muted/50 disabled:opacity-40"
-                  >
-                    Set
-                  </button>
-                  {baselineNote && <span className="text-xs text-muted-foreground">{baselineNote}</span>}
-                </div>
-                {persistedMyCarrier.ledger.unknown.length > 0 && (
-                  <div className="mt-3">
-                    <p className="text-xs text-muted-foreground mb-1.5">
-                      <strong className="text-foreground/80">Not counted, quantity unknown</strong> — each was on a sell order at some point, so visitors could take it without a journal line. Tap <em>none</em> if it is gone, or set the tonnes.
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {persistedMyCarrier.ledger.unknown.map((u) => (
-                        <span key={u.commodityId} className="inline-flex items-center gap-1 rounded bg-muted/30 border border-border px-2 py-0.5 text-xs">
-                          <button type="button" onClick={() => setBaselineName(u.name)} className="hover:text-foreground" title="Put the name in the box above">{u.name}</button>
-                          <button type="button" disabled={baselineBusy === u.commodityId} onClick={() => void setBaseline(u.commodityId, 0, u.name)} className="rounded px-1 text-muted-foreground hover:text-red-300" title="None aboard">none</button>
+                <button type="button" onClick={() => setReconciling((v) => !v)} className="flex items-baseline gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground">
+                  <span className="text-xs">{reconciling ? '▼' : '▶'}</span>
+                  Reconcile with the carrier&rsquo;s inventory screen
+                </button>
+                {reconciling && (() => {
+                  const rows = [...new Map([
+                    ...carrierItems.map((i) => [i.name, { name: i.name, id: i.commodityId, have: i.count as number | null }] as const),
+                    ...persistedMyCarrier!.ledger!.unknown.map((u) => [u.name, { name: u.name, id: u.commodityId, have: null }] as const),
+                  ]).values()].sort((a, b) => a.name.localeCompare(b.name));
+                  const f = filter.trim().toLowerCase();
+                  const shown = f ? rows.filter((r) => r.name.toLowerCase().includes(f)) : rows;
+                  const typed = Object.entries(counts).filter(([, v]) => v.trim() !== '');
+                  const entered = typed.reduce((a, [, v]) => a + Math.max(0, Math.floor(Number(v) || 0)), 0);
+                  const gameTotal = persistedMyCarrier!.ledger!.statsTotal;
+                  return (
+                    <div className="mt-3">
+                      <p className="text-xs text-muted-foreground mb-2">
+                        Open <strong>Inventory &rarr; Transfer</strong> at the carrier and walk down its list. Filter to a name, type the tonnes, press Enter. Anything you leave blank is untouched unless you finish with <em>mark the rest none aboard</em>, which is what clears goods the ledger still thinks are there.
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2 mb-2">
+                        <input
+                          value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by name" autoFocus
+                          className="w-56 rounded border border-border bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground/60"
+                        />
+                        <span className="text-xs text-muted-foreground tabular-nums">
+                          {typed.length} typed · {formatNumber(entered)} t{gameTotal != null ? ` · the game last said ${formatNumber(gameTotal)} t aboard` : ''}
                         </span>
-                      ))}
+                        {baselineNote && <span className="text-xs text-sky-300">{baselineNote}</span>}
+                      </div>
+                      <div className="max-h-96 overflow-y-auto rounded border border-border/60">
+                        <table className="w-full">
+                          <tbody>
+                            {shown.map((r, i) => (
+                              <tr key={r.id} className="border-t border-border/40 first:border-t-0">
+                                <td className="px-3 py-1 text-sm">{r.name}</td>
+                                <td className="px-3 py-1 text-right text-xs text-muted-foreground tabular-nums">{r.have == null ? 'uncounted' : `ledger ${formatNumber(r.have)}`}</td>
+                                <td className="px-3 py-1 text-right">
+                                  <input
+                                    value={counts[r.name] ?? ''} inputMode="numeric" placeholder="t"
+                                    onChange={(e) => setCounts((c) => ({ ...c, [r.name]: e.target.value }))}
+                                    onKeyDown={(e) => {
+                                      if (e.key !== 'Enter') return;
+                                      const next = (e.currentTarget.closest('tr')?.nextElementSibling?.querySelector('input')) as HTMLInputElement | null;
+                                      if (next) next.focus(); else (e.currentTarget as HTMLInputElement).blur();
+                                    }}
+                                    data-row={i}
+                                    className="w-20 rounded border border-border bg-background px-1.5 py-0.5 text-right text-sm tabular-nums text-foreground placeholder:text-muted-foreground/40"
+                                  />
+                                </td>
+                              </tr>
+                            ))}
+                            {shown.length === 0 && (
+                              <tr><td className="px-3 py-2 text-sm text-muted-foreground">Nothing matches. Anything the ledger has never seen can be added from the Sell page&rsquo;s search, or transfer one tonne of it and it appears here.</td></tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <button type="button" disabled={saving} onClick={() => void saveReconcile(false)}
+                          className="rounded border border-sky-500/40 bg-muted/20 px-3 py-1 text-xs text-sky-300 hover:bg-muted/50 disabled:opacity-40">
+                          {saving ? 'Saving…' : 'Save what I typed'}
+                        </button>
+                        <button type="button" disabled={saving} onClick={() => void saveReconcile(true)}
+                          title="Everything you did not type is set to none aboard — use this when you have walked the whole list"
+                          className="rounded border border-amber-500/40 bg-muted/20 px-3 py-1 text-xs text-amber-300 hover:bg-muted/50 disabled:opacity-40">
+                          Save and mark the rest none aboard
+                        </button>
+                        <button type="button" onClick={() => { setCounts({}); setFilter(''); }} className="text-xs text-muted-foreground hover:text-foreground">clear</button>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
               </div>
+
               {persistedMyCarrier.ledger.negatives.length > 0 && (
                 <p className="mt-2 text-xs text-muted-foreground">
                   Below zero on the ledger, so shown as none: {persistedMyCarrier.ledger.negatives.map((n) => `${n.name} ${formatNumber(n.qty)}t`).join(', ')}. More left than the journal saw arrive — a transfer it missed, or cargo bought from a visitor.

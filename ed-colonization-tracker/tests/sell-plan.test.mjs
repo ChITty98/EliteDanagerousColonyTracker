@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { initMarketHistory } from '../server/journal/marketHistory.js';
-import { buildSellPlan, bestSell, lowestBuy } from '../server/journal/sellPlan.js';
+import { buildSellPlan, buildSellAt, bestSell, lowestBuy } from '../server/journal/sellPlan.js';
 
 const NOW = Date.parse('2026-09-04T12:00:00Z');
 const DAY = 86400e3;
@@ -107,6 +107,54 @@ describe('sell plan', () => {
     expect(plan.totals.here).toBe(20 * 240547 + 44 * 240542);
     expect(plan.totals.local).toBe(20 * 240547 + 44 * 240542);
     expect(plan.totals.galaxy).toBe(20 * 327007 + 44 * 240542);
+  });
+
+  it('asks Ardent for nearby buyers ONCE per commodity, a carrier jump out — never once per range', async () => {
+    calls.length = 0;
+    await buildSellPlan({ state, journalDir, rangeLy: 50, fetchJson, now: NOW });
+    const nearby = calls.filter((p) => p.includes('/nearby/imports'));
+    expect(nearby.length).toBeGreaterThan(0);
+    expect(nearby.every((p) => p.includes('maxDistance=500'))).toBe(true);
+    expect(new Set(nearby).size).toBe(nearby.length);                       // one per commodity
+    expect(calls.some((p) => p.includes('maxDistance=50&'))).toBe(false);
+  });
+
+  it('fast mode answers from the cache alone, says what is pending, and never waits on the network', async () => {
+    const cachedOnly = new Set(['/commodity/name/thortveitite/imports?fleetCarriers=false']);
+    const peek = (p) => (cachedOnly.has(p) ? { cached: true, data: ardent[p] } : { cached: false, data: null });
+    let waited = 0;
+    const slow = async (p) => { waited++; await new Promise((r) => setTimeout(r, 50)); return ardent[p] ?? null; };
+    const t0 = Date.now();
+    const plan = await buildSellPlan({ state, journalDir, rangeLy: 50, fetchJson: slow, peek, fast: true, now: NOW });
+    expect(Date.now() - t0).toBeLessThan(40);                 // nothing awaited the slow fetcher
+    expect(waited).toBe(0);
+    expect(plan.partial).toBe(true);
+    expect(plan.pending).toBeGreaterThan(0);
+    const thort = plan.rows.find((r) => r.key === 'thortveitite');
+    expect(thort.top || thort.galaxy).toBeTruthy();           // the cached galaxy list was used
+  });
+
+  it('prices everything held at one chosen system, own reading first, against the mean and the best elsewhere', async () => {
+    const listing = {
+      '/system/name/Near/commodities': [
+        { commodityName: 'thortveitite', marketId: 500, stationName: 'Near Port', systemName: 'Near', stationType: 'Coriolis', maxLandingPadSize: 3, sellPrice: 300000, demand: 5000, updatedAt: iso(NOW - DAY) },
+        { commodityName: 'grandidierite', marketId: 500, stationName: 'Near Port', systemName: 'Near', stationType: 'Coriolis', maxLandingPadSize: 3, sellPrice: 100000, demand: 10, updatedAt: iso(NOW - DAY) },
+        { commodityName: 'thortveitite', marketId: 501, stationName: 'Carrier Z', systemName: 'Near', stationType: 'FleetCarrier', sellPrice: 900000, demand: 999, updatedAt: iso(NOW) },
+      ],
+      '/system/name/Near': { systemName: 'Near', systemX: 10, systemY: 0, systemZ: 0 },
+    };
+    const peek = (p) => (ardent[p] ? { cached: true, data: ardent[p] } : { cached: false, data: null });
+    const at = await buildSellAt({ state, journalDir, system: 'Near', fetchJson: async (p) => listing[p] ?? null, peek, now: NOW });
+    expect(at.system).toBe('Near');
+    expect(at.stations).toContain('Near Port');
+    const thort = at.rows.find((r) => r.key === 'thortveitite');
+    expect(thort.offer.price).toBe(300000);                    // the carrier at 900k is ignored
+    expect(thort.offer.station).toBe('Near Port');
+    expect(thort.vsMean).toBeGreaterThan(1);
+    expect(thort.elsewhere).toBeTruthy();                      // the cached galaxy list gives the comparison
+    const gran = at.rows.find((r) => r.key === 'grandidierite');
+    expect(gran.demandShort).toBe(true);                       // 10 t of demand against more held
+    expect(at.rows[0].value).toBeGreaterThanOrEqual(at.rows[at.rows.length - 1].value);
   });
 
   it('a top-of-book buyer within reach shows as the top and is sampled into the history', async () => {

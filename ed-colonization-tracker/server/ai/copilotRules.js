@@ -122,12 +122,12 @@ export const BEATS = [
   },
   {
     key: 'disembark', priority: 60, interrupt: false, model: 'haiku', mood: MOODS.wave,
-    match: (ev) => ev.event === 'Disembark' && ev.OnPlanet === true,
+    match: (ev) => ev.event === 'Disembark' && ev.OnPlanet === true && ev.SRV !== true, // out of the LANDED SHIP; out of the SRV is canned in copilotSurfaceLines (surface-foot-*)
     intent: 'The commander is stepping out onto a planet surface on foot; you\'re staying with the ship. Wave them off: you\'ll stay put — maybe it\'s too cold/hot out there for you (use the surface temperature if given), you\'ll tidy up in here, don\'t be long.',
   },
   {
     key: 'embark', priority: 40, interrupt: false, model: 'haiku', mood: MOODS.calm,
-    match: (ev) => ev.event === 'Embark',
+    match: (ev) => ev.event === 'Embark' && ev.SRV !== true, // back aboard the SHIP; climbing into the Rhino is not "back aboard"
     intent: 'The commander just climbed back aboard. Glad to have them back — missed you, all quiet up here.',
   },
   {

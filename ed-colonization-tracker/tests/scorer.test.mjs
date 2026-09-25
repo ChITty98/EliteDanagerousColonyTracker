@@ -292,6 +292,17 @@ describe('detectEpicView', () => {
     expect(detectEpicView([giant, moon]).isEpic).toBe(false);
   });
 
+  it('twin worlds need a surface to stand on: a pair with neither member landable is not a sight', () => {
+    // Wregoe JX-A c27-7 6 b / 6 c: co-orbiting rocky worlds ~3,000 km apart (37° here), both under thick CO2 — unlandable.
+    const twin = (name, landable) => ({ bodyId: id++, name, type: 'Planet', subType: 'Rocky body', isLandable: landable, radius: 1000, semiMajorAxis: 0.00001, parents: [{ Null: 900 }, { Planet: 41 }] });
+    const both = detectEpicView([twin('Wregoe JX-A c27-7 6 b', false), twin('Wregoe JX-A c27-7 6 c', false)]);
+    expect(both.isEpic).toBe(false);
+    expect(both.criteria).not.toContain('twins');
+    const one = detectEpicView([twin('Wregoe JX-A c27-7 6 b', false), twin('Wregoe JX-A c27-7 6 c', true)]);
+    expect(one.criteria).toContain('twins');
+    expect(one.reasons[0]).toBe('c & b — twin worlds, 37° in each other\'s sky'); // the landable one first: it is the one you stand on
+  });
+
   it('flags a ring-edge moon (close to a ringed parent, rings fill its sky), naming moon + parent', () => {
     const giant = eplanet({ name: 'Col 173 Sector AX-J d9-52 2', rings: [{ name: 'A Ring', type: 'Rocky', outerRadius: 300000000 }] }); // 300,000 km
     const moon = emoon({ name: 'Col 173 Sector AX-J d9-52 2 a', sma: 0.00205, parents: [{ Planet: giant.bodyId }] }); // ≈306,700 km → ratio ~1.02 of the ring edge, span ~88°
@@ -307,6 +318,17 @@ describe('detectEpicView', () => {
     const r = detectEpicView([bd, moon]);
     expect(r.isEpic).toBe(true);
     expect(r.reasons.find((x) => /skims the ring edge of/.test(x))).toContain('2 a');
+  });
+
+  it('does NOT flag a ring-edge moon under a dim ring (the c27-7 7 a letdown); the same geometry under a dense ring passes', () => {
+    // Wregoe JX-A c27-7 7: Rocky ring 128,760–407,010 km, mass 1.37e12 → 2.9e-6 per m² ("a very dim ring"); d9-52 2 B reads 9.2e-6.
+    const ring = (mass) => [{ name: 'A Ring', type: 'Rocky', innerRadius: 128760000, outerRadius: 407010000, mass }];
+    const dim = eplanet({ name: 'Wregoe JX-A c27-7 7', rings: ring(1.37e12) });
+    const moon = emoon({ name: 'Wregoe JX-A c27-7 7 a', sma: 0.00277, parents: [{ Planet: dim.bodyId }] }); // ratio 1.02, span 89° — the geometry passes
+    expect(detectEpicView([dim, moon]).criteria).not.toContain('ringEdge');
+    const bright = eplanet({ name: 'Wregoe JX-A c27-7 7', rings: ring(1.07e13) });
+    const moon2 = emoon({ name: 'Wregoe JX-A c27-7 7 a', sma: 0.00277, parents: [{ Planet: bright.bodyId }] });
+    expect(detectEpicView([bright, moon2]).criteria).toContain('ringEdge');
   });
 
   it('does NOT flag a far moon of a ringed parent (rings are a distant thread — the d9-107 3c case)', () => {

@@ -23,12 +23,13 @@
 // Ardent matters because the domain is not the galaxy. Ardent's live listings DO know the 2026
 // commodities (its summary report does not). Every lookup goes through ardentJson — cached an
 // hour, one in flight, fail-quiet — and is injectable for tests.
-import { readShipCargo, friendlyShip } from './extractor.js';
+import { readShipCargo, friendlyShip, padNeedFor } from './extractor.js';
 import { ardentJson, ardentPeek } from './livePrices.js';
 import { canonicalCommodityName, galacticAvgSell } from './commodityPricesMirror.js';
 import { FRESH_MARKET_MS, MAX_REACH_LY } from './marketMeans.js';
 import { keyOf, recordArdentSample, needsSample, seriesFor, track } from './marketHistory.js';
 import { isCommunityGoalMarket } from './communityGoals.js';
+import { isNonBuyerMarket, padFits } from './util.js';
 
 export const CARRIER_RANGE_LY = 500;   // one Fleet Carrier jump — the commander's selling radius
 // "Galaxy" means the galaxy you are in: anything farther than MAX_REACH_LY (marketMeans.js) from
@@ -41,7 +42,14 @@ const MIN_TRADE_PROFIT = 1000;         // cr/t — under this it is noise, not a
 
 const dist = (a, b) => (a && b && [a.x, a.y, a.z, b.x, b.y, b.z].every(Number.isFinite))
   ? Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) : null;
-const isFC = (row) => !!row && row.stationType === 'FleetCarrier';
+// Carriers, construction depots, on-foot settlements and stronghold carriers are not buyers — see util.js.
+const isNonBuyer = (row) => !!row && isNonBuyerMarket(row.stationType);
+/**
+ * Demand cover: a buyer must post at least this many times the load. Inara's warning is that a mined
+ * commodity's price falls once the cargo passes about a quarter of demand (the bulk sales tax); the
+ * exact curve is not on file, so four times is a rule of thumb, labelled as one (2026-09-11).
+ */
+export const DEMAND_COVER = 4;
 const enc = encodeURIComponent;
 
 function coordsOf(state, systemName) {
@@ -57,7 +65,7 @@ export function ownRows(state, now = Date.now()) {
   const me = state.commanderPosition && state.commanderPosition.coordinates;
   const out = [];
   for (const snap of Object.values(state.marketSnapshots || {})) {
-    if (!snap || !Array.isArray(snap.commodities) || snap.stationType === 'FleetCarrier') continue;
+    if (!snap || !Array.isArray(snap.commodities) || isNonBuyerMarket(snap.stationType)) continue;
     if (!(now - Date.parse(snap.updatedAt) <= FRESH_MARKET_MS)) continue;
     const coords = coordsOf(state, snap.systemName);
     const distance = dist(me, coords);
@@ -87,11 +95,11 @@ const pick = (r, kind) => (r ? {
   cg: isCommunityGoalMarket(r.stationName, r.systemName),
 } : null);
 
-/** Highest sell with demand covering `load`; at equal pay the nearer station (it is a haul). */
+/** Highest sell with demand covering DEMAND_COVER × `load`; at equal pay the nearer station (it is a haul). */
 export function bestSell(rows, load) {
   let best = null;
   for (const r of rows || []) {
-    if (!r || isFC(r) || !(r.sellPrice > 0) || (r.demand ?? 0) < load) continue;
+    if (!r || isNonBuyer(r) || !(r.sellPrice > 0) || (r.demand ?? 0) < load * DEMAND_COVER) continue;
     if (!best || r.sellPrice > best.sellPrice || (r.sellPrice === best.sellPrice && (r.distance ?? 1e9) < (best.distance ?? 1e9))) best = r;
   }
   return best;
@@ -100,7 +108,7 @@ export function bestSell(rows, load) {
 export function lowestBuy(rows, load) {
   let best = null;
   for (const r of rows || []) {
-    if (!r || isFC(r) || !(r.buyPrice > 0) || (r.stock ?? 0) < load) continue;
+    if (!r || isNonBuyer(r) || !(r.buyPrice > 0) || (r.stock ?? 0) < load) continue;
     if (!best || r.buyPrice < best.buyPrice || (r.buyPrice === best.buyPrice && (r.distance ?? 1e9) < (best.distance ?? 1e9))) best = r;
   }
   return best;
@@ -174,6 +182,7 @@ async function buildSellPlanUncached({ state, journalDir, rangeLy = 50, searched
   const myCoords = (me && me.coordinates) || null;
   const dock = st.currentDock || null;
   const shipInfo = st.currentShip || null;
+  const padNeed = padNeedFor(shipInfo ? shipInfo.type : null); // the pad this hull needs; an unlisted hull needs large
   const capacity = shipInfo && shipInfo.cargoCapacity > 0 ? shipInfo.cargoCapacity : null;
 
   let shipCargo = null;
@@ -208,7 +217,7 @@ async function buildSellPlanUncached({ state, journalDir, rangeLy = 50, searched
   const hereListing = refSystem ? await fetchJson(`/system/name/${enc(refSystem)}/commodities`) : null;
   const hereRowsByKey = new Map();
   for (const x of Array.isArray(hereListing) ? hereListing : []) {
-    if (!x || isFC(x) || !x.marketId || !(x.sellPrice > 0)) continue;
+    if (!x || isNonBuyer(x) || !padFits(x, padNeed) || !x.marketId || !(x.sellPrice > 0)) continue;
     const k = keyOf(x.commodityName);
     if (!hereRowsByKey.has(k)) hereRowsByKey.set(k, []);
     hereRowsByKey.get(k).push({ ...x, commodityName: k, distance: 0 });
@@ -244,8 +253,8 @@ async function buildSellPlanUncached({ state, journalDir, rangeLy = 50, searched
     // buyer inside the range. "Within your range" is the same rows cut at rangeLy.
     const ardentCarrier = refSystem ? await fetchJson(`/system/name/${enc(refSystem)}/commodity/name/${enc(r.key)}/nearby/imports?maxDistance=${CARRIER_RANGE_LY}&fleetCarriers=false`) : null;
     const ardentAll = await fetchJson(`/commodity/name/${enc(r.key)}/imports?fleetCarriers=false`);
-    const allWithDist = withDist(ardentAll);
-    const nearRows = unionByMarket(withDist(ardentCarrier), hereRowsByKey.get(r.key) || [], allWithDist.filter((x) => x && x.distance != null && x.distance <= CARRIER_RANGE_LY));
+    const allWithDist = withDist(ardentAll).filter((x) => padFits(x, padNeed));
+    const nearRows = unionByMarket(withDist(ardentCarrier).filter((x) => padFits(x, padNeed)), hereRowsByKey.get(r.key) || [], allWithDist.filter((x) => x && x.distance != null && x.distance <= CARRIER_RANGE_LY));
     const nearKnown = Array.isArray(ardentCarrier) || hereRowsByKey.has(r.key) || Array.isArray(ardentAll);
     const ardentLocal = nearKnown ? nearRows.filter((x) => x && x.distance != null && x.distance <= rangeLy) : null;
     // LOCAL — own fresh rows within range, plus Ardent's buyers within range.
@@ -316,6 +325,7 @@ export async function buildSellAt({ state, journalDir, system, fetchJson = arden
   const myCoords = (me && me.coordinates) || null;
   const fc = (st.settings || {}).myFleetCarrier || null;
   const carrier = fc && st.carrierCargo ? st.carrierCargo[fc] : null;
+  const padNeedAt = padNeedFor(st.currentShip ? st.currentShip.type : null);
   let shipCargo = null;
   try { shipCargo = journalDir ? readShipCargo(journalDir) : null; } catch { shipCargo = null; }
   const held = new Map();
@@ -333,7 +343,7 @@ export async function buildSellAt({ state, journalDir, system, fetchJson = arden
   const coords = info && Number.isFinite(info.systemX) ? { x: info.systemX, y: info.systemY, z: info.systemZ } : coordsOf(st, name);
   const distance = dist(myCoords, coords);
   const sysName = (info && info.systemName) || (Array.isArray(listing) && listing[0] && listing[0].systemName) || name;
-  const ardentRows = (Array.isArray(listing) ? listing : []).filter((x) => x && !isFC(x) && x.marketId).map((x) => ({ ...x, commodityName: keyOf(x.commodityName), distance }));
+  const ardentRows = (Array.isArray(listing) ? listing : []).filter((x) => x && !isNonBuyer(x) && padFits(x, padNeedAt) && x.marketId).map((x) => ({ ...x, commodityName: keyOf(x.commodityName), distance }));
   const own = ownRows(st, now).filter((r) => r.systemName && r.systemName.toLowerCase() === sysName.toLowerCase());
   const stations = [...new Set([...ardentRows, ...own].map((r) => r.stationName).filter(Boolean))];
 
@@ -354,7 +364,7 @@ export async function buildSellAt({ state, journalDir, system, fetchJson = arden
     const mean = galacticAvgSell(r.name) || 0;
     // The best buyer anywhere, from the plan's cached galaxy-wide list — only when it is on hand.
     const all = peek(`/commodity/name/${enc(r.key)}/imports?fleetCarriers=false`);
-    const elsewhereBest = all.cached && Array.isArray(all.data) ? bestSell(all.data.filter((x) => x && !isFC(x)).map((x) => ({ ...x, distance: myCoords ? dist(myCoords, { x: x.systemX, y: x.systemY, z: x.systemZ }) : null })), 1) : null;
+    const elsewhereBest = all.cached && Array.isArray(all.data) ? bestSell(all.data.filter((x) => x && !isNonBuyer(x) && padFits(x, padNeedAt)).map((x) => ({ ...x, distance: myCoords ? dist(myCoords, { x: x.systemX, y: x.systemY, z: x.systemZ }) : null })), 1) : null;
     const elsewhere = elsewhereBest ? pick(elsewhereBest, 'sell') : null;
     const vsMean = offer && mean > 0 ? offer.price / mean : null;
     const bestKnown = Math.max(offer ? offer.price : 0, elsewhere ? elsewhere.price : 0);
@@ -362,7 +372,7 @@ export async function buildSellAt({ state, journalDir, system, fetchJson = arden
     rows.push({
       key: r.key, name: r.name, ship: r.ship, carrier: r.carrier, tonnes,
       offer, mean, vsMean,
-      demandShort: !!(offer && offer.demand != null && offer.demand < tonnes),
+      demandShort: !!(offer && offer.demand != null && offer.demand < tonnes * DEMAND_COVER),
       value: offer ? offer.price * tonnes : 0,
       elsewhere, pctOfBest,
       // The one-glance answer per line, against the best buyer known and nothing else (the
@@ -410,7 +420,7 @@ export async function tradeNearby({ st, own, myCoords, refSystem, rangeLy, capac
   for (const s of list) {
     const rows = await fetchJson(`/system/name/${enc(s.name)}/commodities`);
     for (const x of Array.isArray(rows) ? rows : []) {
-      if (!x || isFC(x) || !x.marketId) continue;
+      if (!x || isNonBuyer(x) || !x.marketId) continue;
       const k = keyOf(x.commodityName);
       if (!k) continue;
       byMarket.set(`${x.marketId}|${k}`, { ...x, commodityName: k, distance: s.distance, coords: s.coords });

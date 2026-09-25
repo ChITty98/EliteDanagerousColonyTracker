@@ -1,14 +1,17 @@
 #!/usr/bin/env node
-// Seed populated-systems.json (the Map's "Populated" layer) from one of the commander's own Spansh
-// regional dumps — the slim JSONL files tools/spansh-index.mjs writes (name, coords, population,
-// economies, main star). The live upkeep from the journal stream is server/radar/populatedStore.js;
-// this only writes the starting set.
+// Seed populated-systems.json (the Map's "Populated" layer) with every populated system inside the
+// bubbles (BUBBLES in server/radar/populatedStore.js), read from the slim populated-galaxy.jsonl that
+// scripts/extract-populated-galaxy.mjs pulls out of the Spansh galaxy dump. The regional dumps
+// tools/spansh-index.mjs writes cannot feed this: their 700 ly sphere is centred on AX-J d9-52, 103 ly
+// from HIP 47126, and misses 3,243 populated systems on the Sol side of the bubble (2026-09-07).
+// The live upkeep from the journal stream is server/radar/populatedStore.js; this only writes the
+// starting set. Nothing outside the bubbles is written: the map is about what is populated nearby.
 //
-//   node scripts/gen-populated-systems.mjs [--in <regional.jsonl>] [--out <populated-systems.json>]
+//   node scripts/gen-populated-systems.mjs [--in <populated.jsonl>] [--out <populated-systems.json>]
 //
-// Defaults: region-ao-master.jsonl on E: (August, the union of both areas from the July dump),
-// written beside colony-data.json. Rows the live feed has added or refreshed since the last seed
-// (live: true in the existing file) survive a reseed: the stream is newer than any dump.
+// Defaults: G:/Spansh/populated-galaxy.jsonl (from the July 2026 dump), written beside colony-data.json.
+// Rows the live feed has added or refreshed since the last seed (live: true in the existing file)
+// survive a reseed: the stream is newer than any dump.
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -18,7 +21,7 @@ import { BUBBLES, inBubble } from '../server/radar/populatedStore.js';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const arg = (k, d) => { const i = args.indexOf(k); return i >= 0 && args[i + 1] ? args[i + 1] : d; };
-const input = arg('--in', 'E:/Spansh/region-ao-master.jsonl');
+const input = arg('--in', 'G:/Spansh/populated-galaxy.jsonl');
 const output = arg('--out', path.join(HERE, '..', 'populated-systems.json'));
 
 if (!fs.existsSync(input)) { console.error(`input not found: ${input}`); process.exit(1); }

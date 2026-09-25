@@ -452,7 +452,7 @@ export function SellPage() {
           </div>
         ) : null}
         <p className="text-[11px] text-muted-foreground/70">
-          Stock must cover a load at the buy side and demand at the sell side. Your own records win over Ardent when they are newer, and add the stations Ardent has never heard of. Read the freshness on each leg before you fly it.
+          Stock must cover a load at the buy side; demand must cover four times the load at the sell side, since a mined commodity’s price falls once the cargo passes about a quarter of demand. Your own records win over Ardent when they are newer, and add the stations Ardent has never heard of. Read the freshness on each leg before you fly it.
         </p>
       </section>
 
@@ -544,7 +544,7 @@ export function SellPage() {
                               <div className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
                                 {r.vsMean != null ? <>×{r.vsMean.toFixed(2)} mean</> : null}
                                 {r.pctOfBest != null && r.elsewhere ? <> · {Math.round(r.pctOfBest * 100)}% of the best known</> : r.offer ? <> · the best known</> : null}
-                                {r.demandShort ? <span className="ml-1 text-amber-300/80">· demand {fmt(r.offer.demand || 0)} t &lt; {fmt(r.tonnes)} t held</span> : null}
+                                {r.demandShort ? <span className="ml-1 text-amber-300/80">· demand {fmt(r.offer.demand || 0)} t under 4× the {fmt(r.tonnes)} t held</span> : null}
                               </div>
                               <div className="text-[10px] leading-4 text-muted-foreground">
                                 {[r.offer.station, r.offer.system && r.offer.system !== r.offer.station ? r.offer.system : null].filter(Boolean).join(' · ')}

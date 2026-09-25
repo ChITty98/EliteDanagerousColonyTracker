@@ -26,6 +26,7 @@ import { RewardsPage } from '@/features/rewards/RewardsPage';
 import { CopilotPage } from '@/features/copilot/CopilotPage';
 import { MiningPage } from '@/features/mining/MiningPage';
 import { SurfaceMiningPage } from '@/features/surface-mining/SurfaceMiningPage';
+import { ApproachPage } from '@/features/approach/ApproachPage';
 import { SellPage } from '@/features/sell/SellPage';
 import { CommanderLogPage } from '@/features/log/CommanderLogPage';
 import { RadarPage } from '@/features/radar/RadarPage';
@@ -59,6 +60,7 @@ export const router = createBrowserRouter([
       { path: 'rewards', element: <RewardsPage /> },
       { path: 'mining', element: <MiningPage /> },
       { path: 'surface-mining', element: <SurfaceMiningPage /> },
+      { path: 'approach', element: <ApproachPage /> },
       { path: 'sell', element: <SellPage /> },
       { path: 'log', element: <CommanderLogPage /> },
       { path: 'radar', element: <RadarPage /> },

@@ -42,10 +42,13 @@ import {
   readMarketJson,
   readShipCargo,
   resourceToCommodity,
+  PLANETARY_STATION_TYPES,
+  inferHasLargePads,
 } from './extractor.js';
 import { noteMarketMeans } from './marketMeans.js';
 import { recordMarketRead } from './marketHistory.js';
 import { ensureCarrierLedger, noteCarrierEvent, reconcileCarrierMarket, carrierCargoRecord } from './carrierLedger.js';
+import { ingestApproachEvents } from './approach.js';
 import {
   isFleetCarrier,
   isFleetCarrierCallsign,
@@ -54,8 +57,11 @@ import {
   isColonisationShip,
   isConstructionStationName,
   registerFcMarketId,
+  depotIdentity,
+  depotProjectName,
+  depotRename,
 } from './util.js';
-import { findCommodityByJournalName, findCommodityByDisplayName } from './commodities.js';
+import { findCommodityByJournalName, findCommodityByDisplayName, canonicaliseCommodityKeys } from './commodities.js';
 import { applyMaterialDeltaEvent } from './materials.js';
 import { applyEngineerEvents } from './engineers.js';
 import {
@@ -70,11 +76,12 @@ import {
   handleTargetSelectedOverlay,
   handleNavRoutePlottedOverlay,
   resetScanState,
+  resetScanStateIfElsewhere,
 } from './overlay.js';
 import { processChatCommands } from './chat.js';
 import { runCopilot } from '../ai/copilot.js';
 import { processMiningEvents } from './mining.js';
-import { ingestSurfaceMining } from './surfaceMining.js';
+import { ingestSurfaceMining, getNavTarget } from './surfaceMining.js';
 import { noteOwnEvents as radarNoteOwnEvents } from '../radar/radarState.js';
 import { getEdsmTraffic } from '../radar/traffic.js';
 import { checklistProcess, checklistSnapshot } from './checklist.js';
@@ -162,6 +169,11 @@ export function processNewEvents(parsed, deps) {
     for (const ev of parsed.carrierJumpEvents) {
       try { resetScanState(ev.SystemAddress, ev.StarSystem); } catch { /* ignore */ }
     }
+    // Location — a relog, or the first fix after the exe restarts — arms it too. FSDJump alone left
+    // every scan after a relog on the floor (YI-V c17-36, 1.60.13); the same system keeps its buffer.
+    for (const ev of parsed.locationEvents) {
+      try { resetScanStateIfElsewhere(ev.SystemAddress, ev.StarSystem); } catch { /* ignore */ }
+    }
     // Docked — FC load / buy-here suggestions for active project
     for (const ev of parsed.dockedEvents) {
       try { handleDockedOverlay(ev, existing, deps); } catch (e) { console.error('[Overlay] Docked error:', e && e.message); }
@@ -194,7 +206,7 @@ export function processNewEvents(parsed, deps) {
 
   // Surface (Rhino / SRV) mining — a separate ledger from the rock log. Shares MiningRefined with
   // ring mining and nothing else, so it discriminates on the live Status "in SRV" flag rather than
-  // on the event. Also the only consumer of the PlanetaryMiningLocation DSS signal.
+  // on the event. Also the only consumer of the PlanetaryMiningLocation signal (FSS and DSS).
   try {
     const pos = existing.commanderPosition || {};
     const rawHeld = (existing.materialInventory || {}).raw || {};
@@ -205,6 +217,13 @@ export function processNewEvents(parsed, deps) {
       materialCount: (id) => (typeof rawHeld[id] === 'number' ? rawHeld[id] : null),
     }, deps);
   } catch (e) { console.error('[SurfaceMining] event error:', e && e.message); }
+
+  // Approach recorder — every descent from orbital cruise to a pad or a surface site, measured against
+  // the commander's shortest run there. The surface nav lock names a site; ApproachSettlement names a port.
+  try {
+    const pos = existing.commanderPosition || {};
+    ingestApproachEvents(parsed, { system: pos.systemName || null, systemAddress: pos.systemAddress ?? null, navTarget: getNavTarget(), ship: existing.currentShip || null }, deps);
+  } catch (e) { console.error('[Approach] event error:', e && e.message); }
 
   // FSDTarget (galaxy-map target alert) — async Spansh name check if uncached.
   // Always fires regardless of overlay enable (this is a Companion-only event).
@@ -586,17 +605,14 @@ function processDepotEvents(parsed, existing, patch) {
       if (dismissed.includes(depot.MarketID)) { skipped.push(`marketId=${depot.MarketID} (dismissed)`); continue; }
       if (depot.ConstructionComplete || depot.ConstructionFailed) { skipped.push(`marketId=${depot.MarketID} (already ${depot.ConstructionFailed ? 'failed' : 'complete'})`); continue; }
       if (createdIds.has(depot.MarketID)) continue;
-      // Station identity: the Docked event that preceded this depot (same batch), else the known-station record.
-      const dockEv = (parsed.dockedEvents || []).find((d) => d && d.MarketID === depot.MarketID);
-      const known = Object.values(existing.knownStations || {}).find((s) => s && s.marketId === depot.MarketID);
-      const stationName = (dockEv && dockEv.StationName) || (known && known.stationName) || '';
-      const systemName = (dockEv && dockEv.StarSystem) || (known && known.systemName) || '';
-      const systemAddress = (dockEv && dockEv.SystemAddress) || (known && known.systemAddress) || null;
-      const stationType = (dockEv && dockEv.StationType) || (known && known.stationType) || '';
+      // Station identity: the Docked event in this batch, the persisted current dock, or the station
+      // dossier. The watcher skips history on boot, so any one of the three may be all we have.
+      const ident = depotIdentity(depot.MarketID, { dockedEvents: parsed.dockedEvents, currentDock: existing.currentDock, knownStations: existing.knownStations });
+      const { stationName, systemName, systemAddress, stationType } = ident;
       const nowIso = new Date().toISOString();
       const fresh = {
         id: randomUUID(),
-        name: systemName ? `${systemName}${stationName ? ` - ${stationName}` : ''}` : `Depot ${depot.MarketID}`,
+        name: depotProjectName(ident, depot.MarketID),
         systemName, systemAddress, stationType, stationName,
         marketId: depot.MarketID,
         commodities: (depot.ResourcesRequired || []).map(resourceToCommodity),
@@ -615,6 +631,32 @@ function processDepotEvents(parsed, existing, patch) {
 
     const commodities = (depot.ResourcesRequired || []).map(resourceToCommodity);
     const next = Object.assign({}, project, { commodities, lastUpdatedAt: new Date().toISOString() });
+
+    // Heal a project created without its identity (blank names → "Depot 4389829123 ()"): take them
+    // from whatever has seen the depot since. Field-level, so nothing else on the project moves.
+    if (!project.systemName || !project.stationName) {
+      const ident = depotIdentity(depot.MarketID, { dockedEvents: parsed.dockedEvents, currentDock: existing.currentDock, knownStations: existing.knownStations });
+      if (ident.systemName || ident.stationName) {
+        next.systemName = project.systemName || ident.systemName;
+        next.stationName = project.stationName || ident.stationName;
+        next.systemAddress = project.systemAddress ?? ident.systemAddress;
+        next.stationType = project.stationType || ident.stationType;
+        if (!project.systemName || /^Depot \d+$/.test(project.name || '')) next.name = depotProjectName(next, depot.MarketID);
+        console.log(`[Depot] Healed project identity: ${next.name} (marketId=${depot.MarketID})`);
+      }
+    }
+
+    // Follow a rename while the site is still under construction (Espinoza Obligation → Core Boson
+    // Complex Cbc, 2026-09-22, same market id): the station name, and the display name only while it
+    // is still the auto-built one — a typed name stays. Sync All's project pass mirrors this.
+    if (project.systemName && project.stationName) {
+      const ident = depotIdentity(depot.MarketID, { dockedEvents: parsed.dockedEvents, currentDock: existing.currentDock, knownStations: existing.knownStations });
+      const rename = depotRename(project, ident, depot.MarketID);
+      if (rename) {
+        Object.assign(next, rename);
+        console.log(`[Depot] Followed rename: ${project.stationName} → ${rename.stationName} (marketId=${depot.MarketID})`);
+      }
+    }
 
     if (depot.ConstructionComplete) {
       next.status = 'completed';
@@ -690,6 +732,42 @@ function backfillCarrierCargoIds(carrierCargo) {
     }
   }
   return { changed: Object.keys(upserts).length > 0, upserts, itemsFixed };
+}
+
+// ===== Session-snapshot backfill — raw game symbols → dictionary ids =====
+//
+// Hauling session snapshots taken before 1.60.15 keyed four goods by the game's raw symbol
+// (heliostaticfurnaces, hazardousenvironmentsuits, terrainenrichmentsystems, mutomimager) because
+// the dictionary carried made-up journal names for them, so a session's delta for those never
+// matched a project need. Idempotent: a snapshot already on dictionary ids is untouched.
+
+function backfillSessionSnapshotKeys(sessions) {
+  const upserts = {};
+  for (const s of sessions) {
+    if (!s || !s.id) continue;
+    const start = canonicaliseCommodityKeys(s.startSnapshot);
+    const end = canonicaliseCommodityKeys(s.endSnapshot);
+    if (start === s.startSnapshot && end === s.endSnapshot) continue;
+    upserts[s.id] = { ...s, startSnapshot: start, endSnapshot: end };
+  }
+  return { changed: Object.keys(upserts).length > 0, upserts };
+}
+
+// ===== Market-snapshot backfill — pad size and planetary from the stored station type =====
+//
+// Live snapshots written before 1.60.18 carry hasLargePads:false and isPlanetary:false hard-coded
+// while storing the station type that says otherwise. Idempotent: a snapshot that already agrees
+// with its type is untouched; one with no type on file is left alone.
+
+function backfillSnapshotPads(snapshots) {
+  const upserts = {};
+  for (const [key, s] of Object.entries(snapshots || {})) {
+    if (!s || !s.stationType) continue;
+    const large = inferHasLargePads(s.stationType), planetary = PLANETARY_STATION_TYPES.has(s.stationType);
+    if (s.hasLargePads === large && s.isPlanetary === planetary) continue;
+    upserts[key] = { ...s, hasLargePads: large, isPlanetary: planetary };
+  }
+  return { changed: Object.keys(upserts).length > 0, upserts };
 }
 
 // ===== Project-commodity backfill — fix depot-vs-market commodity-ID drift =====
@@ -1219,11 +1297,14 @@ function applyDockToStationPatch(patch, existing, marketId, payload) {
   // A station can be renamed, and the market id is what stays the same. Keep the names it used to
   // carry — the same way faction changes are kept — so a signal or a record naming the old station
   // resolves to this one instead of standing up as a second entity. Construction-site names are
-  // the station's own earlier names too (Bawa Station → Atmo Sky Cairn Asc, same id).
+  // the station's own earlier names too (Bawa Station → Atmo Sky Cairn Asc, same id), and a site
+  // can be renamed while still under construction (Espinoza Obligation → Core Boson Complex Cbc):
+  // a construction-site name replaces a construction-site name, never a finished station's name.
   const nextName = payload.stationName || null;
   const prevName = (existingSt && existingSt.stationName) || null;
+  const isPlaceholder = (n) => /\$EXT_PANEL_ColonisationShip|Construction Site/i.test(n || '');
   const nameChanged = !!(prevName && nextName && prevName !== nextName
-    && !/\$EXT_PANEL_ColonisationShip|Construction Site/i.test(nextName));
+    && (!isPlaceholder(nextName) || isPlaceholder(prevName)));
   const newNameHistory = [...((existingSt && existingSt.nameHistory) || [])];
   if (nameChanged && !newNameHistory.some((h) => h && h.name === prevName)) {
     newNameHistory.push({ name: prevName, changedAt: now });
@@ -1243,7 +1324,7 @@ function applyDockToStationPatch(patch, existing, marketId, payload) {
     lastSeen: now,
   };
   const updated = Object.assign({}, base, {
-    stationName: (payload.stationName && !/\$EXT_PANEL_ColonisationShip|Construction Site/i.test(payload.stationName))
+    stationName: (payload.stationName && (!isPlaceholder(payload.stationName) || !base.stationName || isPlaceholder(base.stationName)))
       ? payload.stationName
       : base.stationName,
     systemName: payload.systemName || base.systemName,
@@ -1556,6 +1637,20 @@ export function pollCompanionFiles(journalDir, deps) {
     console.log(`[Projects] Backfill normalised commodity IDs for ${Object.keys(projectFix.upserts).length} project(s) (${projectFix.fixed} items)`);
   }
 
+  // Backfill: hauling session snapshots keyed by the raw game symbols of the four renamed goods.
+  const sessionFix = backfillSessionSnapshotKeys(Array.isArray(existing.sessions) ? existing.sessions : []);
+  if (sessionFix.changed) {
+    patch.sessions = { __idKey: 'id', __upsert: sessionFix.upserts };
+    console.log(`[Sessions] Backfill normalised snapshot keys for ${Object.keys(sessionFix.upserts).length} session(s)`);
+  }
+
+  // Backfill: pad size and planetary flag on stored market snapshots, from their station type.
+  const padFix = backfillSnapshotPads(existing.marketSnapshots || {});
+  if (padFix.changed) {
+    patch.marketSnapshots = { __upsert: padFix.upserts };
+    console.log(`[Snapshots] Backfill pad size / planetary from station type for ${Object.keys(padFix.upserts).length} snapshot(s)`);
+  }
+
   const shipCargo = readShipCargo(journalDir);
   if (shipCargo) {
     extra.push({ type: 'ship_cargo', cargo: shipCargo, timestamp: new Date().toISOString() });
@@ -1673,8 +1768,10 @@ export function pollCompanionFiles(journalDir, deps) {
         stationName: market.stationName,
         systemName: market.systemName,
         stationType: market.stationType || '',
-        isPlanetary: false,
-        hasLargePads: false,
+        // From the station type Market.json names, as Sync All's reader already does: written false for
+        // every live snapshot before 1.60.18, so a Dodec wore the medium-pad badge on the needs table.
+        isPlanetary: PLANETARY_STATION_TYPES.has(market.stationType || ''),
+        hasLargePads: inferHasLargePads(market.stationType || ''),
         commodities: allCommodities,
         updatedAt: market.timestamp || new Date().toISOString(),
       };

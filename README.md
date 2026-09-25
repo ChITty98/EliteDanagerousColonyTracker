@@ -4,7 +4,7 @@ A comprehensive companion app for **Elite Dangerous** colonization gameplay. Tra
 
 Built with React, TypeScript, and Node.js. Runs as a standalone Windows `.exe` — no install required.
 
-**Current release: 1.58.2** — see [ed-colonization-tracker/CHANGELOG.md](ed-colonization-tracker/CHANGELOG.md) for what changed and when. The app follows a journal-first rule: everything below works from the game's own journal files; external services only add to it.
+**Current release: 1.60.18** — see [ed-colonization-tracker/CHANGELOG.md](ed-colonization-tracker/CHANGELOG.md) for what changed and when. The app follows a journal-first rule: everything below works from the game's own journal files; external services only add to it.
 
 ---
 
@@ -26,7 +26,7 @@ A prospecting tool for evaluating systems. Displays the full system hierarchy as
 - **Multi-device**: works on iPad/Surface with refresh button and 3-second position polling
 
 ### Map
-Interactive 2D galactic map (X/Z plane, top-down) of your colonies by real coordinates, with layers you switch on as you need them: **Colonies** and **Targets** (the systems you are watching), the **Journey** (every major stop from the Commander's Log, drawn as legs), a **Galaxy** outline, the **42 galactic regions** with their real borders (from the klightspeed community region map, MIT, vendored), **Landmarks** placed only from coordinates in your own data, and **Populated** — every populated system across 700 ly of HIP 47126 and 500 ly of Praea Euq AT-U d2-47, seeded from your Spansh regional dump (`scripts/gen-populated-systems.mjs`) and kept current from the journal stream: every FSDJump, Location or CarrierJump with a population, from EDDN or your own journal, updates `populated-systems.json`. Three population bands, one path each, so thousands of points pan without lag. Pan, zoom, pinch-to-zoom on iPad; your ship as a pulsing cyan triangle.
+Interactive 2D galactic map (X/Z plane, top-down) of your colonies by real coordinates, with layers you switch on as you need them: **Colonies** and **Targets** (the systems you are watching), the **Journey** (every major stop from the Commander's Log, drawn as legs), the **42 galactic regions** with their real borders (from the klightspeed community region map, MIT, vendored), **Landmarks** placed only from coordinates in your own data, and **Populated** — every populated system across 700 ly of HIP 47126 and 500 ly of Praea Euq AT-U d2-47, seeded from the populated systems of the Spansh galaxy dump (`scripts/extract-populated-galaxy.mjs` once per dump, then `scripts/gen-populated-systems.mjs`, which keeps only the two bubbles) and kept current from the journal stream: every FSDJump, Location or CarrierJump with a population, from EDDN or your own journal, updates `populated-systems.json`. Three population bands, one path each, so thousands of points pan without lag. Pan, zoom, pinch-to-zoom on iPad; your ship as a pulsing cyan triangle.
 
 ### Architect's Domain
 A showcase of everything remarkable across your territory. Highlights rare stars (neutron stars, black holes, Wolf-Rayet), special atmospheres (oxygen worlds, ammonia worlds), and notable stations (Coriolis, Orbis, Dodec Spaceport). Expandable drill-down sections for stars, landable bodies, other bodies, and installations — each sorted by rarity. Fully configurable from Settings: choose which types count as "highlights."

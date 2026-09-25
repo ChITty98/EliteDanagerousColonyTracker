@@ -8,6 +8,7 @@
  */
 import { useMemo } from 'react';
 import { useAppStore } from '@/store';
+import { scanCompleteness } from '@/lib/scanCompleteness';
 import { ScoutMap, SCOUT_MAP_SNAPSHOT_KEY, type MapPoint, type ScoutMapSnapshot } from './ScoutMap';
 
 function readSnapshot(): ScoutMapSnapshot | null {
@@ -32,7 +33,7 @@ export function ScoutMapPage() {
         id64: b.id64,
         name: b.name,
         x: b.x, y: b.y, z: b.z,
-        scored: !!sd && sd.score.total >= 0 && !!sd.scoutedAt,
+        scored: !!sd && scanCompleteness(sd).hasBodyData && !!sd.scoutedAt, // a no-data record plots as unscored
         score: sd?.score.total,
         epic: !!sd?.score.epicView?.isEpic,
       };

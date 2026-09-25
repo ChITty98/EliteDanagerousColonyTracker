@@ -158,4 +158,25 @@ describe('carrier ledger', () => {
     expect(after.items).toEqual(before.items);
     expect(after.unknown).toEqual([]);
   });
+
+  it('a market snapshot is the stock as of its own time — re-read after a transfer it never puts the goods back (the Kewell Range steel, 2026-09-14)', () => {
+    noteCarrierEvent({ timestamp: '2025-07-31T01:00:00Z', event: 'Docked', MarketID: CID });
+    const snap = (stock) => [{ name: '$polymers_name;', nameLocalised: 'Polymers', stock, demand: 0 }];
+    const poly = () => getCarrierInventory().items.find((i) => i.commodityId === 'polymers');
+    // The snapshot lists 428 t of polymers on the sell order; the ledger takes it.
+    expect(reconcileCarrierMarket(snap(428), '2025-07-31T01:10:00Z')).toBe(true);
+    expect(poly().count).toBe(428);
+    // All of it moves to the ship a minute later.
+    noteCarrierEvent({ timestamp: '2025-07-31T01:11:00Z', event: 'CargoTransfer', Transfers: [{ Type: 'polymers', Count: 428, Direction: 'toship' }] });
+    expect(poly()).toBeUndefined();
+    // Sync All re-reads the SAME snapshot two minutes on: a no-op, not a resurrection.
+    expect(reconcileCarrierMarket(snap(428), '2025-07-31T01:10:00Z')).toBe(false);
+    expect(poly()).toBeUndefined();
+    // A snapshot older than the anchor says nothing new either.
+    expect(reconcileCarrierMarket(snap(400), '2025-07-31T01:05:00Z')).toBe(false);
+    expect(poly()).toBeUndefined();
+    // A newer one is the truth again.
+    expect(reconcileCarrierMarket(snap(5), '2025-07-31T01:20:00Z')).toBe(true);
+    expect(poly().count).toBe(5);
+  });
 });

@@ -132,4 +132,16 @@ describe('surface mining visits', () => {
     expect(s.lock).toMatchObject({ index: 4, bodyId: 14, body: BODY });
     expect(getSurfaceSnapshot().lock.body).toBeUndefined(); // the module's own lock stays raw
   });
+
+  it('a typed chip lands in the table spelling, and a variant already on file reads back merged', () => {
+    expect(recordSighting({ body: BODY, siteIndex: 7, commodity: 'periclase dunite' })).toBe(true);
+    expect(recordSighting({ body: BODY, siteIndex: 7, commodity: 'Periclase Dunite' })).toBe('exists');
+    // A variant an older build wrote straight into the file.
+    fs.appendFileSync(path.join(dir, 'surface-mining-log.jsonl'), line({ k: 'sight', at: '2026-09-08T05:00:00Z', body: BODY, system: SYS, systemAddress: ADDR, commodity: 'Bastnäsite', siteIndex: 7, site: '7' }));
+    expect(recordSighting({ body: BODY, siteIndex: 7, commodity: 'bastnasite' })).toBe('exists');
+    expect(siteRow(BODY, 7).expected).toEqual(['Periclase Dunite', 'Bastnasite']);
+    const raw = fs.readFileSync(path.join(dir, 'surface-mining-log.jsonl'), 'utf8');
+    expect(raw).toContain('"commodity":"Periclase Dunite"');
+    expect(raw).not.toContain('"commodity":"periclase dunite"');
+  });
 });

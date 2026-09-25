@@ -84,3 +84,6 @@ Buz/
 .release-token
 SHA256SUMS.txt
 populated-systems.json
+
+# approach recorder runs — commander data, never committed
+approach-runs.jsonl

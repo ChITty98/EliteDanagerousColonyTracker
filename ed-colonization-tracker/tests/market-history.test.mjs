@@ -39,10 +39,15 @@ describe('market history', () => {
     expect(keyOf('Low Temp. Diamonds')).toBe('lowtemperaturediamond');
   });
 
-  it('samples Ardent once a day, carrier rows excluded, and the daily set carries the surface commodities', () => {
+  it('samples Ardent once a day — carriers, construction rows and medium pads excluded — and the daily set carries the surface commodities', () => {
     const rows = [
       { commodityName: 'thortveitite', stationName: 'Fat Carrier', stationType: 'FleetCarrier', sellPrice: 2000000, demand: 500 },
-      { commodityName: 'thortveitite', stationName: "TolaGarf's Junkyard", systemName: 'Kojeara', stationType: 'Outpost', sellPrice: 894814, demand: 18576, meanPrice: 129763 },
+      // Construction depots and on-foot settlements list everything at the cap with 999,999 demand — not buyers.
+      { commodityName: 'thortveitite', stationName: 'Orbital Construction Site: Buckley Beacon', systemName: 'Antliae Sector RT-R b4-0', stationType: 'SpaceConstructionDepot', sellPrice: 1038104, demand: 999999 },
+      { commodityName: 'thortveitite', stationName: 'Gough Prospecting Exchange', systemName: 'Col 285 Sector WE-Q d5-107', stationType: 'OnFootSettlement', sellPrice: 1038104, demand: 999999 },
+      { commodityName: 'thortveitite', stationName: "TolaGarf's Junkyard", systemName: 'Kojeara', stationType: 'Outpost', maxLandingPadSize: 3, sellPrice: 894814, demand: 18576, meanPrice: 129763 },
+      // A medium pad is not a buyer for a large hull, whatever it pays.
+      { commodityName: 'thortveitite', stationName: 'Medium Only', systemName: 'Smallville', stationType: 'Outpost', maxLandingPadSize: 2, sellPrice: 950000, demand: 20000 },
       { commodityName: 'thortveitite', stationName: 'Borel Vista', systemName: 'Synuefe YL-J d10-60', stationType: 'Orbis', sellPrice: 327007, demand: 254520 },
       { commodityName: 'thortveitite', stationName: 'Nowhere', stationType: 'Outpost', sellPrice: 300000, demand: 0 }, // no demand
     ];
@@ -57,6 +62,7 @@ describe('market history', () => {
     expect(day.med).toBe(327007);
     expect(day.mean).toBe(129763);
     expect(sampleKeys()).toContain('periclasedunite');
+    expect(sampleKeys()).toContain('monazite');
     expect(sampleKeys(['Low Temp. Diamonds'])).toContain('lowtemperaturediamond');
   });
 

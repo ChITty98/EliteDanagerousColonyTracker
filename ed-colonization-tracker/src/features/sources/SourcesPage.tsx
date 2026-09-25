@@ -401,7 +401,7 @@ export function SourcesPage() {
 
     try {
       const refSystem = getReferenceSystem(need);
-      // Ardent API uses journal-style commodity IDs (e.g. "cmmcomposite" not "CMM Composite")
+      // Ardent API uses the game's commodity symbols (e.g. "cmmcomposite" not "CMM Composite"); findNearbySources maps the id
       const results = await findNearbySources(refSystem, need.commodityId, {
         maxDistance,
         excludeFC: !includeFC,

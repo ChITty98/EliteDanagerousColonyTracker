@@ -472,9 +472,9 @@ export function CompanionPage() {
                   <span
                     className={
                       lastTarget.spansh === 'yes'
-                        ? (targetPartial ? 'text-amber-400 font-medium' : 'text-green-400')
+                        ? (targetPartial || (tScanned != null && tTotal == null) ? 'text-amber-400 font-medium' : 'text-green-400')
                         : lastTarget.spansh === 'empty'
-                        ? 'text-yellow-400'
+                        ? 'text-green-300'
                         : lastTarget.spansh === 'no'
                         ? 'text-red-400'
                         : 'text-slate-400'
@@ -483,9 +483,13 @@ export function CompanionPage() {
                     {lastTarget.spansh === 'yes'
                       ? (targetPartial
                           ? `\u26a0 Spansh partial: ${tScanned} of ${tTotal} bodies \u2014 score provisional`
-                          : `\u2713 In Spansh${tTotal ? ` (${tTotal} bodies)` : ''}`)
+                          : tTotal
+                            ? `\u2713 In Spansh (${tTotal} bodies)`
+                            : tScanned != null
+                              ? `\u26a0 ${tScanned} on file, scan total unknown`
+                              : '\u2713 In Spansh')
                       : lastTarget.spansh === 'empty'
-                      ? 'Spansh has the system (no body data)'
+                      ? '\u26AC In Spansh, no bodies \u2014 unclassified'
                       : lastTarget.spansh === 'no'
                       ? '\u2717 Not in Spansh'
                       : 'Spansh lookup unavailable'}

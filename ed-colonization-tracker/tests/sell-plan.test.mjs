@@ -43,6 +43,10 @@ const ardent = {
   [`/system/name/${encodeURIComponent(ME)}/commodity/name/thortveitite/nearby/imports?maxDistance=500&fleetCarriers=false`]: [
     { commodityName: 'thortveitite', marketId: 300, stationName: 'Borel Vista', systemName: 'Synuefe YL-J d10-60', stationType: 'Orbis', maxLandingPadSize: 3, sellPrice: 327007, demand: 254520, updatedAt: iso(NOW - DAY), distance: 303, systemX: 303, systemY: 0, systemZ: 0 },
     { commodityName: 'thortveitite', marketId: 301, stationName: 'Tiny Demand', systemName: 'Nearby', stationType: 'Outpost', maxLandingPadSize: 2, sellPrice: 500000, demand: 5, updatedAt: iso(NOW), distance: 40, systemX: 40, systemY: 0, systemZ: 0 },
+    // A construction depot 30 ly out at the cap: neither local nor galaxy, whatever it lists.
+    { commodityName: 'thortveitite', marketId: 302, stationName: 'Orbital Construction Site: Buckley Beacon', systemName: 'Antliae Sector RT-R b4-0', stationType: 'SpaceConstructionDepot', maxLandingPadSize: 2, sellPrice: 1038104, demand: 999999, updatedAt: iso(NOW), distance: 30, systemX: 30, systemY: 0, systemZ: 0 },
+    // A medium pad 45 ly out paying more than anyone: the Caspian Explorer cannot land there.
+    { commodityName: 'thortveitite', marketId: 303, stationName: 'Medium Pad Bonanza', systemName: 'Nearby Too', stationType: 'Outpost', maxLandingPadSize: 2, sellPrice: 950000, demand: 50000, updatedAt: iso(NOW), distance: 45, systemX: 45, systemY: 0, systemZ: 0 },
   ],
   '/commodity/name/thortveitite/imports?fleetCarriers=false': [
     { commodityName: 'thortveitite', marketId: 400, stationName: "TolaGarf's Junkyard", systemName: 'Kojeara', stationType: 'Outpost', maxLandingPadSize: 3, sellPrice: 894814, demand: 18576, updatedAt: iso(NOW), systemX: 22000, systemY: 0, systemZ: 0 },
@@ -232,16 +236,18 @@ describe('sell plan', () => {
     expect(plan.trade.rows).toEqual([]);
   });
 
-  it('bestSell / lowestBuy honour the floor and prefer the nearer station on a tie', () => {
+  it('bestSell / lowestBuy honour the floor (demand four times the load) and prefer the nearer station on a tie', () => {
     const rows = [
-      { sellPrice: 100, demand: 10, distance: 50, buyPrice: 5, stock: 10 },
-      { sellPrice: 100, demand: 10, distance: 5, buyPrice: 5, stock: 10 },
-      { sellPrice: 200, demand: 1, distance: 1, buyPrice: 1, stock: 1 },
+      { sellPrice: 100, demand: 40, distance: 50, buyPrice: 5, stock: 10 },
+      { sellPrice: 100, demand: 40, distance: 5, buyPrice: 5, stock: 10 },
+      { sellPrice: 200, demand: 4, distance: 1, buyPrice: 1, stock: 1 },
       { sellPrice: 300, demand: 10, distance: 1, stationType: 'FleetCarrier', buyPrice: 1, stock: 100 },
     ];
     expect(bestSell(rows, 10).distance).toBe(5);
     expect(lowestBuy(rows, 10).distance).toBe(5);
     expect(bestSell(rows, 1).sellPrice).toBe(200);
     expect(bestSell([], 1)).toBeNull();
+    // Demand that merely equals the load is not cover: the bulk sales tax starts near a quarter of demand.
+    expect(bestSell([{ sellPrice: 500, demand: 39, distance: 1 }], 10)).toBeNull();
   });
 });

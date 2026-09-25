@@ -1,3 +1,5 @@
+import { commoditySymbol } from '@/data/commodities';
+
 export interface ArdentStation {
   commodityName: string;
   marketId: number;
@@ -35,7 +37,9 @@ export async function findNearbySources(
   });
   if (excludeFC) params.set('fleetCarriers', 'false');
 
-  const url = `/ardent-api/v2/system/name/${encodeURIComponent(systemName)}/commodity/name/${encodeURIComponent(commodityName)}/nearby/exports?${params}`;
+  // Ardent knows a commodity by the game's symbol, which differs from the dictionary id for four goods
+  // (Microbial Furnaces is heliostaticfurnaces); the id is mapped here so callers keep passing ids.
+  const url = `/ardent-api/v2/system/name/${encodeURIComponent(systemName)}/commodity/name/${encodeURIComponent(commoditySymbol(commodityName))}/nearby/exports?${params}`;
   const res = await fetch(url);
   if (!res.ok) {
     if (res.status === 404) return [];

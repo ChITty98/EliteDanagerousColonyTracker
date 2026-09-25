@@ -7,7 +7,7 @@
  *   2. What you are LOOKING AT — the nav-locked site, from orbit, with a one-field tagger for the
  *      commodities the target panel lists. This is how a site's contents are retained without
  *      ever dropping on it.
- *   3. What you CAN'T see yet — landable bodies never DSS'd, so their site count is unknown.
+ *   3. What you CAN'T see yet — landable bodies never FSS'd or DSS'd, so their site count is unknown.
  *      Prominent, because on the surface "unmapped" means "unavailable".
  *   4. Bodies → sites → deposits — the inventory. Sites carry the game's own index from the nav
  *      lock; deposits carry the F10 shot that documented them.
@@ -73,6 +73,7 @@ interface BodyRow {
   seen?: Record<string, number>;
   sitesKnown: number | null;
   sitesManual?: boolean;
+  sitesSource?: 'dss' | 'fss' | 'manual' | null;
   sitesSeen: number;
   sitesTagged: number;
   sitesVisited: number;
@@ -175,6 +176,11 @@ interface Snapshot {
   heading?: number | null;
   radius?: number | null;
   landing?: { lat: number; lon: number; body: string | null } | null;
+  /** Where the ship is, as far as the app can tell — see the status. */
+  ship?: { status: 'here' | 'assumed' | 'departed' | 'away' | null; spot: { lat: number; lon: number; body: string | null; at: string } | null; departM: number } | null;
+  /** Where the rigs are assumed to be: the deposits worked this visit since you last boarded. */
+  rigs?: { lat: number; lon: number; commodity: string | null; at: string }[];
+  rigDestructM?: number;
   target?: NavTarget | null;
   compass?: Compass | null;
   drive?: Drive | null;
@@ -204,6 +210,7 @@ interface Summary {
 interface PriceInfo {
   mean: number;
   best: { price: number; station: string | null; system: string | null; at: string | null; demand?: number | null } | null;
+  live?: { cr: number; station: string | null; system: string | null; at: string | null } | null;
 }
 
 // ---- helpers ----------------------------------------------------------------------------------
@@ -213,6 +220,8 @@ const q = (p: string) => { const t = token(); return t ? `${p}${p.includes('?') 
 
 const short = (body: string, system: string | null) =>
   system && body.startsWith(system) ? body.slice(system.length).trim() || body : body;
+/** DOM id of a body card, so the cross-body list can scroll to the one it opens. */
+const bodyCardId = (body: string) => `sm-body-${body.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`;
 
 const when = (iso: string | null | undefined) => {
   if (!iso) return '—';
@@ -227,11 +236,20 @@ const when = (iso: string | null | undefined) => {
 
 const coord = (lat: number, lon: number) => `${lat.toFixed(4)}°, ${lon.toFixed(4)}°`;
 const km = (m: number | null | undefined) => (m == null ? '—' : m < 1000 ? `${m} m` : `${(m / 1000).toFixed(1)} km`);
+/** Metres between two surface points on a body of the given radius — small-angle, fine at site scale. */
+const metresBetween = (a: { lat: number; lon: number }, b: { lat: number; lon: number }, radius: number | null | undefined) => {
+  if (!radius) return null;
+  const rad = Math.PI / 180;
+  const x = (b.lon - a.lon) * rad * Math.cos(((a.lat + b.lat) / 2) * rad);
+  const y = (b.lat - a.lat) * rad;
+  return Math.hypot(x, y) * radius;
+};
 
 // Prices the summary sent: the game's live galactic mean per commodity, and the best sell among the
-// markets the commander has opened (any station, anywhere, never a carrier). One price rules the
-// page: what your best market paid, when that reading is under 30 days old; otherwise the galactic
-// average. The baked table is the floor when the summary has nothing.
+// markets the commander has opened (any station, anywhere, never a carrier), and the galaxy's best
+// real buyer from the Ardent ladder (large pad, real demand, no depots or carriers). One price rules
+// the page: what your best market paid, when that reading is under 30 days old; otherwise the ladder;
+// otherwise the galactic average. The baked table is the floor when the summary has nothing.
 let LIVE_PRICES: Record<string, PriceInfo> = {};
 const FRESH_MARKET_MS = 30 * 24 * 3600e3;
 
@@ -242,12 +260,13 @@ function freshBest(live: PriceInfo | undefined): PriceInfo['best'] {
   return Number.isFinite(age) && age <= FRESH_MARKET_MS ? b : null;
 }
 
-/** The one price per tonne: your best market this month, else the galactic average, else the table. */
+/** The one price per tonne: your best market this month, else the galaxy's best real buyer, else galactic average, else the table. */
 function priceOf(commodity: string): number | null {
   const p = findCommodityPrice(commodity);
   const live = LIVE_PRICES[p?.name ?? commodity];
   const best = freshBest(live);
   if (best) return best.price;
+  if (live?.live && live.live.cr > 0) return live.live.cr;
   if (live && live.mean > 0) return live.mean;
   return p && p.avgSell > 0 ? p.avgSell : null;
 }
@@ -257,6 +276,7 @@ function priceSource(commodity: string): string {
   const p = findCommodityPrice(commodity);
   const live = LIVE_PRICES[p?.name ?? commodity];
   const best = freshBest(live);
+  if (!best && live?.live && live.live.cr > 0) return `galaxy's best buyer ${live.live.station ?? ''}${live.live.system ? ` (${live.live.system})` : ''}${live.live.at ? `, ${when(live.live.at)}` : ''}${live.mean > 0 ? ` · galactic average ${live.mean.toLocaleString()}` : ''}`;
   if (best) return `${best.station ?? 'your best market'}${best.at ? `, ${when(best.at)}` : ''}${live && live.mean > 0 ? ` · galactic average ${live.mean.toLocaleString()}` : ''}`;
   return 'galactic average';
 }
@@ -367,6 +387,8 @@ const fmtM = (m: number) => (m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toF
  */
 function SignalMap(props: {
   deposits: DepositRow[]; track: TrackPoint[]; landing: { lat: number; lon: number } | null;
+  /** The tracked ship, with its status, and the rigs assumed deployed; the two distance rules in metres. */
+  ship: { lat: number; lon: number; status: string } | null; rigs: { lat: number; lon: number }[]; departM: number; rigM: number;
   live: { lat: number; lon: number; heading: number | null } | null; recall: Recall | null;
   target: NavTarget | null; radius: number | null;
   /** A deposit photo from this body — its terrain colour becomes the ground of the map. */
@@ -387,6 +409,7 @@ function SignalMap(props: {
   const pts: { lat: number; lon: number }[] = [
     ...props.deposits.map((d) => ({ lat: d.lat, lon: d.lon })),
     ...(props.landing ? [props.landing] : []),
+    ...(props.ship ? [props.ship] : []),
     ...(props.recall ? [props.recall] : []),
     ...props.pois.map((p) => ({ lat: p.lat, lon: p.lon })),
   ];
@@ -498,10 +521,22 @@ function SignalMap(props: {
         {track.length > 1 && (
           <polyline points={track.map((p) => `${sx(p.x)},${sy(p.y)}`).join(' ')} fill="none" stroke="rgba(148,163,184,0.45)" strokeWidth="1.2" />
         )}
-        {props.landing && (() => { const p = toM(props.landing); return (
-          <g className="cursor-pointer" onClick={() => props.onSteer({ ...props.landing!, label: 'the ship', kind: 'ship' })}>
-            <polygon points={`${sx(p.x)},${sy(p.y) - 9} ${sx(p.x) - 8},${sy(p.y) + 7} ${sx(p.x) + 8},${sy(p.y) + 7}`} fill="rgba(251,191,36,0.9)" stroke={isTarget(props.landing) ? '#38bdf8' : 'none'} strokeWidth="2" />
-            <text x={sx(p.x) + 11} y={sy(p.y) + 4} fill="#fbbf24" fontSize="11">ship</text>
+        {/* Rig rings: a deployed rig self-destructs past rigM from the Rhino. Rigs are assumed at the deposits worked this visit. */}
+        {props.rigs.map((r, i) => { const p = toM(r); return (
+          <circle key={`rig-${i}`} cx={sx(p.x)} cy={sy(p.y)} r={props.rigM * scale} fill="none" stroke="rgba(56,189,248,0.35)" strokeWidth="1" strokeDasharray="6 4" />
+        ); })}
+        {/* The ship: solid when a hard fact placed it, dashed when a recall is assumed to have brought it, grey once it has left. The ring is where it leaves on its own. */}
+        {props.ship && (() => { const p = toM(props.ship); const gone = props.ship.status === 'departed' || props.ship.status === 'away'; const dashed = props.ship.status === 'assumed'; const col = gone ? '#94a3b8' : '#fbbf24'; return (
+          <g className="cursor-pointer" onClick={() => props.onSteer({ lat: props.ship!.lat, lon: props.ship!.lon, label: 'the ship', kind: 'ship' })}>
+            {!gone && <circle cx={sx(p.x)} cy={sy(p.y)} r={props.departM * scale} fill="none" stroke="rgba(251,191,36,0.35)" strokeWidth="1" strokeDasharray="4 4" />}
+            <polygon points={`${sx(p.x)},${sy(p.y) - 9} ${sx(p.x) - 8},${sy(p.y) + 7} ${sx(p.x) + 8},${sy(p.y) + 7}`} fill={gone ? 'rgba(148,163,184,0.5)' : dashed ? 'rgba(251,191,36,0.35)' : 'rgba(251,191,36,0.9)'} stroke={isTarget(props.ship) ? '#38bdf8' : col} strokeWidth={dashed ? 1.5 : 1} strokeDasharray={dashed ? '3 2' : undefined} />
+            <text x={sx(p.x) + 11} y={sy(p.y) + 4} fill={col} fontSize="11">{gone ? 'ship · departed' : dashed ? 'ship?' : 'ship'}</text>
+          </g>
+        ); })()}
+        {props.landing && (!props.ship || Math.abs(props.landing.lat - props.ship.lat) > 1e-5 || Math.abs(props.landing.lon - props.ship.lon) > 1e-5) && (() => { const p = toM(props.landing); return (
+          <g>
+            <circle cx={sx(p.x)} cy={sy(p.y)} r={3} fill="none" stroke="rgba(251,191,36,0.6)" strokeWidth="1" />
+            <text x={sx(p.x) + 6} y={sy(p.y) + 3} fill="rgba(251,191,36,0.6)" fontSize="9">landing</text>
           </g>
         ); })()}
         {route && (() => {
@@ -588,6 +623,10 @@ function SignalMapFor(props: {
       deposits={siteDeposits.filter((d) => d.lat != null && d.lon != null && !d.uncertain)}
       track={props.track}
       landing={snap?.landing && snap.landing.body === b.body ? { lat: snap.landing.lat, lon: snap.landing.lon } : null}
+      ship={snap?.ship?.spot && snap.ship.spot.body === b.body ? { lat: snap.ship.spot.lat, lon: snap.ship.spot.lon, status: snap.ship.status ?? 'here' } : null}
+      rigs={snap?.drop && snap.drop.body === b.body ? (snap.rigs ?? []) : []}
+      departM={snap?.ship?.departM ?? 2000}
+      rigM={snap?.rigDestructM ?? 4500}
       // 'you' is a SURFACE position: in the SRV or on foot. In the ship it is the ship — the triangle
       // already says where she is, and a ship on approach or in orbit would zoom the whole site away.
       live={snap?.body === b.body && (snap.inSrv || snap.onFoot) && snap.lat != null && snap.lon != null ? { lat: snap.lat, lon: snap.lon, heading: snap.heading ?? null } : null}
@@ -679,6 +718,8 @@ function SurfaceHero(props: {
   indexLine: string;
   onRebuild: () => void; rebuilding: boolean;
   onSetSite: (n: number, moved?: boolean) => void; siteManual?: boolean;
+  /** Distance to the ship and its status, distance to the farthest rig; the two rules in metres. */
+  shipM: number | null; shipStatus: string | null; rigM: number | null; departM: number; rigDestructM: number;
 }) {
   const siteRef = useRef<HTMLInputElement>(null);
   const shown = useCountUp(props.credits);
@@ -727,6 +768,14 @@ function SurfaceHero(props: {
             {props.tonnes}t collected{top ? <> · mostly {top}</> : null}
             {props.tonnes > 0 && props.credits === 0 && <> · <span className="text-amber-300/80">no price yet</span></>}
           </div>
+          {(props.shipM != null || props.shipStatus === 'departed' || props.shipStatus === 'away' || props.rigM != null) && (
+            <div className="mt-1 flex items-center gap-3 text-xs tabular-nums" title="Distance to the ship (it leaves for orbit past 2 km) and to the farthest rig assumed deployed (a rig self-destructs past 4.5 km). A ? means the ship's spot is assumed from a recall, not confirmed.">
+              {props.shipStatus === 'departed' || props.shipStatus === 'away'
+                ? <span className="text-slate-400">ship departed · recall it</span>
+                : props.shipM != null && <span className={props.shipM > props.departM ? 'text-red-400' : props.shipM > props.departM * 0.8 ? 'text-amber-300' : 'text-muted-foreground'}>ship {km(Math.round(props.shipM))}{props.shipStatus === 'assumed' ? '?' : ''}</span>}
+              {props.rigM != null && <span className={props.rigM > props.rigDestructM ? 'text-red-400' : props.rigM > props.rigDestructM * 0.88 ? 'text-amber-300' : 'text-muted-foreground'}>rigs {km(Math.round(props.rigM))}</span>}
+            </div>
+          )}
           {(props.inSrv || props.tripTonnes > 0) && (
             <div className="mt-1 flex items-center gap-2 text-xs tabular-nums" title="This trip = refined since the last drop-off at the ship. Hold = the Rhino's cargo count from the journal, of 72.">
               <span className="text-muted-foreground">this trip <span className="text-foreground">{props.tripTonnes}t</span></span>
@@ -872,8 +921,9 @@ export function SurfaceMiningPage() {
   const [expandedSite, setExpandedSite] = useState<string | null>(null); // "body|index" whose deposits are shown
   const [findSet, setFindSet] = useState<Set<string>>(new Set()); // commodities a signal must hold to be shown
   const [rankByValue, setRankByValue] = useState(false); // sort signals by expected value instead of number
+  const [bestUnworkedOnly, setBestUnworkedOnly] = useState(false); // Best signals: hide what has already been pulled from
   const [compass, setCompass] = useState<Compass | null>(null); // live steering, from SSE and the snapshot
-  const [dssOpen, setDssOpen] = useState(false); // Needs a DSS: collapsed by default, the count on the line
+  const [dssOpen, setDssOpen] = useState(false); // Needs a scan: collapsed by default, the count on the line
 
   const rawHeld = useAppStore((s) => s.materialInventory?.raw) as Record<string, number> | undefined;
   const currentSystem = useAppStore((s) => s.commanderPosition?.systemName ?? null) as string | null;
@@ -1028,15 +1078,15 @@ export function SurfaceMiningPage() {
     });
   }, [post, loadSummary]);
 
-  // The site count the map shows before any DSS. The journal withholds it until you map the body,
-  // so the commander types it; a DSS later replaces it.
+  // The site count the map shows before any scan. The journal withholds it until you resolve the body
+  // in the FSS or map it, so the commander types it; a scan later replaces it.
   const setSiteCount = useCallback((b: { body: string; system: string | null }, count: number | null) => {
     const systemAddress = (b as { systemAddress?: number | null }).systemAddress ?? null;
     post('/api/surface-mining/site-count', { body: b.body, system: b.system, systemAddress, count, clear: count == null }, (d) => {
       setNote(d && d.ok
         ? (count == null
-          ? `${short(b.body, b.system)}: count cleared — back to Needs a DSS.`
-          : `${short(b.body, b.system)}: ${count} signals, from the map. Retype to change it; a DSS will replace it.`)
+          ? `${short(b.body, b.system)}: count cleared — back to Needs a scan.`
+          : `${short(b.body, b.system)}: ${count} signals, from the map. Retype to change it; a scan will replace it.`)
         : `Could not save: ${(d && d.error) || 'unknown'}`);
       loadSummary();
     });
@@ -1158,6 +1208,19 @@ export function SurfaceMiningPage() {
   const hereRow = bodyOf(snap?.body);
   // The site you are on: the live drop first, else the most recent visit on this body from the
   // ledger — so a restart never turns a known site into "site unknown" again.
+  // The two distances that decide whether the ship stays and the rigs live: from the Rhino to the ship,
+  // and to the farthest rig assumed deployed. Only while you are out of the ship.
+  const shipM = useMemo(() => {
+    if (!snap || snap.lat == null || snap.lon == null || !snap.ship?.spot || !(snap.inSrv || snap.onFoot)) return null;
+    if (snap.ship.spot.body && snap.body && snap.ship.spot.body !== snap.body) return null;
+    return metresBetween({ lat: snap.lat, lon: snap.lon }, snap.ship.spot, snap.radius);
+  }, [snap]);
+  const rigM = useMemo(() => {
+    if (!snap || snap.lat == null || snap.lon == null || !(snap.inSrv || snap.onFoot) || !snap.rigs?.length) return null;
+    const here = { lat: snap.lat, lon: snap.lon };
+    const ds = snap.rigs.map((r) => metresBetween(here, r, snap.radius)).filter((d): d is number => d != null);
+    return ds.length ? Math.max(...ds) : null;
+  }, [snap]);
   const currentSiteIndex = (snap?.drop && snap.drop.body === snap.body ? snap.drop.siteIndex : null)
     ?? (snap?.body ? (visits.find((v) => v.body === snap.body)?.siteIndex ?? null) : null);
   const currentSiteManual = !!(snap?.drop && snap.drop.body === snap.body && (snap.drop as { manual?: boolean }).manual);
@@ -1293,6 +1356,33 @@ export function SurfaceMiningPage() {
       .join(' + ');
   }, [rigsBySignal]);
 
+  // Best signals by expected value: every signal on every body in scope, one list, ranked by the same
+  // four-rig score the body cards use. The cross-body view the cards cannot give — until now the only
+  // ranking by expected value lived inside each card ("I'd have to click through each body", 2026-09-08).
+  // Where to go back stays the measured, credits-per-hour list; this one is what the chips promise.
+  const bestSignals = useMemo(() => {
+    const out: { body: string; system: string | null; row: SiteRow; score: number }[] = [];
+    for (const b of bodies) {
+      if (!inScope(b.system)) continue;
+      for (const row of b.siteRows) {
+        if (findSet.size && !rowMatches(row)) continue;
+        if (bestUnworkedOnly && row.worked) continue;
+        const score = scoreRow(b.body, row);
+        if (score > 0) out.push({ body: b.body, system: b.system, row, score });
+      }
+    }
+    return out
+      .sort((x, y) => y.score - x.score || x.body.localeCompare(y.body) || x.row.index - y.row.index)
+      .slice(0, 12);
+  }, [bodies, inScope, findSet, rowMatches, bestUnworkedOnly, scoreRow]);
+  const bestSpansSystems = useMemo(() => new Set(bestSignals.map((x) => (x.system ?? '').toLowerCase())).size > 1, [bestSignals]);
+  /** Open that body and that signal, and bring the card into view. */
+  const jumpToSignal = (body: string, index: number) => {
+    setExpandedBody(body);
+    setExpandedSite(`${body}|${index}`);
+    window.setTimeout(() => { document.getElementById(bodyCardId(body))?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60);
+  };
+
   const matRows = useMemo(() => {
     const held = rawHeld || {};
     const qy = matQuery.trim().toLowerCase();
@@ -1336,6 +1426,7 @@ export function SurfaceMiningPage() {
       </datalist>
 
       <SurfaceHero
+        shipM={shipM} shipStatus={snap?.ship?.status ?? null} rigM={rigM} departM={snap?.ship?.departM ?? 2000} rigDestructM={snap?.rigDestructM ?? 4500}
         active={!!snap?.active}
         inSrv={!!snap?.inSrv}
         credits={session.credits}
@@ -1360,7 +1451,7 @@ export function SurfaceMiningPage() {
         compass={compass}
         onClearTarget={clearTarget}
         onBackToShip={snap?.landing && snap.landing.lat != null && snap.body && snap.landing.body === snap.body
-          ? () => setTarget({ lat: snap.landing!.lat, lon: snap.landing!.lon, label: 'the ship', kind: 'ship', body: snap.body })
+          ? () => (() => { const sp = snap.ship?.spot && (snap.ship.status === 'here' || snap.ship.status === 'assumed') ? snap.ship.spot : snap.landing!; return setTarget({ lat: sp.lat, lon: sp.lon, label: 'the ship', kind: 'ship', body: snap.body }); })()
           : null}
         drive={snap?.drive ?? null}
         onPin={snap?.body && snap.lat != null ? pin : null}
@@ -1527,7 +1618,7 @@ export function SurfaceMiningPage() {
           <span className="mx-2 h-4 w-px bg-border" />
           <button
             type="button" onClick={() => setRankByValue((v) => !v)}
-            title="Sort signals by the three best commodities they can feed the refinery — three because it holds three commodities, each worth its price times the rigs you have confirmed running on it. Prices are your best market this month, else the galactic average."
+            title="Sort signals by the three best commodities they can feed the refinery — three because it holds three commodities, each worth its price times the rigs you have confirmed running on it. Prices are your best market this month, else the galaxy's best real buyer, else galactic average."
             className={`rounded border px-2 py-0.5 ${rankByValue ? 'border-emerald-400/70 bg-emerald-500/20 text-emerald-100' : 'border-border text-muted-foreground hover:text-foreground'}`}
           >
             rank by expected value
@@ -1535,7 +1626,48 @@ export function SurfaceMiningPage() {
         </div>
       )}
 
-      {/* ---- Needs a DSS — prominent: unmapped means unavailable ---- */}
+      {/* ---- Best signals by expected value — every body in scope, one list ---- */}
+      {bestSignals.length > 0 && (
+        <section className="space-y-2">
+          <div className="flex flex-wrap items-baseline gap-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Best signals by expected value</h2>
+            <span className="text-xs text-muted-foreground">four rigs, richest first · priced at your best market this month, else the galaxy's best real buyer, else galactic average · in scope · tap a row to open it</span>
+            <label className="ml-auto flex cursor-pointer items-center gap-1 text-xs text-muted-foreground">
+              <input type="checkbox" checked={bestUnworkedOnly} onChange={(e) => setBestUnworkedOnly(e.target.checked)} className="rounded border-border w-3 h-3" />
+              unworked only
+            </label>
+          </div>
+          <div className="edc-chamfer overflow-x-auto border border-border bg-card/70">
+            <table className="w-full text-xs">
+              <tbody>
+                {bestSignals.map((x, i) => (
+                  <tr
+                    key={`${x.body}|${x.row.index}`}
+                    className="cursor-pointer border-t border-border/60 first:border-t-0 hover:bg-white/[0.03]"
+                    onClick={() => jumpToSignal(x.body, x.row.index)}
+                    title="Open this body and signal"
+                  >
+                    <td className="px-3 py-2 tabular-nums text-muted-foreground">#{i + 1}</td>
+                    <td className="whitespace-nowrap px-3 py-2 font-semibold">
+                      {short(x.body, x.system)} <span className="text-amber-300">Signal {x.row.index}</span>
+                      {bestSpansSystems && x.system && <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">{x.system}</span>}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 tabular-nums text-emerald-400">{cr(x.score)}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{scoreDetail(x.body, x.row)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-[11px] text-slate-300">
+                      {x.row.worked ? <span title="Tonnes already pulled here">{x.row.tonnes}t pulled</span> : <span className="text-sky-300/80">unworked</span>}
+                      {x.row.ratings?.driving && <span className="ml-2" title="Driving, 1 easy · 5 brutal">{'🚗'}{x.row.ratings.driving.score}</span>}
+                      {x.row.ratings?.landing.length ? <span className="ml-2" title="Landing, 1 easy · 5 brutal">{'🛬'}{x.row.ratings.landing[0].score}</span> : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* ---- Needs a scan — prominent: uncounted means unavailable ---- */}
       <section className="space-y-2">
         <button
           type="button" onClick={() => setDssOpen((v) => !v)} aria-expanded={dssOpen}
@@ -1543,17 +1675,17 @@ export function SurfaceMiningPage() {
           title={dssOpen ? 'Collapse' : 'Expand'}
         >
           <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-            <span className="mr-1 inline-block w-3 text-[10px]">{dssOpen ? '▼' : '▶'}</span>{'🔭'} Needs a DSS
+            <span className="mr-1 inline-block w-3 text-[10px]">{dssOpen ? '▼' : '▶'}</span>{'🔭'} Needs a scan
             <span className="ml-2 rounded bg-muted/40 px-1.5 py-0.5 text-[11px] normal-case tracking-normal tabular-nums text-foreground">{needsScan.length}</span>
           </h2>
           <span className="text-xs text-muted-foreground">
             {needsScan.length === 0
-              ? 'every landable body in scope is mapped'
-              : `landable ${needsScan.length === 1 ? 'body' : 'bodies'} in scope with no signal count — DSS them, or type the count the system map shows you`}
+              ? 'every landable body in scope is counted'
+              : `landable ${needsScan.length === 1 ? 'body' : 'bodies'} in scope with no signal count — resolve them in the FSS (the honk alone does not count them) or DSS them, or type the count the system map shows you`}
           </span>
         </button>
         {!dssOpen ? null : needsScan.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Every landable body in scope is mapped. {'🎉'}</p>
+          <p className="text-sm text-muted-foreground">Every landable body in scope is counted. {'🎉'}</p>
         ) : (
           <div className="space-y-3">
             {(() => {
@@ -1586,7 +1718,7 @@ export function SurfaceMiningPage() {
                                 {Object.entries(b.surface).sort((x, y) => y[1] - x[1]).slice(0, 3).map(([k, v]) => `${MATERIAL_BY_ID.get(k)?.displayName ?? k} ${v}%`).join(' · ')}
                               </div>
                             )}
-                            <div className="mt-2 flex items-center gap-1.5 text-xs" title="The system map shows 'Planetary Mining Location (N)' before any DSS — type N and press Enter. A DSS replaces it.">
+                            <div className="mt-2 flex items-center gap-1.5 text-xs" title="The system map shows 'Planetary Mining Location (N)' before any scan — type N and press Enter. An FSS or DSS count replaces it.">
                               <input
                                 type="number" min={0} placeholder="signals"
                                 className="w-16 rounded border border-white/15 bg-black/40 px-1.5 py-0.5 text-center text-xs text-amber-300 placeholder:text-slate-600"
@@ -1614,13 +1746,13 @@ export function SurfaceMiningPage() {
       <section className="space-y-2">
         <div className="flex items-baseline gap-3">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Bodies</h2>
-          <span className="text-xs text-muted-foreground">signals from the DSS · what you saw from orbit · what you actually pulled</span>
+          <span className="text-xs text-muted-foreground">signals from the FSS or DSS · what you saw from orbit · what you actually pulled</span>
           <span className="ml-auto text-xs text-muted-foreground" title="The divisor behind the rig estimates: the largest single collection at a deposit ÷ this. 12 t since the patch of 4 September 2026; collections before it divide by 9.">
             full rig = {summary?.rigCapacity ?? 12} t
           </span>
         </div>
         {bodyCards.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Nothing in scope yet. DSS a landable body and its signals appear here.</p>
+          <p className="text-sm text-muted-foreground">Nothing in scope yet. Resolve a landable body in the FSS and its signals appear here.</p>
         ) : (
           <div className="space-y-2">
             {bodyCards.map((b) => {
@@ -1790,7 +1922,7 @@ export function SurfaceMiningPage() {
               const icyBody = /\b(icy|ice)\b/i.test(b.planetClass ?? '');
 
               return (
-                <div key={b.body} className={`edc-chamfer border bg-card/70 ${b.tonnes > 0 ? 'border-amber-500/30' : 'border-border'}`}>
+                <div key={b.body} id={bodyCardId(b.body)} className={`edc-chamfer border bg-card/70 ${b.tonnes > 0 ? 'border-amber-500/30' : 'border-border'}`}>
                   <div
                     role="button" tabIndex={0}
                     onClick={() => setExpandedBody(open && bodyCards.length > 2 ? null : b.body)}
@@ -1812,7 +1944,7 @@ export function SurfaceMiningPage() {
                             <input
                               key={`${b.body}|${b.sitesKnown ?? ''}`}
                               type="number" min={0} defaultValue={b.sitesKnown ?? ''} placeholder="?"
-                              title="Typed from the system map. Retype and press Enter to replace it; empty + Enter clears it (back to Needs a DSS). A DSS always wins."
+                              title="Typed from the system map. Retype and press Enter to replace it; empty + Enter clears it (back to Needs a scan). A scan always wins."
                               className="w-14 rounded border border-white/15 bg-black/40 px-1 py-0.5 text-center text-xs text-amber-300 placeholder:text-slate-600"
                               onKeyDown={(e) => {
                                 if (e.key !== 'Enter') return;
@@ -1825,7 +1957,9 @@ export function SurfaceMiningPage() {
                             signals<span className="ml-1 text-[10px] font-normal uppercase tracking-wider text-slate-400">from the map</span>
                           </span>
                         ) : (
-                          <span className="text-amber-300 font-semibold" title="Count from the DSS">{b.sitesKnown ?? '?'} signals</span>
+                          <span className="text-amber-300 font-semibold" title={b.sitesSource === 'fss' ? 'Count from the FSS — a DSS will replace it' : 'Count from the DSS'}>
+                            {b.sitesKnown ?? '?'} signals{b.sitesSource === 'fss' ? <span className="ml-1 text-[10px] font-normal uppercase tracking-wider text-slate-400">fss</span> : null}
+                          </span>
                         )}
                         <span className="text-muted-foreground">{b.sitesSeen} seen · {b.sitesVisited} visited · <span className="text-emerald-400">{b.sitesWorked} worked</span></span>
                         {b.tonnes > 0 && <span>{b.tonnes.toLocaleString()}t{top ? ` · ${top}` : ''}{worth != null ? ` · ${cr(worth)}` : ''}</span>}
@@ -2128,7 +2262,7 @@ export function SurfaceMiningPage() {
         <section className="space-y-2">
           <div className="flex items-baseline gap-3">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Where to go back</h2>
-            <span className="text-xs text-muted-foreground">by signal · credits per hour of being there · priced at your best market this month, else galactic average · in scope</span>
+            <span className="text-xs text-muted-foreground">by signal · credits per hour of being there · priced at your best market this month, else the galaxy's best real buyer, else galactic average · in scope</span>
           </div>
           <div className="grid gap-2 md:grid-cols-3">
             {bestSites.map((s, i) => (
@@ -2269,7 +2403,7 @@ export function SurfaceMiningPage() {
             <span className="text-xs text-muted-foreground">{surveyed.filter((b) => inScope(b.system)).length} of {surveyed.length} surveyed bodies in scope</span>
           </div>
           {matRows.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nothing scanned in scope. Widen it, or DSS a landable body.</p>
+            <p className="text-sm text-muted-foreground">Nothing scanned in scope. Widen it, or FSS a landable body.</p>
           ) : (
             <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full text-sm">

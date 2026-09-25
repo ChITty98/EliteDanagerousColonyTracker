@@ -214,26 +214,26 @@ export function TargetPopup() {
             <span className={target.visited ? 'text-green-400' : 'text-slate-400'}>
               {target.visited ? '✓ Visited' : 'New'}
             </span>
-            {target.spansh === 'no' ? (
+            {target.spansh === 'no' || target.spansh === 'empty' ? (
               <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-green-500/25 text-green-200 border border-green-500/40">
-                {'✗'} Not in Spansh — unclassified
+                {target.spansh === 'no' ? '\u2717 Not in Spansh' : '\u26AC In Spansh, no bodies'} — unclassified
               </span>
             ) : (
               <span
                 className={
                   target.spansh === 'yes'
-                    ? (partial ? 'text-amber-400 font-medium' : 'text-green-400')
-                    : target.spansh === 'empty'
-                    ? 'text-yellow-400'
+                    ? (partial || (scanned != null && total == null) ? 'text-amber-400 font-medium' : 'text-green-400')
                     : 'text-slate-400'
                 }
               >
                 {target.spansh === 'yes'
                   ? (partial
                       ? `⚠ partial: ${scanned} of ${total}`
-                      : `✓ In Spansh${total ? ` (${total} bodies)` : ''}`)
-                  : target.spansh === 'empty'
-                  ? 'Spansh: empty'
+                      : total
+                        ? `✓ In Spansh (${total} bodies)`
+                        : scanned != null
+                          ? `⚠ ${scanned} on file, scan total unknown`
+                          : '✓ In Spansh')
                   : 'Spansh: unknown'}
               </span>
             )}

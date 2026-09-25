@@ -7,6 +7,30 @@ interface FaqItem {
 }
 
 const faqItems: FaqItem[] = [
+  {
+    category: 'Surface Mining',
+    question: 'What does the Approach page measure?',
+    answer: (
+      <>
+        <p>
+          Every descent from orbital cruise to a pad or a surface-mining site, sampled once a second and
+          measured against your shortest run at that target. A run opens on <code>ApproachBody</code>;
+          <code>ApproachSettlement</code> names the port and its coordinates; the Glide Mode status flag
+          brackets the glide; <code>DockingRequested</code> and <code>DockingGranted</code>, then the
+          &ldquo;DockingComputer&rdquo; music track for the hand-off and any retake; <code>Docked</code> or
+          <code>Touchdown</code> closes it. Position comes from Status.json, which only carries it from
+          orbital cruise onward, and distances are measured on the body&rsquo;s radius.
+        </p>
+        <p className="mt-2">
+          The reference is your shortest clean run: a ghost line on the slope, ahead or behind in the live
+          figures, and the recommendation for where to begin the glide, what seconds-to-target to hold, and
+          where to hand off to the docking computer. A glide that ends above 5 km counts as broken and
+          stays out of the reference; the corridor is nominal until three clean glides set your own. Runs
+          live in <code>approach-runs.jsonl</code> next to the exe.
+        </p>
+      </>
+    ),
+  },
   // --- About ---
   {
     category: 'About',
@@ -357,7 +381,7 @@ const faqItems: FaqItem[] = [
         <p className="mt-2">
           It renders as a small ✨ chip on the row (hover for a summary) with full reasons
           in the expanded panel — deliberately not a banner. Systems scored before a
-          threshold change keep their old flag until rescored (Rescore All fixes the lot).
+          threshold change keep their old flag until rescored (&ldquo;Rescore stale&rdquo; on the Expansion page re-checks flagged systems scored before the current rules).
         </p>
       </>
     ),
@@ -511,7 +535,11 @@ const faqItems: FaqItem[] = [
         <p className="mt-2 text-muted-foreground text-xs">
           Systems with cached journal data show a {'\u{1F4D3}'} icon next to the Scout button. You can
           also use &ldquo;Scout All&rdquo; to batch-score all visible systems. The &ldquo;Rescore&rdquo;
-          button re-fetches from Spansh for updated data.
+          button re-fetches from Spansh for updated data. A system Spansh only knows the position of shows as
+          {'\u26AC'} unclassified instead of a score &mdash; it is not empty, nobody has scanned it &mdash; and
+          &ldquo;Rescore stale&rdquo; re-fetches only the visible systems a fetch can teach something about: Spansh holds
+          more bodies than the record saw, the record still has no scan total, or an epic flag predates the current
+          rules. Scan totals themselves come from the radius search, no fetch needed.
         </p>
       </>
     ),
@@ -2079,7 +2107,7 @@ const faqItems: FaqItem[] = [
     question: 'What is the Populated layer, and where does it come from?',
     answer: (
       <p>
-        Every populated system across 700 ly of HIP 47126 and 500 ly of Praea Euq AT-U d2-47, in three population bands. It is seeded from your own Spansh regional dump with <code>scripts/gen-populated-systems.mjs</code> and kept current from the journal stream: every FSDJump, Location or CarrierJump with a population, from EDDN or your own journal, updates <code>populated-systems.json</code> beside the exe. EDDN is a push stream the app already subscribes to, so this costs no extra requests. Hover the toggle for the count, the seed date and how many the stream has added.
+        Every populated system across 700 ly of HIP 47126 and 500 ly of Praea Euq AT-U d2-47, in three population bands. It is seeded from the Spansh galaxy dump &mdash; <code>scripts/extract-populated-galaxy.mjs</code> pulls every populated system out of the dump once, then <code>scripts/gen-populated-systems.mjs</code> keeps only the two bubbles (the regional dumps cannot feed it: their 700 ly sphere is centred 103 ly from HIP 47126 and misses the Sol side of the bubble) &mdash; and kept current from the journal stream: every FSDJump, Location or CarrierJump with a population, from EDDN or your own journal, updates <code>populated-systems.json</code> beside the exe. EDDN is a push stream the app already subscribes to, so this costs no extra requests. Hover the toggle for the count, the seed date and how many the stream has added.
       </p>
     ),
   },
@@ -2088,7 +2116,7 @@ const faqItems: FaqItem[] = [
     question: 'Where do the region borders and landmarks come from?',
     answer: (
       <p>
-        The 42 galactic regions are the klightspeed community region map (MIT licence, vendored under <code>scripts/vendor/</code>, regenerated with <code>scripts/gen-galactic-regions.mjs</code>), validated against Spansh&rsquo;s region names for 690 of 690 systems. Landmarks &mdash; Colonia, the nebulae, Founders World &mdash; are placed only from coordinates in your own data, never by eye. The galactic arms carry no names on purpose; the region names are the ones that mean something.
+        The 42 galactic regions are the klightspeed community region map (MIT licence, vendored under <code>scripts/vendor/</code>, regenerated with <code>scripts/gen-galactic-regions.mjs</code>), validated against Spansh&rsquo;s region names for 690 of 690 systems. Landmarks &mdash; Colonia, the nebulae, Founders World &mdash; are placed only from coordinates in your own data, never by eye. No galaxy is drawn underneath: the spiral arms never matched the game&rsquo;s, and the region names are the ones that mean something.
       </p>
     ),
   },

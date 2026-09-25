@@ -1,13 +1,12 @@
 /**
- * Commodity-ID resolution across the depot-vs-market internal-name drift.
+ * Commodity-ID resolution for the goods the game names by a symbol that is not their display name.
  *
- * Elite's ColonisationConstructionDepot event names a few goods by a different
- * internal symbol than the commodity market does. The journal-name lookup misses
- * those (regression: project "need to buy" ignored carrier stock held under the
- * market symbol — e.g. "need 272" with 412 on the carrier). resourceToCommodity
- * now falls back to the localised display name, which resolves to the canonical
- * market ID. This pins both halves: the miss that necessitates the fallback, and
- * the display-name lookup that fixes it.
+ * Elite's ColonisationConstructionDepot, Cargo, MarketBuy/Sell and CargoTransfer all name Land
+ * Enrichment Systems `terrainenrichmentsystems`, H.E. Suits `hazardousenvironmentsuits`, Microbial
+ * Furnaces `heliostaticfurnaces` and Muon Imager `mutomimager` (verified across every 2025–2026
+ * journal). Until 1.60.15 the dictionary carried display-derived symbols for them, so the journal-name
+ * lookup missed and only the display-name fallback saved a project need — while the hold, resolved by
+ * symbol alone, never matched. Both routes now land on the canonical id; this pins them.
  */
 import { describe, it, expect } from 'vitest';
 import { findCommodityByJournalName, findCommodityByDisplayName } from '../server/journal/commodities.js';
@@ -16,16 +15,17 @@ const DRIFT = [
   { depot: '$terrainenrichmentsystems_name;', display: 'Land Enrichment Systems', canonical: 'landenrichmentsystems' },
   { depot: '$hazardousenvironmentsuits_name;', display: 'H.E. Suits', canonical: 'hesuits' },
   { depot: '$heliostaticfurnaces_name;', display: 'Microbial Furnaces', canonical: 'microbialfurnaces' },
+  { depot: '$mutomimager_name;', display: 'Muon Imager', canonical: 'muonimager' },
 ];
 
-describe('commodity resolution — depot vs market name drift', () => {
-  it('depot internal symbols miss the journal-name lookup (why the fallback exists)', () => {
+describe('commodity resolution — the goods whose symbol is not their name', () => {
+  it("the game's symbols resolve straight to the canonical id", () => {
     for (const c of DRIFT) {
-      expect(findCommodityByJournalName(c.depot), c.depot).toBeUndefined();
+      expect(findCommodityByJournalName(c.depot)?.id, c.depot).toBe(c.canonical);
     }
   });
 
-  it('localised display names resolve to the canonical market ID', () => {
+  it('localised display names resolve to the same id (the fallback still holds)', () => {
     for (const c of DRIFT) {
       expect(findCommodityByDisplayName(c.display)?.id, c.display).toBe(c.canonical);
     }

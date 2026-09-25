@@ -60,7 +60,6 @@ export function ColonyMapPage() {
   const [showSagA, setShowSagA] = useState(false);
   const [showColonies, setShowColonies] = useState(true);
   const [showTargets, setShowTargets] = useState(false);
-  const [showGalaxy, setShowGalaxy] = useState(false);
   const [showRegions, setShowRegions] = useState(false);
   const [showLandmarks, setShowLandmarks] = useState(false);
   const [showPopulated, setShowPopulated] = useState(false);
@@ -470,19 +469,12 @@ export function ColonyMapPage() {
     if (leg.length > 1) legs.push(leg);
     return legs;
   }, [journey]);
-  // Galaxy-layer text is sized as a fraction of the view, not in light years, so the region
-  // names stay legible at any zoom instead of being right only when the whole disc is on screen.
+  // Region-label text is sized as a fraction of the view, not in light years, so the names stay
+  // legible at any zoom instead of being right only when the whole disc is on screen.
   const galaxyFont = Math.max(viewBox.w * 0.016, 0.5);
 
   const PIN_COLOR: Record<string, string> = { huge: '#fbbf24', major: '#38bdf8' };
 
-  // A representative galaxy, not a survey. Sol is the origin of ED's coordinates and Sagittarius A*
-  // sits 25,900 ly away on +z, so the disc is drawn as a circle about that point and the arms as
-  // logarithmic spirals from the bar — r = r0·e^(kθ), pitch ~12°, the shape a barred spiral makes.
-  // The phase is chosen so an arm runs through Sol, which is what puts the Orion Spur where you
-  // expect it. Arm names and layout follow the galactic-regions reference at edastro.com/galmap;
-  // the geometry here is redrawn, approximate, and good only for orientation.
-  const GC = { x: 25.21875, z: -25899.96875 };   // Sagittarius A* in this map's coordinates
     // Landmarks, placed from REAL coordinates or not at all. Each entry names the systems that make
   // up the place; the label sits at the centroid of the ones actually in your data. A prefix that
   // matches nothing renders nothing — so a name listed here can never appear at a made-up position,
@@ -527,30 +519,6 @@ export function ColonyMapPage() {
     return out;
   }, [knownSystems, scoutedSystems]);
 
-  const GALAXY = useMemo(() => {
-    const k = Math.tan((12 * Math.PI) / 180);
-    const r0 = 4000, rMax = 46000, phase = 7.214;
-    // Four arms, unnamed on purpose: the real-astronomy arm names are not what the game shows you,
-    // and the labels that ARE meaningful — the galactic regions — come from your own scouted data
-    // below, where every name is one Spansh actually returned for a system you visited.
-    const arms = [{ turn: 0 }, { turn: Math.PI / 2 }, { turn: Math.PI }, { turn: (3 * Math.PI) / 2 }];
-    const maxT = Math.log(rMax / r0) / k;
-    return arms.map((a) => {
-      const pts: string[] = [];
-      let label = { x: 0, z: 0 };
-      for (let i = 0; i <= 90; i++) {
-        const t = (i / 90) * maxT;
-        const r = r0 * Math.exp(k * t);
-        const ang = t - phase + a.turn;
-        const x = GC.x + r * Math.cos(ang);
-        const z = GC.z + r * Math.sin(ang);
-        pts.push(`${x.toFixed(0)},${z.toFixed(0)}`);
-        if (i === 66) label = { x, z };
-      }
-      return { points: pts.join(' '), label };
-    });
-  }, []);
-
   return (
     <div className="flex flex-col" style={{ height: 'calc(100vh - 1rem)' }}>
       {/* Map — full area */}
@@ -576,28 +544,6 @@ export function ColonyMapPage() {
             </pattern>
           </defs>
           <rect x={viewBox.x - viewBox.w} y={viewBox.y - viewBox.h} width={viewBox.w * 3} height={viewBox.h * 3} fill="url(#grid)" />
-
-          {/* The galaxy, approximate — under everything, purely for orientation */}
-          {showGalaxy && (
-            <g pointerEvents="none">
-              <defs>
-                <radialGradient id="disc">
-                  <stop offset="0%" stopColor="#c4b5fd" stopOpacity={0.16} />
-                  <stop offset="55%" stopColor="#818cf8" stopOpacity={0.07} />
-                  <stop offset="100%" stopColor="#1e1b4b" stopOpacity={0} />
-                </radialGradient>
-              </defs>
-              <circle cx={GC.x} cy={GC.z} r={46000} fill="url(#disc)" />
-              <circle cx={GC.x} cy={GC.z} r={46000} fill="none" stroke="#6366f1" strokeWidth={40} opacity={0.18} />
-              {GALAXY.map((arm, i) => (
-                <polyline key={`arm-${i}`} points={arm.points} fill="none" stroke="#a5b4fc" strokeWidth={900} opacity={0.1} strokeLinecap="round" />
-              ))}
-              {/* The bar through the core */}
-              <ellipse cx={GC.x} cy={GC.z} rx={7000} ry={2600} transform={`rotate(28 ${GC.x} ${GC.z})`} fill="#fcd34d" opacity={0.13} />
-              <circle cx={GC.x} cy={GC.z} r={1200} fill="#fde68a" opacity={0.22} />
-              <text x={GC.x} y={GC.z - galaxyFont * 1.4} fill="#fcd34d" opacity={0.65} fontSize={galaxyFont} textAnchor="middle">Sagittarius A*</text>
-            </g>
-          )}
 
           {/* The 42 galactic regions — real borders, from the community region map, not placed by eye.
               Same z-flip as every other point on this map. Rim lines are the edge of the disc. */}
@@ -857,18 +803,6 @@ export function ColonyMapPage() {
             />
             Targets
             {showTargets && <span className="text-violet-300/80">{Object.keys(watchedSystems || {}).length}</span>}
-          </label>
-          <label
-            className="flex items-center gap-1 px-2 py-1 rounded bg-background/80 border border-border text-xs text-muted-foreground cursor-pointer"
-            title="An approximate galaxy for orientation — disc, bar and four arms. Layout after edastro.com/galmap; the geometry is redrawn, not surveyed."
-          >
-            <input
-              type="checkbox"
-              checked={showGalaxy}
-              onChange={(e) => setShowGalaxy(e.target.checked)}
-              className="rounded border-border w-3 h-3"
-            />
-            Galaxy
           </label>
           <label
             className="flex items-center gap-1 px-2 py-1 rounded bg-background/80 border border-border text-xs text-muted-foreground cursor-pointer"

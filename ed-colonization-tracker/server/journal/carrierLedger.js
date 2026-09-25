@@ -263,6 +263,14 @@ export function ensureCarrierLedger({ journalDir, carrierId: id, callsign: cs } 
  * reconcile line — the thing that absorbs visitors' trades the journal never saw. A buy order is
  * noted (its fills are invisible until the goods are moved or listed). Returns true on change.
  */
+/** The balance of a commodity as of `when`: what the ledger holds now, less every move recorded after that moment. */
+function qtyAsOf(c, when) {
+  const b = bal.get(c);
+  let q = b ? b.qty : 0;
+  for (const t of txs) if (t.c === c && t.at > when) q -= t.d;
+  return q;
+}
+
 export function reconcileCarrierMarket(items, at) {
   let changed = false;
   const when = at || new Date().toISOString();
@@ -272,7 +280,13 @@ export function reconcileCarrierMarket(items, at) {
     if (!c) continue;
     if (it.stock > 0) {
       const b = entry(c, it.nameLocalised || null);
-      if (b.qty !== it.stock) { if (applyTx({ k: 'tx', at: when, kind: 'reconcile', c, n: b.name, d: it.stock - b.qty })) changed = true; }
+      // A snapshot states the stock AS OF ITS OWN TIME. Compare it to the balance as of then, not to
+      // now: Sync All re-reading a 03:29 snapshot at 03:31, after 428 t of steel had left for the
+      // ship at 03:30, put the steel back (Kewell Range, 2026-09-14 — 450 t of phantom cargo across
+      // five commodities). A snapshot older than the item's current anchor has been superseded.
+      if (b.basisAt && when < b.basisAt) continue;
+      const asOf = qtyAsOf(c, when);
+      if (asOf !== it.stock) { if (applyTx({ k: 'tx', at: when, kind: 'reconcile', c, n: b.name, d: it.stock - asOf })) changed = true; }
       if (b.basis !== 'market') { b.basis = 'market'; b.basisAt = when; changed = true; }
       if (b.ordered !== 'sell') { noteOrder(when, c, 'sell', b.name); changed = true; }
     } else if (it.demand > 0) {

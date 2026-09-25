@@ -22,6 +22,7 @@
 
 import { isFleetCarrier, isEphemeralStation } from './util.js';
 import { fetchSystemDump, resolveSystemName } from './spansh.js';
+import { scanCompleteness, countScanRecords } from './scanCompleteness.js';
 import { readNavRouteJson } from './extractor.js';
 import {
   scoreSystem,
@@ -83,6 +84,78 @@ export function resetScanState(systemAddress, systemName) {
   scanState.pendingSystemName = systemName;
   scanState.pendingFootfallBodies = [];
   scanState.pendingScanBodies = [];
+}
+
+/**
+ * A Location event — a relog, or the first thing the watcher sees after the exe restarts (it starts
+ * at the end of the current journal, so the jump that brought the ship here is never replayed).
+ * Arms the scan state when it points elsewhere or nowhere; a relog into the same system keeps the
+ * buffer. Before 1.60.13 only FSDJump and CarrierJump armed it, and every scan after a relog was
+ * dropped on the floor (YI-V c17-36: seven planets scanned, nothing scored).
+ * @returns {boolean} true when the state was re-armed
+ */
+export function resetScanStateIfElsewhere(systemAddress, systemName) {
+  if (systemAddress == null) return false;
+  if (scanState.pendingSystemAddress === systemAddress) return false;
+  resetScanState(systemAddress, systemName);
+  return true;
+}
+
+/**
+ * A system's journal scans as one list: the cache (earlier sessions, Sync All, a refresh) with this
+ * session's buffer laid over it. A relog splits a system across sessions — YI-V c17-36 had its three
+ * stars auto-scanned one day and its seven planets scanned two days on — and only the union says how
+ * much of the system the commander has actually seen. A re-scan replaces its record by body id (name
+ * as the fallback), carrying signal counts forward as the extractor does.
+ */
+export function mergeScannedBodies(cached, pending) {
+  const out = [];
+  const byId = new Map();
+  const byName = new Map();
+  const indexOf = (b) => {
+    if (b.bodyId != null && byId.has(b.bodyId)) return byId.get(b.bodyId);
+    if (b.bodyName && byName.has(b.bodyName)) return byName.get(b.bodyName);
+    return -1;
+  };
+  const remember = (b, i) => {
+    if (b.bodyId != null) byId.set(b.bodyId, i);
+    if (b.bodyName) byName.set(b.bodyName, i);
+  };
+  for (const b of Array.isArray(cached) ? cached : []) {
+    if (!b) continue;
+    remember(b, out.length);
+    out.push(b);
+  }
+  for (const b of Array.isArray(pending) ? pending : []) {
+    if (!b) continue;
+    const i = indexOf(b);
+    if (i < 0) { remember(b, out.length); out.push(b); continue; }
+    const prev = out[i];
+    const next = { ...b };
+    if (prev.bioSignals != null && next.bioSignals == null) next.bioSignals = prev.bioSignals;
+    if (prev.geoSignals != null && next.geoSignals == null) next.geoSignals = prev.geoSignals;
+    out[i] = next;
+    remember(next, i);
+  }
+  return out;
+}
+
+/** The score line on the overlay and the companion feed — the same words whichever source scored. */
+function announceScore(deps, ev, systemName, score, bodyString, source) {
+  const color = score.total >= 100 ? '#fcd34d' : score.total >= 60 ? '#4ade80' : '#38bdf8';
+  deps.sendOverlay({
+    id: `edcolony_score_${ev.SystemAddress}`,
+    text: `${systemName} — Score: ${score.total} [${source}] | ${bodyString}`,
+    color, x: X_LEFT, y: Y_SCORE, ttl: 12,
+  });
+  deps.broadcastEvent({
+    type: 'score_update',
+    system: systemName,
+    score: score.total,
+    source,
+    bodyString,
+    timestamp: new Date().toISOString(),
+  });
 }
 
 // BodyID → name, learned from ApproachBody/Scan. ScanOrganic only reports a numeric
@@ -274,10 +347,11 @@ export function handleFSDJumpOverlay(ev, existing, deps) {
   } else if (scouted && scouted.score && scouted.score.total > 0) {
     const source = buildSourceTag(scouted);
     const needsScan = !scouted.fssAllBodiesFound;
+    const sc = scanCompleteness(scouted);
     const total = scouted.score.total;
     const color = total >= 100 ? '#fcd34d' : total >= 60 ? '#4ade80' : '#38bdf8';
     let text = `${ev.StarSystem} — Score: ${total} [${source}] | ${scouted.bodyString || ''}`;
-    if (needsScan) text += ' — FSS scan incomplete';
+    if (needsScan) text += sc.isPartial ? ` — ${sc.records} of ${sc.total} bodies scanned` : sc.state === 'unknown' ? ` — ${sc.records} bodies on file, scan total unknown` : ' — FSS scan incomplete';
     deps.sendOverlay({ id: `edcolony_score_${ev.SystemAddress}`, text, color, x: X_LEFT, y: Y_SCORE, ttl: 12 });
     if (needsScan) {
       deps.sendOverlay({
@@ -288,9 +362,13 @@ export function handleFSDJumpOverlay(ev, existing, deps) {
     }
   } else if (scouted) {
     const source = buildSourceTag(scouted);
+    const sc = scanCompleteness(scouted);
     deps.sendOverlay({
       id: `edcolony_score_${ev.SystemAddress}`,
-      text: `${ev.StarSystem} — Known [${source}]`,
+      // No body records on file is unclassified, not a known dud (Spansh position-only entries).
+      text: sc.hasBodyData
+        ? `${ev.StarSystem} — Known [${source}]`
+        : `${ev.StarSystem} — No body data on file${sc.known ? ` (${sc.total} by honk)` : ''} — unclassified, scan to score`,
       color: '#38bdf8', x: X_LEFT, y: Y_SCORE, ttl: 8,
     });
     if (!scouted.fssAllBodiesFound) {
@@ -516,7 +594,7 @@ export function handleScanEventOverlay(ev, existing, deps) {
     terraformState: ev.TerraformState,
     radius: ev.Radius, // metres — needed for epic-view big-sky / ring geometry
     semiMajorAxis: ev.SemiMajorAxis, // metres — orbital distance to parent
-    rings: ev.Rings ? ev.Rings.map((r) => ({ name: r.Name, ringClass: r.RingClass, outerRad: r.OuterRad })) : undefined,
+    rings: ev.Rings ? ev.Rings.map((r) => ({ name: r.Name, ringClass: r.RingClass, innerRad: r.InnerRad, outerRad: r.OuterRad, massMT: r.MassMT })) : undefined,
     parents: ev.Parents,
     wasDiscovered: ev.WasDiscovered,
     wasMapped: ev.WasMapped,
@@ -691,7 +769,7 @@ export function journalBodiesToSpanshFormat(bodies, systemName) {
     surfaceTemperature: b.surfaceTemperature,
     radius: b.radius != null ? b.radius / 1000 : undefined, // metres → km (epic-view geometry)
     semiMajorAxis: b.semiMajorAxis != null ? b.semiMajorAxis / 149597870700 : undefined, // metres → AU
-    rings: b.rings ? b.rings.map((r) => ({ name: r.name, type: r.ringClass, outerRadius: typeof r.outerRad === 'number' ? r.outerRad : 0 })) : undefined,
+    rings: b.rings ? b.rings.map((r) => ({ name: r.name, type: r.ringClass, innerRadius: typeof r.innerRad === 'number' ? r.innerRad : 0, outerRadius: typeof r.outerRad === 'number' ? r.outerRad : 0, mass: typeof r.massMT === 'number' ? r.massMT : 0 })) : undefined, // metres and megatonnes, as the journal writes them — the ring-edge rule needs the edge and the density
     parents: b.parents,
     // FSSBodySignals counts → Spansh signals shape, so journal-scored systems keep
     // the geo-based Extraction-economy credit (and geo data survives into cachedBodies).
@@ -744,10 +822,11 @@ function buildScanHighlights(bodies) {
 export async function scoreUnknownSystem(systemAddress, systemName, deps) {
   try {
     const dump = await fetchSystemDump(systemAddress);
-    if (!dump || !dump.bodies || dump.bodies.length === 0) {
+    if (!dump || !dump.bodies || countScanRecords(dump.bodies) === 0) {
+      // A position-only entry is not an empty system: Spansh knows where it is and nothing else.
       deps.sendOverlay({
         id: `edcolony_score_${systemAddress}`,
-        text: `${systemName} — Not in Spansh — scan to score`,
+        text: `${systemName} — ${dump && Array.isArray(dump.bodies) ? 'In Spansh without bodies' : 'Not in Spansh'} — unclassified, scan to score`,
         color: '#e2e8f0', x: X_LEFT, y: Y_SCORE, ttl: 10,
       });
       return;
@@ -761,9 +840,9 @@ export async function scoreUnknownSystem(systemAddress, systemName, deps) {
       score,
       bodyString,
       scoutedAt: new Date().toISOString(),
-      spanshBodyCount: dump.bodies.length,
+      spanshBodyCount: countScanRecords(dump.bodies), // stars + planets — barycentre records never count
       totalBodyCount: dump.bodyCount,
-      fssAllBodiesFound: typeof dump.bodyCount === 'number' && dump.bodyCount > 0 ? dump.bodies.length >= dump.bodyCount : undefined,
+      fssAllBodiesFound: typeof dump.bodyCount === 'number' && dump.bodyCount > 0 ? countScanRecords(dump.bodies) >= dump.bodyCount : undefined,
     };
     // scoutedSystems is a map keyed by id64 (systemAddress)
     deps.applyStatePatch({
@@ -812,131 +891,89 @@ export async function handleFSSAllBodiesFoundOverlay(ev, existing, deps) {
     color: '#38bdf8', x: X_LEFT, y: Y_SCORE, ttl: 8,
   });
 
-  // 1. Try Spansh
-  try {
-    const dump = await fetchSystemDump(ev.SystemAddress);
-    if (dump && dump.bodies && dump.bodies.length > 0) {
-      const score = scoreSystem(dump.bodies);
-      const bodyString = buildBodyString(filterQualifyingBodies(dump.bodies), classifyStars(dump.bodies));
-      const record = {
-        id64: ev.SystemAddress,
-        name: systemName,
-        score,
-        bodyString,
-        scoutedAt: new Date().toISOString(),
-        spanshBodyCount: dump.bodies.length,
-        totalBodyCount: dump.bodyCount, // true FSS total — may exceed records (partial scan)
-        fssAllBodiesFound: typeof dump.bodyCount === 'number' && dump.bodyCount > 0 ? dump.bodies.length >= dump.bodyCount : true,
-        journalBodyCount: ev.Count,
-      };
-      deps.applyStatePatch({
-        scoutedSystems: { __upsert: { [String(ev.SystemAddress)]: record } },
-      });
-      const color = score.total >= 100 ? '#fcd34d' : score.total >= 60 ? '#4ade80' : '#38bdf8';
-      deps.sendOverlay({
-        id: `edcolony_score_${ev.SystemAddress}`,
-        text: `${systemName} — Score: ${score.total} [Spansh] | ${bodyString}`,
-        color, x: X_LEFT, y: Y_SCORE, ttl: 12,
-      });
-      deps.broadcastEvent({
-        type: 'score_update',
-        system: systemName,
-        score: score.total,
-        source: 'Spansh',
-        bodyString,
-        timestamp: new Date().toISOString(),
-      });
-      if (scanState.pendingScanBodies.length > 0) {
-        const highlights = buildScanHighlights(scanState.pendingScanBodies);
-        if (highlights) {
-          deps.sendOverlay({
-            id: 'edcolony_highlights',
-            text: `✨ ${highlights}`,
-            color: '#fcd34d', x: X_LEFT, y: Y_SCAN, ttl: 12,
-          });
-        }
-      }
-      scanState.pendingScanBodies = [];
-      return;
-    }
-  } catch {
-    // Fall through to journal-based scoring
-  }
+  // The journal's own scans: this session's buffer merged with the cache. A relog splits a system
+  // across sessions, and only the union says how much of it the commander has actually seen.
+  const cachedEntry = (existing.journalExplorationCache || {})[ev.SystemAddress];
+  const journalScans = mergeScannedBodies(cachedEntry && cachedEntry.scannedBodies, scanState.pendingScanBodies);
+  const journalCount = journalScans.length;
 
-  // 2. Fall back to accumulated journal scans. If watcher missed some, also
-  // consult journalExplorationCache (Sync All populates it).
-  let scanBodies = scanState.pendingScanBodies;
-  if (scanBodies.length === 0) {
-    const cached = (existing.journalExplorationCache || {})[ev.SystemAddress];
-    if (cached && cached.scannedBodies && cached.scannedBodies.length > 0) {
-      scanBodies = cached.scannedBodies;
-    }
-  }
+  // Spansh is a supplement, not a requirement: it scores the system only when it holds strictly more
+  // scan records than the journal. One star on file never outranks ten bodies just scanned — before
+  // 1.60.13 it did, whenever Spansh held anything at all, and the ten were thrown away.
+  let dump = null;
+  try { dump = await (deps.fetchSystemDump || fetchSystemDump)(ev.SystemAddress); } catch { dump = null; }
+  const spanshBodies = dump && Array.isArray(dump.bodies) ? dump.bodies : [];
+  const spanshCount = countScanRecords(spanshBodies); // stars + planets — barycentre records never count
+  const useSpansh = spanshCount > 0 && spanshCount > journalCount;
 
-  if (scanBodies.length > 0 && scanState.pendingSystemName) {
+  // The FSDJump that brought us here put exact StarPos coords on commanderPosition. Without these,
+  // radius searches can't see journal-scored systems at all (the whole UN-T campaign was invisible
+  // to "within 15 ly" — 32 null-coord entries). The prior record's own fields survive a rescore too.
+  const pos = existing.commanderPosition;
+  const hereCoords = pos && pos.systemAddress === ev.SystemAddress && pos.coordinates ? pos.coordinates : null;
+  const prior = (existing.scoutedSystems || {})[ev.SystemAddress] || null;
+  const kept = prior ? { isFavorite: prior.isFavorite, notes: prior.notes, region: prior.region, isColonised: prior.isColonised } : {};
+  const coordinates = hereCoords || (prior && prior.coordinates) || undefined;
+
+  // Whatever scores the system, the journal scans are kept: a later Rescore compares them against
+  // Spansh again and the exploration page reads them. Before 1.60.13 only the journal branch kept
+  // them, so a Spansh-scored system lost its own scans and Rescore had nothing to prefer.
+  const cacheUpsert = journalCount > 0 ? {
+    journalExplorationCache: { __upsert: { [String(ev.SystemAddress)]: {
+      systemAddress: ev.SystemAddress,
+      systemName,
+      coordinates: hereCoords || (cachedEntry && cachedEntry.coordinates) || null,
+      bodyCount: ev.Count,
+      fssAllBodiesFound: true,
+      scannedBodies: journalScans,
+      lastSeen: new Date().toISOString(),
+    } } },
+  } : {};
+
+  if (useSpansh) {
+    const score = scoreSystem(spanshBodies);
+    const bodyString = buildBodyString(filterQualifyingBodies(spanshBodies), classifyStars(spanshBodies));
+    const total = typeof dump.bodyCount === 'number' && dump.bodyCount > 0 ? dump.bodyCount : ev.Count; // the honk total
+    const record = {
+      ...kept,
+      id64: ev.SystemAddress,
+      name: systemName,
+      score,
+      bodyString,
+      coordinates,
+      scoutedAt: new Date().toISOString(),
+      fromJournal: false,
+      spanshBodyCount: spanshCount,
+      totalBodyCount: total, // may exceed the records (partial scan)
+      fssAllBodiesFound: spanshCount >= total,
+      journalBodyCount: ev.Count,
+      journalScannedCount: journalCount,
+    };
+    deps.applyStatePatch({ scoutedSystems: { __upsert: { [String(ev.SystemAddress)]: record } }, ...cacheUpsert });
+    announceScore(deps, ev, systemName, score, bodyString, 'Spansh');
+  } else if (journalCount > 0) {
     try {
-      const spanshBodies = journalBodiesToSpanshFormat(scanBodies, scanState.pendingSystemName);
-      const score = scoreSystem(spanshBodies);
+      const bodies = journalBodiesToSpanshFormat(journalScans, systemName);
+      const score = scoreSystem(bodies);
       try { checklistAddEpic(score.epicView); } catch { /* checklist is best-effort */ }
-      const bodyString = buildBodyString(filterQualifyingBodies(spanshBodies), classifyStars(spanshBodies));
-      // The FSDJump that brought us here put exact StarPos coords on commanderPosition.
-      // Without these, radius searches can't see journal-scored systems at all (the
-      // whole UN-T campaign was invisible to "within 15 ly" — 32 null-coord entries).
-      const pos = existing.commanderPosition;
-      const hereCoords = pos && pos.systemAddress === ev.SystemAddress && pos.coordinates
-        ? pos.coordinates
-        : null;
+      const bodyString = buildBodyString(filterQualifyingBodies(bodies), classifyStars(bodies));
       const record = {
+        ...kept,
         id64: ev.SystemAddress,
         name: systemName,
         score,
         bodyString,
-        coordinates: hereCoords || undefined,
+        coordinates,
         scoutedAt: new Date().toISOString(),
         fromJournal: true,
-        spanshBodyCount: 0,
+        spanshBodyCount: spanshCount,
         fssAllBodiesFound: true,
         journalBodyCount: ev.Count,
         totalBodyCount: ev.Count, // honk total — for scan-completeness
-        journalScannedCount: scanBodies.length,
+        journalScannedCount: journalCount,
       };
-      deps.applyStatePatch({
-        scoutedSystems: { __upsert: { [String(ev.SystemAddress)]: record } },
-        // Persist the scanned bodies too, so a later Rescore can regenerate the
-        // score (e.g. after a scorer change). Without this, journal-scored systems
-        // lose their bodies and Rescore becomes a no-op. Map-merge upsert.
-        journalExplorationCache: { __upsert: { [String(ev.SystemAddress)]: {
-          systemAddress: ev.SystemAddress,
-          systemName,
-          coordinates: hereCoords,
-          bodyCount: ev.Count,
-          fssAllBodiesFound: true,
-          scannedBodies: scanBodies,
-          lastSeen: new Date().toISOString(),
-        } } },
-      });
-      const color = score.total >= 100 ? '#fcd34d' : score.total >= 60 ? '#4ade80' : '#38bdf8';
-      deps.sendOverlay({
-        id: `edcolony_score_${ev.SystemAddress}`,
-        text: `${systemName} — Score: ${score.total} [Journal] | ${bodyString}`,
-        color, x: X_LEFT, y: Y_SCORE, ttl: 12,
-      });
-      deps.broadcastEvent({
-        type: 'score_update',
-        system: systemName,
-        score: score.total,
-        source: 'Journal',
-        bodyString,
-        timestamp: new Date().toISOString(),
-      });
-      const highlights = buildScanHighlights(scanBodies);
-      if (highlights) {
-        deps.sendOverlay({
-          id: 'edcolony_highlights',
-          text: `✨ ${highlights}`,
-          color: '#fcd34d', x: X_LEFT, y: Y_SCAN, ttl: 12,
-        });
-      }
+      deps.applyStatePatch({ scoutedSystems: { __upsert: { [String(ev.SystemAddress)]: record } }, ...cacheUpsert });
+      announceScore(deps, ev, systemName, score, bodyString, 'Journal');
     } catch (e) {
       console.warn('[Overlay] Journal scoring failed:', e && e.message);
       deps.sendOverlay({
@@ -953,6 +990,16 @@ export async function handleFSSAllBodiesFoundOverlay(ev, existing, deps) {
     });
   }
 
+  if (journalCount > 0) {
+    const highlights = buildScanHighlights(journalScans);
+    if (highlights) {
+      deps.sendOverlay({
+        id: 'edcolony_highlights',
+        text: `✨ ${highlights}`,
+        color: '#fcd34d', x: X_LEFT, y: Y_SCAN, ttl: 12,
+      });
+    }
+  }
   scanState.pendingScanBodies = [];
 }
 
@@ -984,32 +1031,55 @@ export async function handleTargetSelectedOverlay(ev, existing, deps) {
   let bodyCount;          // true FSS total
   let scannedBodyCount;   // bodies we actually have data for
 
+  let noData = false;     // on file with no body records: unclassified, not empty
+
   if (scouted) {
-    const recs = scouted.fromJournal ? (scouted.journalScannedCount || 0) : (scouted.spanshBodyCount || 0);
-    const total = scouted.totalBodyCount || scouted.journalBodyCount || 0;
-    if (scouted.fromJournal) {
-      spansh = 'yes'; scannedBodyCount = recs; bodyCount = total || recs;
-    } else if (typeof scouted.spanshBodyCount === 'number') {
-      if (scouted.spanshBodyCount > 0) { spansh = 'yes'; scannedBodyCount = scouted.spanshBodyCount; bodyCount = total || scouted.spanshBodyCount; }
-      else { spansh = 'empty'; }
-    }
+    const sc = scanCompleteness(scouted);
+    spansh = scouted.fromJournal || sc.hasBodyData ? 'yes' : 'empty';
+    noData = !sc.hasBodyData;
+    scannedBodyCount = sc.records;
+    if (sc.known) bodyCount = sc.total; // undefined = "N on file, scan total unknown"
   }
 
-  if (spansh === 'unknown') {
-    // Fetch the dump so we can report scan COMPLETENESS (X of Y bodies), not just
-    // yes/no — a "3 of 13" partial means the score (if any) is provisional.
+  // Fetch the dump when we know nothing, and when the record predates the honk total
+  // (everything scored March–June 2026): "3 of 13" makes the score provisional, and a total
+  // learned here is written back so the pool and the next card get it without another fetch.
+  const wantsTotal = !!scouted && !scouted.fromJournal && bodyCount == null;
+  if (spansh === 'unknown' || wantsTotal) {
     try {
       const dump = await fetchSystemDump(ev.SystemAddress);
       if (dump && Array.isArray(dump.bodies)) {
-        scannedBodyCount = dump.bodies.length;
-        bodyCount = typeof dump.bodyCount === 'number' ? dump.bodyCount : dump.bodies.length;
-        spansh = dump.bodies.length > 0 ? 'yes' : 'empty';
-      } else {
+        const liveRecords = countScanRecords(dump.bodies);
+        const liveTotal = typeof dump.bodyCount === 'number' && dump.bodyCount > 0 ? dump.bodyCount : undefined;
+        if (spansh === 'unknown') {
+          scannedBodyCount = liveRecords;
+          bodyCount = liveTotal;
+          spansh = liveRecords > 0 ? 'yes' : 'empty';
+          noData = liveRecords === 0;
+        } else {
+          if (liveTotal != null) bodyCount = liveTotal;
+          if (liveRecords > (scannedBodyCount || 0)) { // Spansh has grown since the record was scored
+            scannedBodyCount = liveRecords;
+            if (liveRecords > 0) { spansh = 'yes'; noData = false; }
+          }
+          if (liveTotal != null && scouted.totalBodyCount !== liveTotal && typeof deps.applyStatePatch === 'function') {
+            deps.applyStatePatch({
+              scoutedSystems: { __upsert: { [String(ev.SystemAddress)]: {
+                ...scouted,
+                totalBodyCount: liveTotal,
+                fssAllBodiesFound: (scouted.spanshBodyCount || 0) >= liveTotal,
+              } } },
+            });
+          }
+        }
+      } else if (spansh === 'unknown') {
         spansh = 'no';
       }
     } catch (e) {
-      console.warn('[Overlay] target dump lookup failed for', ev.Name, '—', e && e.message);
-      spansh = 'unknown';
+      // A 404 is an answer: Spansh has never heard of it — the real unclassified find.
+      const notInSpansh = /\b404\b/.test(String(e && e.message));
+      if (spansh === 'unknown') spansh = notInSpansh ? 'no' : 'unknown';
+      if (!notInSpansh) console.warn('[Overlay] target dump lookup failed for', ev.Name, '—', e && e.message);
     }
   }
 
@@ -1024,8 +1094,8 @@ export async function handleTargetSelectedOverlay(ev, existing, deps) {
     bodyCount,
     scannedBodyCount,
     wasColonised: (scouted && scouted.isColonised) || false,
-    score: (scouted && scouted.score && scouted.score.total) || null,
-    starCount: (scouted && scouted.score && scouted.score.starCount) || null,
+    score: (scouted && scouted.score && !noData && scouted.score.total) || null,
+    starCount: (scouted && scouted.score && !noData && scouted.score.starCount) || null,
     bodyString: (scouted && scouted.bodyString) || null,
     scoreSource: scouted ? (scouted.fromJournal ? 'Journal' : 'Spansh') : null,
     timestamp: new Date().toISOString(),

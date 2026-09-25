@@ -2051,7 +2051,7 @@ export interface JournalScannedBody {
   surfacePressure?: number; // Pascals
   radius?: number; // metres
   semiMajorAxis?: number; // metres — orbital distance to parent
-  rings?: { name: string; ringClass: string; outerRad?: number; massKG?: number }[];
+  rings?: { name: string; ringClass: string; innerRad?: number; outerRad?: number; massKG?: number }[]; // massKG holds the journal's MassMT (megatonnes)
   parents?: Record<string, number>[];
   wasDiscovered?: boolean;
   wasMapped?: boolean;
@@ -2090,11 +2090,12 @@ export function journalBodiesToSpanshFormat(bodies: JournalScannedBody[], _syste
     rings: b.rings?.map((r) => ({
       name: r.name,
       type: r.ringClass,
-      // Journal ring extraction doesn't keep radii/mass — zeros keep the
-      // SpanshRing shape; the scorer only checks rings.length.
-      innerRadius: 0,
-      outerRadius: typeof r.outerRad === 'number' ? r.outerRad : 0, // metres — for ring-edge epic detection
-      mass: 0,
+      // Radii in metres and mass in megatonnes, as the journal writes them: the scorer's ring-edge rule
+      // needs the outer edge for the geometry and the density for the brightness. Older cached scans
+      // carry no inner radius or mass, which reads as unknown and passes.
+      innerRadius: typeof r.innerRad === 'number' ? r.innerRad : 0,
+      outerRadius: typeof r.outerRad === 'number' ? r.outerRad : 0,
+      mass: typeof r.massKG === 'number' ? r.massKG : 0,
     })),
     parents: b.parents,
     // FSSBodySignals counts → Spansh signals shape, so journal-scored systems keep
@@ -2418,8 +2419,11 @@ export async function extractDockHistory(
         existing.lastDocked = ev.timestamp;
         // Prefer the newest StationName — handles renames and lifecycle
         // (construction depot → colonisation ship → completed station).
-        // Skip obvious construction-site placeholders so the live name wins.
-        if (ev.StationName && !/\$EXT_PANEL_ColonisationShip|Construction Site/i.test(ev.StationName)) {
+        // A construction-site placeholder never overwrites a finished station's name, but
+        // a construction-site name replaces a construction-site name: a site can be renamed
+        // while still under construction (same market id).
+        const placeholder = (n: string | undefined) => /\$EXT_PANEL_ColonisationShip|Construction Site/i.test(n || '');
+        if (ev.StationName && (!placeholder(ev.StationName) || !existing.stationName || placeholder(existing.stationName))) {
           existing.stationName = ev.StationName;
         }
       }
@@ -2570,7 +2574,7 @@ export async function extractExplorationData(
         radius: ev.Radius,
         semiMajorAxis: ev.SemiMajorAxis,
         terraformState: ev.TerraformState,
-        rings: ev.Rings?.map((r) => ({ name: r.Name, ringClass: r.RingClass, outerRad: r.OuterRad, massKG: r.MassMT })),
+        rings: ev.Rings?.map((r) => ({ name: r.Name, ringClass: r.RingClass, innerRad: r.InnerRad, outerRad: r.OuterRad, massKG: r.MassMT })),
         parents: ev.Parents,
         wasDiscovered: ev.WasDiscovered,
         wasMapped: ev.WasMapped,
@@ -3449,4 +3453,26 @@ export async function scanJournalHistory(
       enginesUsed: latestStats.Crafting?.Count_Of_Used_Engineers,
     } : null,
   };
+}
+
+/**
+ * Re-read the journals on the server and return the exploration cache it built — every system, or
+ * the one address. The server holds the journal folder; in the exe flow the browser never does, so
+ * `extractExplorationData` above threw "No journal folder selected" and every Rescore silently fell
+ * back to Spansh (1.60.13). The server upserts its own cache too, so other pages see the same data.
+ */
+export async function refreshExplorationFromServer(address?: number): Promise<Map<number, JournalExplorationSystem>> {
+  let token: string | null = null;
+  try { token = sessionStorage.getItem('colony-token') || localStorage.getItem('colony-token'); } catch { /* no storage */ }
+  const params = new URLSearchParams();
+  if (address != null) params.set('address', String(address));
+  if (token) params.set('token', token);
+  const qs = params.toString();
+  const res = await fetch(`/api/exploration/refresh${qs ? `?${qs}` : ''}`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Journal refresh failed (${res.status})`);
+  const body = (await res.json()) as { systems?: Record<string, JournalExplorationSystem>; error?: string };
+  if (body.error) throw new Error(body.error);
+  const map = new Map<number, JournalExplorationSystem>();
+  for (const [k, v] of Object.entries(body.systems || {})) map.set(Number(k), v);
+  return map;
 }

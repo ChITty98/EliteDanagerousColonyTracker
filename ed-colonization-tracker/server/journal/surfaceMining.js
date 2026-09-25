@@ -314,7 +314,7 @@ export function recordSighting({
     k: 'sight',
     at: new Date().toISOString(),
     body, system: system || null, systemAddress: systemAddress ?? null,
-    commodity, note: note || null,
+    commodity: canonicalCommodityName(commodity), note: note || null,
     // The site it belongs to. From the nav lock this is the game's own index (the "(4)" in
     // "Planetary Mining Location Signal (4)"); `site` remains as a free label for anything logged
     // without a lock.
@@ -330,14 +330,14 @@ export function recordSighting({
 
 /**
  * The site count read off the system map. The map shows "Planetary Mining Location (18)" for any
- * body you have discovered, but the journal only writes that number on a DSS — SAASignalsFound is
- * the sole event that ever carries PlanetaryMiningLocation (checked across 582 journal files;
- * FSSBodySignals never does). Until the body is mapped the commander is the only source. Stored as
- * a `signal` flagged manual; a DSS count always outranks it in the summary.
+ * body you have discovered. The journal writes that number on a DSS (SAASignalsFound) and, since the
+ * journals of 6 September 2026, on the FSS resolve as well (FSSBodySignals — 582 earlier files never
+ * carried it). Until the body is resolved in the FSS or mapped the commander is the only source.
+ * Stored as a `signal` flagged manual; an FSS or DSS count always outranks it in the summary.
  */
 export function recordSiteCount({ body, system, systemAddress, count, bodyId, clear } = {}) {
   // A wrong number is replaced by typing again (latest hand-typed wins); an empty one CLEARS it —
-  // a manual record with a null count — so the body goes back to Needs a DSS. A DSS still wins.
+  // a manual record with a null count — so the body goes back to Needs a scan. A scan still wins.
   const clearing = !!clear || count == null || count === '';
   const n = clearing ? null : Number(count);
   if (!body || (!clearing && (!Number.isFinite(n) || n < 0))) return false;
@@ -361,7 +361,7 @@ export function recordSiteCount({ body, system, systemAddress, count, bodyId, cl
 export function retractSighting({ body, siteIndex, commodity } = {}) {
   const idx = siteIndex != null && siteIndex !== '' ? Number(siteIndex) : null;
   if (!body || !commodity || idx == null || !Number.isFinite(idx)) return false;
-  appendRecord({ k: 'unsight', at: new Date().toISOString(), body, siteIndex: idx, commodity });
+  appendRecord({ k: 'unsight', at: new Date().toISOString(), body, siteIndex: idx, commodity: canonicalCommodityName(commodity) });
   flushNow();
   return true;
 }
@@ -644,6 +644,19 @@ let shipSpot = null;                  // { lat, lon, body, radius, at } — wher
 let shipBurst = null;                 // { atMs, timer } — an SAASignalsFound burst seen from the SRV / on foot: her AI
                                       // just took over. Recall or departure is decided when the window closes.
 let arriveTimer = null;
+// The ship leaves for orbit on its own once the commander is more than 2 km from it, and a deployed
+// rig self-destructs about 4.5 km from the Rhino (commander, 2026-09-13). Neither is in the journal;
+// both are distances the app can watch.
+const SHIP_DEPART_M = 2000;
+const RIG_DESTRUCT_M = 4500;
+// 'here' — a hard fact placed the ship (deploy, boarding, a transfer, an unmanned touchdown).
+// 'assumed' — a recall burst, and the ship placed at the Rhino 35 s on (every recall on file had the
+//   transfer or boarding 33–49 s after the burst, at that spot). 'departed' — the Rhino crossed the
+//   2 km line, or a burst arrived with the ship already within reach (a dismiss). 'away' — an unmanned
+//   liftoff. null — a relog: nothing is known until the next hard fact or recall.
+let shipStatus = null;
+let rigsClearedAt = null;             // boarding the ship counts as recovering the rigs; deposits worked before this carry none
+function setShip(spot, status) { shipSpot = spot; shipStatus = status; }
 let targetWatch = null;                // { body, siteIndex, commodity, startedAt, fired }
 let nudgeTimer = null;
 
@@ -738,13 +751,22 @@ function noteShipBurst(ev) {
   const away = pos ? (pos.inSrv || pos.onFoot) : journalSrv;
   if (!away) return;                                  // in the ship this is your own scanner
   if (shipBurst) return;                              // one burst = one event per body in range, same second
+  // A burst with the ship already within reach cannot be a recall: it is a dismiss, or the ship leaving
+  // on its own. It is gone, and nothing places it again until a hard fact or a recall burst.
+  if (shipSpot && (shipStatus === 'here' || shipStatus === 'assumed') && pos && pos.lat != null && shipSpot.lat != null
+    && (!shipSpot.body || !pos.body || shipSpot.body === pos.body)
+    && (metresBetween(pos.lat, pos.lon, shipSpot.lat, shipSpot.lon, pos.radius || shipSpot.radius || 0) ?? Infinity) <= SHIP_NEAR_M) {
+    shipStatus = 'departed';
+    pushSurfaceBeat('ship-away', {});
+    return;
+  }
   const atMs = Date.parse(ev.timestamp);
   const timer = setTimeout(() => {
     shipBurst = null;
     pushSurfaceBeat('recall', {}, { kick: true });
     // She comes to the commander: half a minute on, wherever the SRV is IS where she is.
     if (arriveTimer) clearTimeout(arriveTimer);
-    arriveTimer = setTimeout(() => { arriveTimer = null; const p = spotFrom(readSurfacePosition()); if (p) shipSpot = p; }, RECALL_ARRIVAL_MS);
+    arriveTimer = setTimeout(() => { arriveTimer = null; const p = spotFrom(readSurfacePosition()); if (p) setShip(p, 'assumed'); }, RECALL_ARRIVAL_MS);
     if (arriveTimer.unref) arriveTimer.unref();
   }, BURST_DEPARTURE_WINDOW_MS);
   if (timer.unref) timer.unref();
@@ -771,15 +793,19 @@ export function ingestSurfaceMining(parsed, ctx = {}, deps = null) {
   for (const ev of events) {
     if (!ev || !ev.event) continue;
 
-    // --- opportunities: the DSS signal count for a body, dropped by every other consumer -------
+    // --- opportunities: the site count for a body, dropped by every other consumer --------------
     // checklist.js reads only ev.Genuses from SAASignalsFound and skips when empty, and
-    // miningIndex only ingests /Ring/i bodies — so this signal type reached nothing.
+    // miningIndex only ingests /Ring/i bodies — so this signal type reached nothing. Since the
+    // journals of 6 September 2026 the FSS carries it too (FSSBodySignals: 119 bodies against 29
+    // with a DSS by the 18th), so a body is counted the moment it is resolved in the FSS; a DSS
+    // count still outranks it in the summary (1.60.14).
     if (ev.event === 'SAASignalsFound') noteShipBurst(ev); // the recall / departure tell — see noteShipBurst
-    if (ev.event === 'SAASignalsFound' && Array.isArray(ev.Signals)) {
+    if ((ev.event === 'SAASignalsFound' || ev.event === 'FSSBodySignals') && Array.isArray(ev.Signals)) {
       const spot = ev.Signals.find((s) => s && /PlanetaryMiningLocation/i.test(String(s.Type || '')));
       if (spot && ev.BodyName) {
         appendRecord({
           k: 'signal',
+          source: ev.event === 'FSSBodySignals' ? 'fss' : 'dss',
           at: ev.timestamp || new Date().toISOString(),
           body: ev.BodyName,
           system: ctx.system || null,
@@ -946,14 +972,14 @@ export function ingestSurfaceMining(parsed, ctx = {}, deps = null) {
     // this Liftoff is what says she is leaving rather than coming, so the pending recall is void.
     if (ev.event === 'Liftoff' && ev.PlayerControlled === false) {
       if (shipBurst && shipMoveKind(shipBurst.atMs, Date.parse(ev.timestamp)) === 'departure') { clearTimeout(shipBurst.timer); shipBurst = null; }
-      shipSpot = null;
+      setShip(null, 'away');
       if (isLiveEvent(ev)) pushSurfaceBeat('ship-away', {});
       continue;
     }
     // An on-foot recall ends with her setting down beside the commander: that IS where she is.
     if (ev.event === 'Touchdown' && ev.PlayerControlled === false && ev.Latitude != null) {
       const p = readSurfacePosition();
-      shipSpot = { lat: ev.Latitude, lon: ev.Longitude, body: ev.Body || null, radius: p ? p.radius ?? null : null, at: ev.timestamp || new Date().toISOString() };
+      setShip({ lat: ev.Latitude, lon: ev.Longitude, body: ev.Body || null, radius: p ? p.radius ?? null : null, at: ev.timestamp || new Date().toISOString() }, 'here');
     }
     if (ev.event === 'Disembark' && ev.SRV === true && ev.OnPlanet === true) { noteOnFoot(ev); continue; }
     if (ev.event === 'Cargo' && ev.Vessel === 'SRV' && typeof ev.Count === 'number') {
@@ -965,7 +991,7 @@ export function ingestSurfaceMining(parsed, ctx = {}, deps = null) {
     if (ev.event === 'SRVDestroyed' || ev.event === 'LoadGame') journalSrv = false;
     if (ev.event === 'LoadGame') {
       // A relog: she is not there. Nothing places her again until a deploy, a touchdown or a recall.
-      holdBeatFired = false; shipSpot = null;
+      holdBeatFired = false; setShip(null, null); rigsClearedAt = null;
       if (shipBurst) { clearTimeout(shipBurst.timer); shipBurst = null; }
       if (arriveTimer) { clearTimeout(arriveTimer); arriveTimer = null; }
     }
@@ -979,7 +1005,10 @@ export function ingestSurfaceMining(parsed, ctx = {}, deps = null) {
       if (trip.tonnes > 0) endTrip(ev, ev.event === 'DockSRV' ? 'boarded' : 'transfer', toShip, deps);
       if (ev.event === 'DockSRV') {
         srvHold = 0; journalSrv = false; holdBeatFired = false;
-        const p = spotFrom(readSurfacePosition(), ev.timestamp); if (p) shipSpot = p; // boarded: she is exactly here
+        const p = spotFrom(readSurfacePosition(), ev.timestamp); if (p) setShip(p, 'here'); // boarded: the ship is exactly here
+        rigsClearedAt = ev.timestamp || new Date().toISOString();                              // boarding counts as recovering the rigs
+      } else {
+        const p = spotFrom(readSurfacePosition(), ev.timestamp); if (p) setShip(p, 'here');       // a transfer only works with the ship beside the Rhino
       }
       continue;
     }
@@ -1003,7 +1032,7 @@ export function ingestSurfaceMining(parsed, ctx = {}, deps = null) {
         };
         appendRecord(rec);
         lastLanding = rec;
-        shipSpot = { lat: rec.lat, lon: rec.lon, body: rec.body, radius: rec.radius ?? null, at: rec.at }; // she hovers where the Rhino dropped from
+        setShip({ lat: rec.lat, lon: rec.lon, body: rec.body, radius: rec.radius ?? null, at: rec.at }, 'here'); // the ship hovers where the Rhino dropped from
       }
       continue;
     }
@@ -1132,7 +1161,12 @@ export function readSurfaceRecords() {
   const out = [];
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
-    try { out.push(JSON.parse(line)); } catch { /* skip a torn line */ }
+    let rec; try { rec = JSON.parse(line); } catch { continue; /* skip a torn line */ }
+    // A typed chip reads back in the price table's spelling ("periclase dunite", "Bastnäsite", "water" →
+    // Periclase Dunite, Bastnasite, Water). One choke point: every reader sees one chip per commodity,
+    // and the variants already in the file merge without a rewrite (2026-09-08).
+    if ((rec.k === 'sight' || rec.k === 'unsight') && rec.commodity) rec.commodity = canonicalCommodityName(rec.commodity);
+    out.push(rec);
   }
   return out;
 }
@@ -1283,7 +1317,7 @@ function coalesceCollections(recs) {
  * 17km away (as the commander's Helium and Uranium are) was reached by driving somewhere else.
  * Radius comes from Status.json's PlanetRadius, so it is the body's real size, not an assumption.
  */
-function metresBetween(aLat, aLon, bLat, bLon, radiusM) {
+export function metresBetween(aLat, aLon, bLat, bLon, radiusM) {
   if ([aLat, aLon, bLat, bLon].some((v) => v == null) || !radiusM) return null;
   const rad = Math.PI / 180;
   const dLat = (bLat - aLat) * rad;
@@ -1426,6 +1460,10 @@ export function getSurfaceSnapshot() {
     lock: currentLock,
     drop: lastDrop,
     landing: lastLanding,
+    // Where the ship is as far as the app can tell, and where the rigs are assumed to be.
+    ship: { status: shipStatus, spot: shipSpot, departM: SHIP_DEPART_M },
+    rigs: rigsThisVisit(),
+    rigDestructM: RIG_DESTRUCT_M,
     session: {
       startedAt: session.startedAt,
       body: session.body,
@@ -1434,6 +1472,34 @@ export function getSurfaceSnapshot() {
       lastRefineAt: session.lastRefineAt || null,
     },
   };
+}
+
+/**
+ * Where the rigs are, as far as the app can tell: the deposits worked this visit since the ship was last
+ * boarded (boarding counts as recovering them), one point per deposit, the three most recent. Rigs never
+ * appear in the journal, so a rig picked up by hand outlives itself here until the next boarding or drop.
+ */
+let rigCache = null; // { mtimeMs, since, openAt, rigs }
+function rigsThisVisit() {
+  if (!LOG_PATH || !lastDrop || !lastDrop.body) return [];
+  let st; try { st = fs.statSync(LOG_PATH); } catch { return []; }
+  const since = rigsClearedAt && rigsClearedAt > lastDrop.at ? rigsClearedAt : lastDrop.at;
+  const openAt = open && open.lat != null ? open.at : null;
+  if (rigCache && rigCache.mtimeMs === st.mtimeMs && rigCache.since === since && rigCache.openAt === openAt) return rigCache.rigs;
+  const spots = [];
+  for (const r of readSurfaceRecords()) {
+    if (!r || r.k !== 'collect' || r.body !== lastDrop.body || !(r.at >= since) || r.lat == null) continue;
+    spots.push({ lat: r.lat, lon: r.lon, commodity: r.commodity || null, at: r.at, radius: r.radius ?? null });
+  }
+  if (openAt && open.body === lastDrop.body && open.at >= since) spots.push({ lat: open.lat, lon: open.lon, commodity: open.commodity || null, at: open.at, radius: open.radius ?? null });
+  const rigs = [];
+  for (const sp of spots.sort((a, b) => (a.at < b.at ? 1 : -1))) {
+    if (rigs.some((g) => (metresBetween(g.lat, g.lon, sp.lat, sp.lon, sp.radius || g.radius || 0) ?? Infinity) <= 150)) continue; // same deposit
+    rigs.push(sp);
+    if (rigs.length >= 3) break;
+  }
+  rigCache = { mtimeMs: st.mtimeMs, since, openAt, rigs };
+  return rigs;
 }
 
 // ---- compass, track, recall ------------------------------------------------------------------
@@ -1487,6 +1553,14 @@ export function tickCompass() {
         trackCache = null; // the next read sees the new point
       } catch { /* the track is a nicety; never break the tick */ }
     }
+  }
+
+  // Past 2 km from the ship it leaves for orbit on its own. The sample that crosses the line marks it
+  // departed; the next burst then reads as a recall. (The track shows the trigger can lag a little.)
+  if (shipSpot && (shipStatus === 'here' || shipStatus === 'assumed') && (pos.inSrv || pos.onFoot) && shipSpot.lat != null
+    && (!shipSpot.body || !pos.body || shipSpot.body === pos.body)) {
+    const d = metresBetween(pos.lat, pos.lon, shipSpot.lat, shipSpot.lon, pos.radius || shipSpot.radius || 0);
+    if (d != null && d > SHIP_DEPART_M) shipStatus = 'departed';
   }
 
   if (!navTarget) return;
@@ -1728,7 +1802,7 @@ export function bodyNameFromLedger(systemAddress, bodyId) {
  * Aggregate the ledger for the UI: opportunities per body (DSS signal counts) joined with
  * results per body and per deposit location.
  */
-export function getSurfaceSummary(priceFn, resolveBody, bestSellFn) {
+export function getSurfaceSummary(priceFn, resolveBody, bestSellFn, liveFn) {
   // Never close the live burst from a READ. The page polls this every 15s and after every tag,
   // and finalising here sliced one rig emptying into 3t/6t/1t/8t records seconds apart — which
   // made "collections" meaningless. The open burst is included as a transient copy so the page
@@ -1817,12 +1891,15 @@ export function getSurfaceSummary(priceFn, resolveBody, bestSellFn) {
     if (r.radius && !b.radius) b.radius = r.radius; // the body's real radius, for the map and the recall spot
 
     if (r.k === 'signal') {
-      // Latest scan wins — the count is a property of the body, re-reported on every DSS. A count
-      // typed from the system map (manual) fills the gap until a DSS exists and never outranks one.
-      if (r.manual) {
-        if (!b.spotsJournal && (!b.spotsAt || r.at > b.spotsAt)) { b.spots = r.count; b.spotsAt = r.at; b.spotsManual = true; }
-      } else if (!b.spotsJournal || !b.spotsAt || r.at > b.spotsAt) {
-        b.spots = r.count; b.spotsAt = r.at; b.spotsJournal = true; b.spotsManual = false;
+      // The count is a property of the body, re-reported on every scan. Sources rank: a DSS over the
+      // FSS over a count typed from the system map; within a rank the latest wins. A record without
+      // a source predates 1.60.14 and was written by a DSS.
+      const rank = r.manual ? 1 : r.source === 'fss' ? 2 : 3;
+      const have = b.spotsRank || 0;
+      if (rank > have || (rank === have && (!b.spotsAt || r.at > b.spotsAt))) {
+        b.spots = r.count; b.spotsAt = r.at; b.spotsRank = rank;
+        b.spotsSource = rank === 1 ? 'manual' : rank === 2 ? 'fss' : 'dss';
+        b.spotsJournal = rank > 1; b.spotsManual = rank === 1;
       }
       continue;
     }
@@ -2051,6 +2128,7 @@ export function getSurfaceSummary(priceFn, resolveBody, bestSellFn) {
       ...b,
       sitesKnown: b.spots ?? null,
       sitesManual: !!b.spotsManual,
+      sitesSource: b.spotsSource ?? null, // 'dss' | 'fss' | 'manual' — which scan the count came from
       sitesSeen: seen.size,
       sitesTagged: tagged.size,
       sitesWorked: worked.size,
@@ -2294,7 +2372,13 @@ export function getSurfaceSummary(priceFn, resolveBody, bestSellFn) {
   for (const s of sightings) priceNames.add(canonicalCommodityName(s.commodity));
   const prices = {};
   for (const n of priceNames) {
-    prices[n] = { mean: galacticAvgSell(n), best: typeof bestSellFn === 'function' ? (bestSellFn(n) || null) : null };
+    // Three tiers for the page: the commander's own best read, the galaxy's best real buyer from the
+    // Ardent ladder (large pad, real demand, no depots or carriers), and the galactic mean.
+    prices[n] = {
+      mean: galacticAvgSell(n),
+      best: typeof bestSellFn === 'function' ? (bestSellFn(n) || null) : null,
+      live: typeof liveFn === 'function' ? (liveFn(n) || null) : null,
+    };
   }
 
   return {
@@ -2411,7 +2495,7 @@ export function backfillFromJournals(journalDir, listFiles) {
     // Not just mining journals: F10 markers and DSS site counts live in journals with no mining
     // in them at all, and skipping those silently lost every historical marker.
     if (!text.includes('MiningRefined') && !text.includes('"Screenshot"')
-      && !text.includes('SAASignalsFound') && !text.includes('"Landable":true')
+      && !text.includes('SAASignalsFound') && !text.includes('FSSBodySignals') && !text.includes('"Landable":true')
       && !text.includes('"SupercruiseExit"') && !text.includes('"CodexEntry"')
       && !text.includes('"Latitude"')) continue; // a login on a surface — a visit boundary
     files += 1;
@@ -2497,15 +2581,16 @@ export function backfillFromJournals(journalDir, listFiles) {
       }
 
       // Site counts are in journal history too — without replaying them, Opportunities stays empty
-      // until the commander happens to re-scan a body they mapped months ago.
-      if (e.event === 'SAASignalsFound' && Array.isArray(e.Signals) && e.BodyName) {
+      // until the commander happens to re-scan a body they mapped months ago. The FSS resolve
+      // (FSSBodySignals) has carried the count since 6 September 2026 and replays the same way.
+      if ((e.event === 'SAASignalsFound' || e.event === 'FSSBodySignals') && Array.isArray(e.Signals) && e.BodyName) {
         const spot = e.Signals.find((s) => s && /PlanetaryMiningLocation/i.test(String(s.Type || '')));
         if (spot) {
           const key = `${e.BodyName}|${e.timestamp}`;
           if (!haveSignals.has(key)) {
             haveSignals.add(key);
             out.push({
-              k: 'signal', at: e.timestamp, body: e.BodyName, system,
+              k: 'signal', source: e.event === 'FSSBodySignals' ? 'fss' : 'dss', at: e.timestamp, body: e.BodyName, system,
               systemAddress: e.SystemAddress ?? systemAddress, bodyId: e.BodyID ?? null,
               count: spot.Count || 0, backfilled: true,
             });

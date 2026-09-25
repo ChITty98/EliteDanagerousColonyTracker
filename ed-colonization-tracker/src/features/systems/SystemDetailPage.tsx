@@ -233,7 +233,10 @@ function EntityMontage({ systemName, id64 }: { systemName: string; id64?: number
       if (!key.startsWith(`${base}:`) || !imgs?.length) continue;
       const m = /:(body|station):(.+)$/.exec(key);
       if (!m) continue;
-      const img = imgs[0];
+      // Utility shots — an F10 taken to document a mining deposit — are not portraits of the place.
+      // Every other view skips them; a body with nothing else gets no tile (2026-09-08).
+      const img = imgs.find((i) => !i.utility);
+      if (!img) continue;
       out.push({
         id: img.id,
         url: img.url || `/api/images/${img.id}`,

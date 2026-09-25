@@ -13,6 +13,7 @@
 //   s  the commander's own MarketSell / MarketBuy from the last twelve months of journals
 // "Is 240k an aberration?" is answerable only after weeks of these; the file starts today.
 import { isCommunityGoalMarket } from './communityGoals.js';
+import { isNonBuyerMarket, padFits } from './util.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { canonicalCommodityName } from './commodityPricesMirror.js';
@@ -28,6 +29,7 @@ export const keyOf = (name) => { const k = flatten(name); return k.startsWith('l
 export const SURFACE_KEYS = [
   'thortveitite', 'periclasedunite', 'grandidierite', 'rhodplumsite', 'iridium', 'lowtemperaturediamond',
   'diamond', 'sapphire', 'ruby', 'helium', 'helium3', 'bastnasite', 'quartzpyroxenite', 'deuterium', 'magnesite', 'olivine',
+  'monazite', 'serendibite', 'jadeite', 'alexandrite', // the metallic-magma prizes, priced only from own docks until 2026-09-11
 ];
 
 let FILE = null;
@@ -88,7 +90,7 @@ function rewrite() {
 /** One Market.json read (extractor.readMarketJson shape). Writes movers and first-of-day rows only. */
 export function recordMarketRead(market, now = Date.now()) {
   if (!market || !Array.isArray(market.items) || !market.marketId) return 0;
-  if (market.stationType === 'FleetCarrier') return 0;
+  if (isNonBuyerMarket(market.stationType)) return 0; // a delivery dock at a construction site is not a market read
   const at = market.timestamp || new Date(now).toISOString();
   const day = dayOf(at);
   let n = 0;
@@ -128,7 +130,7 @@ export function recordArdentSample(key, rows, now = Date.now(), reach = null) {
     return Math.hypot(x.systemX - o.x, x.systemY - o.y, x.systemZ - o.z) <= reach.maxLy;
   };
   const all = (Array.isArray(rows) ? rows : [])
-    .filter((x) => x && x.stationType !== 'FleetCarrier' && x.sellPrice > 0 && x.demand > 0 && within(x))
+    .filter((x) => x && !isNonBuyerMarket(x.stationType) && padFits(x, 3) && x.sellPrice > 0 && x.demand > 0 && within(x)) // a large-pad figure
     .sort((a, b) => b.sellPrice - a.sellPrice);
   // A goal market is recorded beside the day, never AS the day: the galaxy top is the best real buyer.
   const goal = all.find((x) => isCommunityGoalMarket(x.stationName, x.systemName)) || null;

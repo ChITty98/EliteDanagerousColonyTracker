@@ -150,11 +150,11 @@ export function sendTargetOverlay(ev: {
   if (ev.spansh === 'yes') {
     spanshStr = (typeof ev.scannedBodyCount === 'number' && typeof ev.bodyCount === 'number' && ev.bodyCount > ev.scannedBodyCount)
       ? `⚠ partial ${ev.scannedBodyCount}/${ev.bodyCount}`
-      : `✓ Spansh${ev.bodyCount ? ` (${ev.bodyCount})` : ''}`;
+      : ev.bodyCount ? `✓ Spansh (${ev.bodyCount})` : typeof ev.scannedBodyCount === 'number' ? `⚠ ${ev.scannedBodyCount} on file, total unknown` : '✓ Spansh';
   } else if (ev.spansh === 'no') {
     spanshStr = '✗ unclassified';
   } else if (ev.spansh === 'empty') {
-    spanshStr = 'Spansh: empty';
+    spanshStr = '⚬ in Spansh, no bodies — unclassified';
   }
   const scoreStr = typeof ev.score === 'number' ? `Score ${ev.score}` : '';
   const text = `\u{1F3AF} ${[system, star, outlookStr, visitedStr, spanshStr, scoreStr].filter(Boolean).join('  ·  ')}`;

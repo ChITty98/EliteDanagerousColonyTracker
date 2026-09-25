@@ -5,6 +5,7 @@ import { computeLiveTons, computeDeliveryRate, formatDuration } from '@/lib/sess
 import { COMMODITIES, CATEGORY_ORDER, CATEGORY_LABELS, type CommodityCategory } from '@/data/commodities';
 import { formatNumber, formatPercent, cleanProjectName, stripConstructionPrefix, cleanJournalString } from '@/lib/utils';
 import { isColonisationShip } from '@/services/journalReader';
+import { rankSources, type SourcePick, type SourceCandidate } from '@/lib/sourceRanking';
 import { StationTypeIcon } from '@/components/StationTypeIcon';
 import { resolveStationType, EDITABLE_STATION_TYPES } from '@/data/stationTypes';
 import { INSTALLATION_TYPE_OPTIONS } from '@/data/installationTypes';
@@ -31,95 +32,56 @@ export function ProjectDetailPage() {
   const deleteProject = useAppStore((s) => s.deleteProject);
   const knownSystems = useAppStore((s) => s.knownSystems);
   const knownStations = useAppStore((s) => s.knownStations);
+  const commanderPosition = useAppStore((s) => s.commanderPosition);
   const settings = useAppStore((s) => s.settings);
   const carrierCargoStore = useAppStore((s) => s.carrierCargo);
   const setCarrierCargoStore = useAppStore((s) => s.setCarrierCargo);
 
-  const visitedMarkets = useAppStore((s) => s.visitedMarkets);
   const marketSnapshots = useAppStore((s) => s.marketSnapshots);
   const liveShipCargo = useAppStore((s) => s.liveShipCargo);
 
   // Compute best source per commodity from visited markets + market snapshots
+
   const bestSources = useMemo(() => {
-    if (!project) return {};
+    if (!project) return {} as Record<string, SourcePick>;
     const projectSystem = project.systemName?.toLowerCase();
-    const projectCoords = projectSystem ? knownSystems[projectSystem]?.coordinates : null;
-    const result: Record<string, { stationName: string; systemName: string; hasLargePads: boolean; isPlanetary: boolean; stock?: number; buyPrice?: number; lastSeen: string }> = {};
-
-    // Distance penalty: closer stations score higher
-    const distancePenalty = (systemName?: string): number => {
-      if (!projectCoords || !systemName) return 0;
+    // Distance is measured from the project's system. A project with no system on file (an identity
+    // the watcher missed) measures from where the commander is, instead of ranking every station as
+    // equally near — which is how a depot at d9-52 got bubble sources 800 ly away.
+    const projectCoords = (projectSystem ? knownSystems[projectSystem]?.coordinates : null) ?? commanderPosition?.coordinates ?? null;
+    const distanceTo = (systemName?: string): number | null => {
+      if (!projectCoords || !systemName) return null;
       const srcSys = knownSystems[systemName.toLowerCase()];
-      if (!srcSys?.coordinates) return 0;
-      const dx = projectCoords.x - srcSys.coordinates.x;
-      const dy = projectCoords.y - srcSys.coordinates.y;
-      const dz = projectCoords.z - srcSys.coordinates.z;
-      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      // Penalty: -100 per ly of distance (a 700ly station loses 70,000 points)
-      return -Math.round(dist * 100);
+      if (!srcSys?.coordinates) return null;
+      const dx = projectCoords.x - srcSys.coordinates.x, dy = projectCoords.y - srcSys.coordinates.y, dz = projectCoords.z - srcSys.coordinates.z;
+      return Math.sqrt(dx * dx + dy * dy + dz * dz);
     };
-
+    const result: Record<string, SourcePick> = {};
     for (const c of project.commodities) {
       const remaining = c.requiredQuantity - c.providedQuantity;
       if (remaining <= 0) continue;
-
-      let best: (typeof result)[string] | null = null;
-      let bestScore = -1;
-
-      // Check market snapshots (have stock data) — skip own FC (it's inventory, not a source)
+      const candidates: SourceCandidate[] = [];
+      // Market snapshots with stock — skip own FC (it's inventory, not a source). Purchase history is not a
+      // source: a station where a commodity was bought months ago may buy it back today (Deshpande Plant:
+      // robotics bought there in June, stock 0 and 24,000 t of demand in September). Only a market seen
+      // selling it — a snapshot with stock and a buy price — is offered; with none, the row shows no source.
       for (const snap of Object.values(marketSnapshots)) {
         if (settings.myFleetCarrierMarketId && snap.marketId === settings.myFleetCarrierMarketId) continue;
         if (settings.myFleetCarrier && snap.stationName.toUpperCase() === settings.myFleetCarrier.toUpperCase()) continue;
         const item = snap.commodities.find((m) => m.commodityId === c.commodityId);
         if (!item || item.stock == null || item.stock < 1 || item.buyPrice <= 0) continue;
-        // Score: prefer high stock, nearby, same system, large pads
-        let score = Math.min(item.stock, 10000);
-        if (snap.systemName?.toLowerCase() === projectSystem) score += 50000;
-        if (snap.hasLargePads) score += 5000;
-        score += distancePenalty(snap.systemName);
-        if (score > bestScore) {
-          bestScore = score;
-          best = {
-            stationName: cleanJournalString(snap.stationName),
-            systemName: snap.systemName,
-            hasLargePads: snap.hasLargePads,
-            isPlanetary: snap.isPlanetary,
-            stock: item.stock,
-            buyPrice: item.buyPrice,
-            lastSeen: snap.updatedAt,
-          };
-        }
+        candidates.push({
+          stationName: cleanJournalString(snap.stationName), systemName: snap.systemName,
+          hasLargePads: snap.hasLargePads, isPlanetary: snap.isPlanetary,
+          stock: item.stock, buyPrice: item.buyPrice, lastSeen: snap.updatedAt,
+          distanceLy: distanceTo(snap.systemName), sameSystem: snap.systemName?.toLowerCase() === projectSystem,
+        });
       }
-
-      // Check visited markets (may not have stock, but have price info) — skip own FC
-      for (const vm of visitedMarkets) {
-        if (settings.myFleetCarrierMarketId && vm.marketId === settings.myFleetCarrierMarketId) continue;
-        if (settings.myFleetCarrier && vm.stationName.toUpperCase() === settings.myFleetCarrier.toUpperCase()) continue;
-        if (!vm.commodities.includes(c.commodityId)) continue;
-        const priceInfo = vm.commodityPrices[c.commodityId];
-        if (priceInfo && priceInfo.buyPrice <= 0) continue; // Not actually for sale
-        let score = 1000; // base score for having the commodity
-        if (vm.systemName?.toLowerCase() === projectSystem) score += 50000;
-        if (vm.hasLargePads) score += 5000;
-        if (priceInfo) score += 2000; // has price data
-        score += distancePenalty(vm.systemName);
-        if (score > bestScore) {
-          bestScore = score;
-          best = {
-            stationName: cleanJournalString(vm.stationName),
-            systemName: vm.systemName,
-            hasLargePads: vm.hasLargePads,
-            isPlanetary: vm.isPlanetary,
-            buyPrice: priceInfo?.buyPrice,
-            lastSeen: priceInfo?.lastSeen || vm.lastVisited,
-          };
-        }
-      }
-
-      if (best) result[c.commodityId] = best;
+      const pick = rankSources(candidates, remaining);
+      if (pick) result[c.commodityId] = pick;
     }
     return result;
-  }, [project, visitedMarkets, marketSnapshots, settings.myFleetCarrierMarketId]);
+  }, [project, marketSnapshots, settings.myFleetCarrierMarketId, settings.myFleetCarrier, knownSystems, commanderPosition]);
 
   const [editingCell, setEditingCell] = useState<{ commodityId: string; field: 'requiredQuantity' | 'providedQuantity' | 'remaining' } | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -831,7 +793,7 @@ export function ProjectDetailPage() {
                           {(shipCount || myFcCount || sqCount > 0) && !isCompleted && (
                             <div className="text-xs mt-0.5 space-x-2">
                               {shipCount ? (
-                                <span className="text-primary">{'\u{1F680}'} {formatNumber(shipCount)}t in ship</span>
+                                <span className="text-primary" title={shipCargo ? `Hold as of ${new Date(shipCargo.timestamp).toLocaleString()}` : undefined}>{'\u{1F680}'} {formatNumber(shipCount)}t in ship{shipCargo && Date.now() - new Date(shipCargo.timestamp).getTime() > 5 * 60_000 ? ` \u00B7 as of ${new Date(shipCargo.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}</span>
                               ) : null}
                               {myFcCount ? (
                                 <span className="text-primary">{'\u{1F6F8}'} {multiCarrierCargo?.myCarrier?.isEstimate ? '~' : ''}{formatNumber(myFcCount)}t on FC</span>
@@ -842,14 +804,24 @@ export function ProjectDetailPage() {
                             </div>
                           )}
                           {!isItemComplete && !isCompleted && bestSources[c.commodityId] && (() => {
-                            const src = bestSources[c.commodityId];
+                            const pick = bestSources[c.commodityId];
+                            const src = pick.best;
+                            const ageDays = Math.round((Date.now() - new Date(src.lastSeen).getTime()) / 86_400_000);
                             return (
                               <div className="text-[11px] mt-0.5 text-muted-foreground">
-                                {'\u2190'} {src.stationName}
-                                <span className="opacity-60"> ({src.systemName})</span>
-                                {src.stock != null && <span className="text-sky-400 ml-1">{formatNumber(src.stock)}t</span>}
-                                {src.buyPrice != null && <span className="opacity-60 ml-1">{formatNumber(src.buyPrice)}cr</span>}
-                                {!src.hasLargePads && <span className="text-amber-400 ml-1">M</span>}
+                                <div>
+                                  {'\u2190'} {src.stationName}
+                                  <span className="opacity-60"> ({src.systemName}{src.distanceLy != null && !src.sameSystem ? `, ${Math.round(src.distanceLy)} ly` : ''})</span>
+                                  {pick.covers
+                                    ? <span className="text-sky-400 ml-1">{formatNumber(src.stock)}t</span>
+                                    : <span className="text-amber-400 ml-1" title="Less on file than the project still needs — no station on file covers it">{formatNumber(src.stock)} of {formatNumber(remaining)}t</span>}
+                                  {src.buyPrice != null && <span className="opacity-60 ml-1">{formatNumber(src.buyPrice)}cr</span>}
+                                  {!src.hasLargePads && <span className="text-amber-400 ml-1">M</span>}
+                                  {ageDays > 7 && <span className="opacity-60 ml-1" title={`Snapshot from ${new Date(src.lastSeen).toLocaleDateString()}`}>seen {ageDays} d ago</span>}
+                                </div>
+                                {pick.local && (
+                                  <div className="opacity-70" title="Stocked in the project's own system, but not enough on file to cover the need">in-system: {pick.local.stationName} <span className="text-amber-400">{formatNumber(pick.local.stock)}t</span></div>
+                                )}
                               </div>
                             );
                           })()}

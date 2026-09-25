@@ -486,6 +486,14 @@ function startStateSyncListener() {
     lastExplorationUpdate = Date.now();
   });
 
+  // The server reads Cargo.json every companion tick and broadcasts it; nothing in the browser took
+  // it, so a project page showed the hold as it was at the last Sync All or Refresh click — 428 t of
+  // steel "in ship" long after it had gone to the carrier, doubled up with the carrier's own count.
+  sseSubscribe('ship_cargo', (ev) => {
+    const cargo = (ev as { cargo?: ShipCargo }).cargo;
+    if (cargo && Array.isArray(cargo.items) && typeof cargo.timestamp === 'string') useAppStore.getState().setLiveShipCargo(cargo);
+  });
+
   sseSubscribe('state_updated', async (ev) => {
     const source = (ev as { source?: string }).source;
     const serverSourced = source === 'watcher'
@@ -770,6 +778,7 @@ interface AppState {
   // Scouted systems — persisted scoring results from expansion scouting
   scoutedSystems: Record<number, ScoutedSystemData>; // keyed by id64
   upsertScoutedSystem: (data: ScoutedSystemData) => void;
+  upsertScoutedSystems: (list: ScoutedSystemData[]) => void; // one write for a batch — the honk backfill on search load
   clearScoutedSystems: (preserveFavorites?: boolean) => void;
 
   // War & Peace scout reports — persisted enriched conflict data per system
@@ -1680,6 +1689,13 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           scoutedSystems: { ...state.scoutedSystems, [data.id64]: data },
         })),
+      upsertScoutedSystems: (list) =>
+        set((state) => {
+          if (list.length === 0) return {};
+          const next = { ...state.scoutedSystems };
+          for (const data of list) next[data.id64] = data;
+          return { scoutedSystems: next };
+        }),
       clearScoutedSystems: (preserveFavorites) =>
         set((state) => {
           if (!preserveFavorites) return { scoutedSystems: {} };

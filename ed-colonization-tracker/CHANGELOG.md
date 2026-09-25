@@ -2,6 +2,203 @@
 
 All notable changes to ED Colony Architect (named ED Colony Tracker through v1.33.0).
 
+## [1.60.18] — 2026-09-22
+
+### Fixed
+- **The needs table named sources that could not cover the need, and none at all for others.** Thagard's Progress was offered for 684 t of Evacuation Shelter with 39 t on file, Rankin Legacy for 2,634 t of Structural Regulators with 27, while Medical Diagnostic Equipment showed no source with 1,262 t on file at Oefelein Beacon 14 ly away. The scoring gave 50,000 points for being in the project's own system, at most 10,000 for stock, and took 100 per light-year — against a floor of −1, so every out-of-system station beyond about ten light-years was silently rejected and a token in-system stock always won. The hint now ranks on sufficiency first: a station whose stock covers what is still needed outranks any that cannot, whatever the system; among those, the project's own system, then nearest, then large pads; among the short ones, the largest stock. No floor, no cap. A short hint reads its stock against the need ("39 of 684 t"), the in-system partial is shown under an out-of-system pick, and a snapshot older than a week says so.
+- **Live market snapshots wore the medium-pad badge whatever the station.** The watcher wrote pad size and the planetary flag as false for every snapshot it took, so a Dodec such as Cavallo Nero Corona carried an "M" on the needs table. Both now come from the station type Market.json names, as Sync All's reader already did; stored snapshots are repaired once at start, and Dodec joins the large-pad list under the name the journal actually writes.
+
+## [1.60.17] — 2026-09-22
+
+### Fixed
+- **Pre-line guidance came too late to use, and "request docking" too early.** Replaying the day's runs against the recorder's own rule, the entry verdict was on the HUD for one to four seconds: the idle watch looked every 2 s and opened a run only after three closing fixes — 4 s into a gravity well that lasts five to eight at cruise speed — and judged the entry only inside the last five seconds. Now the watch looks every second, a run opens on two closing fixes, and the entry is read from the first fix that can be projected — an early read, marked "(early)", until the projection firms inside five seconds, when the last word before the line stands for the descent as before. A run opened by position below the line — a hop between two ports on one body never crosses a line — is orbital cruise from its first sample and gets the cruise words; it used to sit in "Gravity well" the whole way down (Kabbah's Castings from Carrizo: 36 s of nothing). And "request docking" now waits for the 7.5 km the game takes the request at, with a count-in ("request docking in 4 km") through normal flight and inside 12.5 km of the glide; it used to sit on the HUD from the glide's end, 32 s early when the glide ended at 19 km.
+
+## [1.60.16] — 2026-09-21
+
+### Fixed
+- **A construction site renamed in-game kept its old name in the app.** Espinoza Obligation became Core Boson Complex Cbc while still under construction — same market id — and the app held the old name in the station record and the project. The dock handler refused any construction-site name as a new name, a guard written so a construction placeholder can never overwrite a finished station's name, which also blocked a rename from one construction name to another; and the depot handler only ever filled blank names. Now a construction-site name replaces a construction-site name (a finished station's name stays protected), the old name goes into the station's name history, and the project follows: its station name, and its display name only while it is still the auto-built "System - Station" — a name you typed is never touched. Sync All's project pass and the browser-side dock history follow the same rule.
+
+## [1.60.15] — 2026-09-21
+
+### Fixed
+- **246 t of Microbial Furnaces in the hold, and the hauling tab counted none of it.** The game's own symbol for the commodity is `heliostaticfurnaces`; the dictionaries carried `$microbialfurnaces_name;`, a name the game has never written — not once across every 2025 and 2026 journal. Cargo.json is resolved by symbol, so the hold came through under the raw name and never met the project's need, which is resolved by display name. H.E. Suits (`hazardousenvironmentsuits`), Land Enrichment Systems (`terrainenrichmentsystems`) and Muon Imager (`mutomimager`) had the same defect. The four symbols are corrected in both dictionaries, so the hold, purchase history, carrier transfers and market rows all resolve to the right id; hauling sessions recorded under the raw keys are repaired once at start; and Ardent lookups now send the game's symbol — Ardent answers `heliostaticfurnaces` and rejects `microbialfurnaces` — which brings back nearby-source results and price samples for those four.
+
+## [1.60.14] — 2026-09-18
+
+### Fixed
+- **The surface page asked for a DSS the journal no longer needs.** Since the journals of 6 September 2026 the FSS writes a body's Planetary Mining Location count the moment the body is resolved (FSSBodySignals — 119 bodies in this commander's journals against 29 with a DSS), and the page threw every one of those away, listing the body under Needs a DSS until it was mapped or the count was typed from the system map. The FSS count now lands in the signal record like the DSS one: a DSS outranks the FSS, the FSS outranks a typed count, and Sync All's backfill replays the FSS history too. The section reads Needs a scan, and an FSS-sourced count is marked. Spotted in Fumlop's RhinoSpotter, which reads the same event.
+
+## [1.60.13] — 2026-09-18
+
+### Fixed
+- **A scanned system stayed unclassified, and Rescore did nothing.** Col 173 Sector YI-V c17-36: ten bodies scanned, no score, and Spansh had quietly become a requirement in three places. The live recorder was armed only by a hyperspace jump, so a relog into a system (a `Location` event — also the first thing the watcher sees after the exe restarts) left every scan on the floor. When it was armed, it took Spansh over the journal whenever Spansh held anything at all: one star on file outranked ten bodies just scanned, and the journal scans were kept only when Spansh had nothing. And the Rescore button read the journals through the browser's folder permission, which the exe flow never grants, so the read failed silently and every Rescore was Spansh-only. Now a `Location` arms the recorder (a relog into the same system keeps its buffer); Spansh scores a system only when it holds strictly more scan records than the journal, and the journal scans — this session's merged with the cache — are kept either way, so the system reads as so-many-of-so-many rather than "scan total unknown"; Rescore, Rescore All and Scan Journals ask the server to re-read the journals (one system's files, or all of them). A live rescore also keeps a record's favourite flag, notes, region and coordinates instead of dropping them.
+
+## [1.60.12] — 2026-09-16
+
+### Fixed
+- **A project's source hint named a station that no longer sells the commodity.** Deshpande Plant was offered for Robotics at 1,653 cr and Bioreducing Lichen at 864 cr — the prices paid there in June and July — while its market today shows stock 0 and tens of thousands of tonnes of demand for both. The needs table's fallback to purchase history is gone: a source is a market whose latest snapshot shows stock and a buy price, and a commodity no snapshot covers shows no source rather than a guess. Markets change; where you bought something once says nothing about today.
+
+## [1.60.11] — 2026-09-15
+
+### Changed
+- **ENTRY SHARP between the on-track band and the red zone.** A 76 s landing from a 0.65 Mm crossing that needed 57° showed the 50° line was not the limit; the limit is the ladder's red zone at 60°, past which no run has landed direct and the one that needed it curled. The verdict at the first fix now reads ON TRACK to 49°, ENTRY SHARP from 50 to 59° (landable with the speed managed), ENTRY TOO SHARP from 60°. The geometry curl fires at 60°, still only above 200 km.
+- **Speed words only below 150 km.** Every throw-out collapsed there — 13:27 from 122 km, 04:44 from 113 km, 11:16 from 84 km — and a 0:05 above it has never hurt a run, including one that rode 0:05 from 550 to 218 km and landed. DECREASE SPEED and the countdown curl now apply only below 150 km, and only after a sharp entry.
+
+## [1.60.10] — 2026-09-15
+
+### Fixed
+- **CURL ROUTE ADVISED all the way down a controlled run.** The geometry curl measured the angle to the fastest run's glide point at every altitude, and once that point is 23 km out that angle climbs on every descent as the point is approached — 50° at 238 km, 83° at 30 km on a 78 s run. It is now judged only above 200 km, where it separated the throw-outs from the landings at the line.
+- **Speed words on an on-track entry.** Every throw-out on file crossed the line sharp, and no run that crossed on track has ever been thrown out — three of them held 0:05 into the last 40 km at Deshpande Plant, one of them the 72 s record. DECREASE SPEED and the countdown curl now apply only after ENTRY TOO SHARP. On an on-track or early entry the red zone is the commander's and the overlay stays ON TRACK.
+
+### Changed
+- **Sectors re-cut to the four things you manage.** S1 the line to the glide (angle and speed), S2 the glide, S3 the glide's end to the hand-off (alignment), S4 the hand-off to the pad (the computer). The old S1, the line to 100 km, rewarded a sharp entry with a short sector and a long one after it. S3 and S4 are judged within the hull.
+
+## [1.60.9] — 2026-09-15
+
+### Added
+- **Sectors, as a lap is split.** S1 the line to 100 km (the entry: long when early, short when sharp), S2 100 km to the glide (speed to the floor), S3 the glide (where the floor was met), S4 the glide's end to the pad (alignment, the hand-off, the computer). Coloured as in F1: purple for the best that sector has been at the target, green for faster than your shortest run's, yellow for slower; S4 is judged within the hull. At the pad the overlay shows the four sectors under the total for twenty seconds; on the page the run panel carries them with the delta to the shortest, and the runs table has a sectors column so every run can be compared.
+
+## [1.60.8] — 2026-09-15
+
+### Changed
+- **Six words and nothing else on the overlay.** Before the line, a verdict on the entry as soon as the line is within a straight projection's reach: ON TRACK, ENTRY TOO SHARP (the crossing would need 50° or more to your fastest run's glide point — every such entry on file ended in a curl or a throw-out, and the verdict came 19 to 27 s before the end), or ENTRY TOO EARLY (under 30°: far out and low, the safest and slowest line). In orbital cruise, from the countdown you already watch: DECREASE SPEED at 0:05, or 0:06 and falling; CURL ROUTE ADVISED when it has dropped twice in a row to 0:05 or under, sat there two seconds below 150 km, or the pitch to the glide point has reached 50°; INCREASE SPEED when the geometry is easy, you are above 40 km and the countdown runs four seconds or more above your fastest run's at that altitude; ON TRACK otherwise. The pitch number and the range live on the page's line, not the HUD.
+- **Runs record from the first fix.** The watch that opens a run from position waited for three closing fixes and threw them away; at 137 km/s that was half a megametre. Those fixes are now the run's first samples, so runs, the verdict and your fast line start about 1.7 Mm out.
+- **The entry line carries the 1.0 Mm checkpoint**: "Enter orbital cruise at about 0.86 Mm showing 0:06 · at 1.0 Mm, 640 km up", the altimeter reading your fastest run had when its range read 1.0 Mm.
+
+## [1.60.7] — 2026-09-15
+
+### Changed
+- **The overlay is a pitch and a word.** In the gravity well the ladder pitch that crosses the orbital-cruise line where your fastest run crossed it; in orbital cruise the pitch to that run's glide point; and one word from the countdown you already watch. SLOW when it reads 0:05, or 0:06 and falling, or 0:06 after crossing the line inside the fastest run's crossing — every run that crossed inside and stayed at 0:06 was thrown out, and the ones that went to 0:08 within three seconds were not. LEVEL a second later if the countdown has not risen: the throttle is not winning, and a lower nose is the other lever. Speeds, steepen, maintain, level off and the projections are gone. Replayed on the twenty runs on file the words never show on a clean run under 100 s; on the 13:27 throw-out SLOW comes at 1.11 Mm and LEVEL at 0.93 Mm, both before the line and 19 s before the drop.
+- **The page says one thing about the entry.** "Enter orbital cruise at 0.86 Mm showing 0:06", the shortest run's own crossing, in the numbers the HUD shows: range through space and the countdown. The ground distance the recorder measures was 0.59 Mm for the same moment, which is why the earlier line never matched what you saw. The entries table, the glide and hand-off columns are gone. The boundaries table shows each run's crossing the same way, against the fastest, and the HUD strip carries the countdown.
+- **Pitch is read the way the ladder reads it.** The recorder measures the slope over the ground below the ship; at 600 km up that is about 7° steeper than the ladder. Angles are corrected before they are shown.
+
+## [1.60.6] — 2026-09-15
+
+### Changed
+- **The speed to hold is on the HUD.** The throttle is yours until the glide, and both runs thrown out of orbital cruise were carrying twice the shortest run's speed for their altitude below 100 km while the overlay said level off for a different reason. Now, whenever you are over the shortest run's speed at your altitude, the overlay carries it: "slow down · 38 km/s", or "level off · 38 km/s" when you are more than half again over it or low on the line as well. The number is the highest speed that run flew at or below your height, so it never rises on the way down. Replayed on the 11:16 run at Kewell Range the first warning comes 2 s after entering orbital cruise and the number stays up for the last 15 s, falling from 33 to 3 km/s while the ship went from 33 to 8.
+
+### Fixed
+- **The page measured a Panther run against a Type-8.** The ship picker's default, the hull you are in, never reached the server, so the page pooled every hull and took the Type-8's 1:10 as the reference for Panther runs; the overlay had it right all along. The page now asks for the current hull by name.
+- **A dropped run read "54 s ahead".** The seconds it lasted were being set against a finished run. Dropped and broken runs now say so on the HUD line and in the header, and carry no figure against the shortest.
+- **"Begin the glide -2105 m–56 km out."** The glide window is half the spread of your glide starts, now 12 to 69 km at Kewell Range; the near edge is clamped at the target.
+
+## [1.60.5] — 2026-09-15
+
+### Fixed
+- **Orbital cruise said steepen to a ship that was too fast, and to one that was low and slow.** The word in orbital cruise came from a straight-line projection to the glide floor, and its sign was inverted: meeting the floor far out is the case for level off, and it said steepen. The projection is wrong even with the sign right, because an orbital-cruise descent flattens as it goes — on the Type-8's clean run it put the floor 298 km out at entry, and the ship glided at 27 km. It is gone. The word now comes from the line (higher than the shortest run at this distance: steepen; lower: level off; within 2 km or 5%: maintain), and a speed gate outranks it: more than half again the shortest run's speed at the same altitude is level off, and steepen is never said while over that speed at all. Replayed against the run thrown out of orbital cruise at Deshpande Plant (04:44), the word turns to level off at 220 km up, nine seconds before the ship left supercruise.
+
+### Changed
+- **The cruise recommendation is the pairing you fly by.** "Enter orbital cruise at 0.48 Mm showing 0:08" — the shortest run's own entry in the HUD's unit, with the countdown it showed there (straight-line range over the closing rate along it). No blend, no altitude, no angles, no hold instruction. Under it, every entry on file as a row — distance, countdown, run time, ship — dropped runs included, so the entry that was too close sits next to the ones that worked.
+
+## [1.60.4] — 2026-09-14
+
+### Added
+- **The ship on every run, and references per ship.** A Type-8 docks nothing like a Panther Clipper. Each run records the hull it was flown in; the shortest run, the live ahead-or-behind, the S marker and the hand-off recommendation come from runs in the ship you are flying, and fall back to another hull only until one exists — labelled "vs shortest (Panther Clipper Mk II)" when they do. Orbital cruise and the glide stay pooled across hulls: they are the game's physics. The Approach page gains a ship filter, defaulting to the ship you are in, and a ship column.
+
+### Fixed
+- **Coming in too fast now ends the run.** Thrown out of supercruise before any glide, the recorder kept coaching an approach that was over. If no glide begins within five seconds of leaving supercruise above glide height, the run closes as "dropped — too fast", is listed that way, stays out of every reference, and the overlay says so once and goes quiet.
+- **The glide is not a decision.** It begins when the ship descends through the body's orbital-cruise floor, at the same altitude every time on a given body; what the pilot sets is where the descent meets that floor. "Glide now" is gone. In the gravity well and in orbital cruise the overlay is one word — steepen, maintain, level off — from where the descent will meet the orbital-cruise floor against the shortest run, or from the line when no projection is possible; the projection itself stays on the page.
+- **One instruction on the overlay.** The left side carried every figure at once. The overlay now shows the phase and the single thing to do: "glide now" over "high — steepen" over "glide window in 6 km" over "holding 9 s, shortest 8"; in the gravity well the entry projection; in docking the hand-off prompt or the computer's clock. Everything else stays on the page. A seconds-to-target beyond two minutes is hidden — it was a near-zero closing speed after a drop.
+
+## [1.60.3] — 2026-09-14
+
+### Fixed
+- **Distances are always to the run's final target.** A six-day-old surface nav lock on a Thortveitite deposit was taken as the target when an approach to Deshpande Plant opened, so the first fifteen seconds measured 1,700 km to the far side of the moon; when ApproachSettlement named the port, only samples with no distance were filled in. Those seconds became a 1,742 km "orbital cruise entry" and a 126 km/s speed in the recommendation. Every sample is now re-measured whenever the target is set, runs on file are re-measured on read, a nav lock counts only if set in the last 12 hours, and the watch that opens a run from a position fix requires three fixes in a row closing on the target and descending — a takeoff never qualifies, which is what was sending coach lines on the climb-out. Targets with no runs no longer appear in the picker. Before ApproachBody a run opened on a fix is labelled gravity well, not orbital cruise.
+
+### Changed
+- **The cruise recommendation is orbital cruise itself.** Where to enter it (distance out, at the body's own orbital-cruise altitude), the seconds-to-target to hold through it — distance over closing speed, the countdown you watch — and the line to the glide in degrees, with the run-up from the first fix as a footnote. Speed figures are gone: the glide's speed is the game's, and in orbital cruise the speed has to fall with the distance, so a single number was never the instruction. In the gravity well the coach projects where the descent you are flying meets the orbital-cruise altitude — "orbital cruise in ~20 s at ~510 km out (shortest entered 478 km) — on it" — and says level off or steepen.
+- **The overlay carries advice only.** Distance, altitude and your own angle are on the HUD in front of you; the line now reads phase and coaching: "holding 9 s to target, shortest held 8 s · 40 km high — steepen · line here 24°", and in the glide just ahead or behind.
+
+## [1.60.2] — 2026-09-14
+
+### Added
+- **The line, not just the speed.** Holding 0:07 fixes how fast you close for the distance and says nothing about the angle; the coach now holds you against your shortest run's altitude at your distance — "on the line", "40 km high — steepen", "30 km low — level off", with your descent angle now against the line's angle there — from the first position fix to the glide. The Orbital cruise recommendation states the descent angles too: to the gate, then to the glide.
+- **Recording starts at the first position fix.** The game gives a position inside a body's gravity well well before orbital cruise; when the ship is in supercruise with a fix, heading for a port on file or a surface nav lock, the run opens there, as a gravity-well phase ahead of orbital cruise. The clock still starts at 100 km. A run that loses its fix before orbital cruise is dropped as a fly-by.
+- **Cruise recommendation.** The Recommendation card gains an Orbital cruise column: where to enter orbital cruise (distance out and altitude, with the range across your runs), the closing speed to be crossing 100 km at, and the speed to hold from the gate to the glide window — all from your clean runs, weighted to the shortest. The coach says the same live: "cross 100 km at ~34 km/s, now 29" during the run-up, then "hold ~2.6 km/s to the glide window, now 3.1" until the glide begins. Speeds are closing speed toward the target from the one-second samples; the throttle itself is never written by the game. Runs already on file get their cruise figures on read.
+
+## [1.60.1] — 2026-09-14
+
+### Changed
+- **The clock starts 100 km out.** Orbital cruise began 485 km from the pad on one run and 783 km on the next, so time since ApproachBody rewarded the approach angle, and the coach called a run "behind" that finished shorter. Run time, the shortest run, the live ahead-or-behind and the boundary table now all count from crossing 100 km; the run-up before it is shown as a muted segment and never counted. Runs already on file are recomputed on read. The phase strip carries no text in the bars: a line under each lists the phases with their seconds, the comparison row reads "previous shortest" when this run is the new one, and the to-scale spacer no longer shows. The map from above widens to 75 or 100 km only when a glide began beyond 50.
+- **Approach page, after the first real run.** Orbital cruise began 490 km out at 430 km up and the glide was a flat line in the middle of the chart: both axes are now logarithmic, so the last few kilometres get the room whatever the body. The phase labels are gone; the colour is the phase and the numbers are in the hover and the boundary table. The map from above always shows the last 50 km. Runs are dated 9/14 22:13, the shortest run carries an orange S and the reference a grey R, explained in the map's legend. The page no longer blinks when a run closes: the live run stays until the stored one has loaded. The in-game coach line is re-sent every tick and held until Docked, instead of expiring between samples under the docking computer.
+
+## [1.60.0] — 2026-09-14
+
+### Added
+- **Approach page.** Every descent from orbital cruise to a pad or a surface-mining site is recorded once a second and measured against your shortest run at that target. A run opens on ApproachBody; ApproachSettlement names the port and its coordinates, which the station dossier keeps; the Glide Mode status flag brackets the glide; DockingRequested and DockingGranted, then the "DockingComputer" music track for the hand-off to the docking computer and any retake; Docked or Touchdown closes it. The page shows the live figures — phase, distance, altitude, slope, closing speed, seconds-to-target at that speed, ahead or behind your shortest run — the altitude-against-distance slope with its axes stretched near the target, your shortest run as a ghost line with the envelope of your clean runs, every run at the target from above with click-to-focus, the phase lengths to scale, the boundary table against the shortest run, and a recommendation: where to begin the glide and what seconds-to-target to hold, where to hand off to the docking computer, and whether retaking control has ever paid. A one-line coach goes to the in-game overlay during the approach. Runs live in `approach-runs.jsonl` next to the exe. A glide that ends above 5 km counts as broken and stays out of the reference; the corridor is nominal (15–55°) until three clean glides set your own.
+
+## [1.59.1] — 2026-09-13
+
+### Fixed
+- **The carrier ledger no longer resurrects goods you moved off.** A market snapshot states the stock as of its own time; the reconcile compared it to the balance now. Sync All re-read the 03:29 snapshot at 03:31, after 428 t of Steel, 14 t of Structural Regulators, 6 t of Semiconductors and 2 t of Fruit and Vegetables had gone to the ship at 03:30, and put them all back — 450 t the ledger itself listed as unaccounted. The reconcile now compares against the balance as of the snapshot, and a snapshot older than the item's current anchor is ignored. The six phantom lines were removed from the ledger file; its itemised total now equals the game's carrier total.
+- **The hold is live on the project page.** The server already broadcast Cargo.json every 5 seconds; nothing in the browser took it, so "in ship" showed the hold as of the last Sync All or Refresh click, and stale cargo doubled up with the carrier. The store now takes the broadcast, and an "as of" time appears when the read is older than five minutes.
+- **A construction project no longer loses its name.** The watcher starts at the end of the journal on boot, so a depot event seen without its Docked event created "Depot 4389829123 ()" for the Planetary Construction Site Kewell Range at Col 173 Sector AX-J d9-52, and nothing ever filled the blanks. Project identity now comes from one lookup — the Docked event in the batch, the persisted current dock, or the station dossier — at creation, on every later depot tick, and during Sync All.
+- **Source suggestions measure from where you are when a project has no system on file.** With no coordinates the distance penalty was 0 for every station, so the biggest stockpiles in the bubble won: a depot at d9-52 was pointed at Chitty City, 802 ly away. The picker now falls back to the commander's position.
+
+### Changed
+- **Scan totals come from the radius search, not from refetching.** The search the Expansion page already runs carries the FSS honk for many systems; records scored before the app kept the total take it from there on load, in one store write. Near home that is 864 of the 1,644 records without one, and 169 false zeros become "N of M" partials with no fetch at all.
+- **Rescore stale only fetches what a fetch can teach.** Spansh holds more bodies than the record saw (the search row says so), the record still has no scan total after the backfill, or an epic flag predates the 1.58.8/1.58.9 rules — the only records those rules can change. Near home that is about 160 systems instead of 1,872. Scout All rechecks an unclassified row only when its search row shows bodies now; the row says "Spansh holds N bodies now — Scout".
+
+## [1.59.0] — 2026-09-13
+
+### Fixed
+- **A system Spansh only knows the position of is unclassified, never a 0.** The Expansion pool scored whatever the dump returned, including nothing: 44 systems near home carried a score of 0 for having no body records at all, and sat at the bottom of the list as duds. A live check of 24 zero-score records without a scan total on file found 10 partial scans (Wregoe PD-Z c27-0: the arrival star on file, 19 in the honk) and one system that had grown from 1 body to 12. How much of a system a score saw is now judged in one shared place (`server/journal/scanCompleteness.js`): none, partial, unknown, complete. No-data records show ⚬ and "no body data on file — unclassified" in the pool, seed as unscouted so Scout All rechecks them, plot as unscored on the map, and no longer count as visited for the boxel scout. Rows with bodies on file but no scan total say so ("12 on file, scan total unknown"), in amber when the score is 0.
+- **Body counts are stars and planets.** Spansh lists barycentres as body records; the honk never counts them, so "6 of 21 scanned" at Wregoe PD-Z c27-10 was really 4 of 21. Every path that stores a record count now counts only stars and planets: Expansion scoring, the server's target and FSS scoring, the target card.
+- **The target card learns the honk.** 1,645 of the 1,872 Spansh-sourced records near home were scored in March–June, before the app kept the FSS total, so their target cards said "In Spansh" with no warning. Targeting such a system now fetches the dump, shows "N of M" or "N on file, scan total unknown", and writes the learned total back to the record. A dump that comes back 404 reads "Not in Spansh — unclassified" instead of "unknown". The Companion and the in-game target line say the same; the arrival overlay says "2 of 28 bodies scanned" instead of "FSS scan incomplete".
+
+### Added
+- **Rescore stale** on the Expansion page, beside Scout All: re-fetches every scouted system in the current list whose record has no scan total on file or was scored by an older formula, one Spansh fetch each, abortable, and resumable because refreshed systems drop out of the set. Batch runs parse the journal folder once instead of once per system. The score formula version is now 3, so everything scored before this build (including before the 1.58.8 and 1.58.9 epic rules) is in the set.
+- **Unclassified** filter chip and count in the pool header: no body data on file, or a 0 with no scan total.
+- **The boxel scout lists position-only entries.** Systems Spansh knows by name with no bodies on file are listed as ⚬ targets (20 of the 106 AX-J d9 entries); known entries are counted by the bodies on file rather than Spansh's body_count, which is null for many systems that have bodies.
+
+### Changed
+- The regional indexer keeps the FSS honk as `honkBodyCount` next to the record count, and the import derives completeness from it and stamps the formula version, instead of asserting that every imported system was complete. Takes effect on the next rebuild; slim files built before this read as scan total unknown.
+
+## [1.58.9] — 2026-09-13
+
+### Changed
+- **A ring-edge sight needs a bright ring.** Wregoe JX-A c27-7 7 a had the geometry (1.02 of the ring edge, an 89° band) and was a letdown: "a very dim ring". That ring carries 2.9e-6 megatonnes per square metre; the gold-standard band at AX-J d9-52 2 carries 9.2e-6 and nothing else on file is under 6.1e-6. The ring the moon skims must now read at least 5e-6, a bar to nudge after the next ring sight. Journal scans now carry ring inner radius and mass into the scorer (they kept only the outer edge before), so systems you scanned yourself are judged the same way; older cached scans without a mass read as unknown and pass. Existing flags persist until a Rescore All.
+
+## [1.58.8] — 2026-09-13
+
+### Changed
+- **Twin worlds need a surface to stand on.** The epic-view twin criterion counted any two sibling planets looming in each other's sky, landable or not; Wregoe JX-A c27-7 6 b and 6 c, co-orbiting rocky worlds under thick carbon dioxide, were flagged though neither can be landed on. A pair now needs at least one landable member, the same rule the big-sky and ring-edge criteria already apply, and the landable one is named first in the reason: it is the one you stand on. Existing scouted systems keep their stored flag until a Rescore All on the Scouting page.
+
+## [1.58.7] — 2026-09-13
+
+### Added
+- **Surface Mining — the ship is tracked, not pinned.** The map used to draw "the ship" at the touchdown point for the whole visit. It now draws where the ship is as far as the app can tell: solid when a hard fact placed it (deploy, boarding, a cargo transfer, an unmanned touchdown), dashed with a `?` when a recall is assumed to have brought it (a scanner burst seen from the Rhino, then the Rhino's position 35 s on — every recall on file had the transfer or boarding 33–49 s after the burst, at that spot), grey and labelled *departed* once it has left. Two rules the commander supplied drive the leaving: the ship departs for orbit past **2 km** from you (the track sample that crosses the line marks it), and a burst arriving with the ship already within 1 km is a dismiss, not a recall. A 2 km ring sits around the ship, and the hero shows your distance to it, amber from 1.6 km, red past 2 km.
+- **Rig rings.** Rigs never appear in the journal, so they are assumed at the deposits worked this visit since you last boarded (the three most recent, one per deposit). Each carries a **4.5 km** ring, the distance at which a deployed rig self-destructs, and the hero shows the distance to the farthest one, amber from 4 km, red past 4.5 km. Boarding the ship counts as recovering them.
+
+## [1.58.6] — 2026-09-11
+
+### Changed
+- **A buyer needs a pad you can use.** The live price ladder and the daily Ardent sample now require a large pad outright; the Sell page's Local, Galaxy and Sell at… columns require the pad the hull you are in needs (from the journal's ship type; an unlisted hull such as the Caspian Explorer needs large). A listing with no pad size counts as large only for station kinds that always carry one (Coriolis, Orbis, Ocellus, Dodec, asteroid bases, planetary ports); an outpost never does. Around HIP 52629, 99 of the 301 non-carrier Monazite buyers at 700k+ were medium-pad only.
+- **Demand cover is four times the load.** Inara's bulk-sales-tax warning: a mined commodity's price falls once the cargo passes about a quarter of demand. The Sell page's demand floor and the *demand short* flag now use four times the load, labelled as a rule of thumb (`DEMAND_COVER` in `sellPlan.js`).
+- **Surface prices consult the Ardent ladder.** The Surface page priced every chip at your own best read (30 days) else the galactic mean, which put Monazite at 195k to 234k while 41 large-pad buyers within 500 ly pay 700k+ into 4,000 t or more of demand. The summary now carries the galaxy's best real buyer (large pad, real demand, no depots or carriers) as a middle tier: own read, else the ladder, else the mean. Monazite, Serendibite, Jadeite and Alexandrite join the daily sample.
+
+## [1.58.5] — 2026-09-11
+
+### Changed
+- **Construction depots, on-foot settlements and stronghold carriers are no longer buyers.** Ardent carries every market the game uploads, and those kinds list every commodity at the price cap with 999,999 demand: within 500 ly of HIP 52629 every construction depot (49 orbital, 13 planetary), 22 of 23 on-foot settlements and all 4 stronghold carriers "paid" 1,038,104 for Thortveitite, against 15% of Coriolis stations and 29% of outposts. One predicate (`isNonBuyerMarket`, beside the fleet-carrier rule) now drops them from the live price ladder, the daily Ardent sample, your own market reads and best-market figure, the mining price map and the Sell page's Local, Galaxy and Sell at… columns. A delivery dock at a construction site never writes a market read either.
+
+## [1.58.4] — 2026-09-08
+
+### Added
+- **Surface Mining — Best signals by expected value.** One list across every body in scope, ranked by the same four-rig score the body cards use (richest first, at most three rigs on one commodity, priced at your best market this month, else galactic average). Body, signal, the rigs that make the score, what has already been pulled, landing and driving ratings; tap a row to open that body and signal. An *unworked only* switch turns it into a where-to-go-next list. Where to go back stays the measured credits-per-hour list. Until now the only ranking by expected value lived inside each body card.
+
+### Changed
+- **Chip names are one spelling.** A commodity typed into a signal's chips lands in the price table's spelling ("periclase dunite", "Bastnäsite", "water" → Periclase Dunite, Bastnasite, Water), and the ledger reader canonicalises every sight and unsight record it reads, so the variants already on file merge without a rewrite. Four typed variants had been sitting beside the canonical chips as separate commodities.
+- **The Map's Galaxy layer is gone.** The drawn spirals wound the wrong way — the region map's arm-named regions wind counter-clockwise going outward with the core up, the spirals wound clockwise — and 1.58.3's region fills were wedges, not arms. The disc, bar and arms added little; the 42 regions and the landmarks stay.
+
+### Fixed
+- **System View "Photographed here" showed F10 deposit stamps as portraits of a body.** The tiles took the first image under every body key regardless of the utility flag every other view honours. Utility shots are skipped, and a body with nothing else has no tile.
+
+## [1.58.3] — 2026-09-07
+
+### Changed
+- **Map: the galactic arms are the game's own.** The four drawn spirals (a 12° pitch and a hand-picked phase) contradicted the in-game colonisation map. The arms are now the eleven arm-named regions of the vendored community region grid, filled as coarse block runs (about 395 ly) under the region borders, so they sit where the game puts them by construction (`scripts/gen-galactic-regions.mjs` emits `GALACTIC_ARM_SHAPES`; the spiral memo is gone).
+- **Map: the Populated layer is seeded from the galaxy dump, gated to the bubbles.** `scripts/extract-populated-galaxy.mjs` pulls every populated system out of the Spansh galaxy dump in one pass (141,542 systems, 41 MB); `scripts/gen-populated-systems.mjs` now reads that file by default and keeps only the two bubbles — 11,148 systems from the July 2026 dump, up from 6,458. The regional dumps cannot feed the layer: their 700 ly sphere is centred on AX-J d9-52, 103 ly from HIP 47126, and misses 3,243 populated systems on the Sol side of the bubble, Omega Carinae and Epsilon Centauri among them. Nothing outside the bubbles is written. The FAQ and both READMEs say so.
 ## [1.58.2] — 2026-09-07
 
 ### Docs

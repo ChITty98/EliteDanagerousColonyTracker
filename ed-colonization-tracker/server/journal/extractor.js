@@ -30,7 +30,7 @@ import { listJournalFiles } from './paths.js';
 // Station types known to have large pads. Used to infer pad availability when
 // journal LandingPads data is missing.
 export const LARGE_PAD_TYPES = new Set([
-  'Coriolis', 'Orbis', 'Ocellus', 'StationDodec', 'AsteroidBase',
+  'Coriolis', 'Orbis', 'Ocellus', 'StationDodec', 'Dodec', 'Bernal', 'AsteroidBase', // the journal writes Dodec (The Gatehouse, Cavallo Nero Corona) and Bernal for an Ocellus
   'CraterPort', 'PlanetaryPort', 'SurfaceStation',
   'FleetCarrier', 'MegaShip',
 ]);
@@ -78,6 +78,20 @@ export function mapStarType(code) {
 export function parseJournalFile(fullPath) {
   try {
     const text = fs.readFileSync(fullPath, 'utf-8');
+    return parseJournalLines(text.split('\n'));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * parseJournalFile, skipping a file that never mentions `needle` (a system address as text): a
+ * one-system refresh reads the journals that hold the system, not the whole folder.
+ */
+export function parseJournalFileContaining(fullPath, needle) {
+  try {
+    const text = fs.readFileSync(fullPath, 'utf-8');
+    if (needle && !text.includes(needle)) return null;
     return parseJournalLines(text.split('\n'));
   } catch {
     return null;
@@ -802,6 +816,8 @@ const SHIP_PAD_SIZES = {
   orca: 'L', belugaliner: 'L', empire_trader: 'L', panthermkii: 'L',
 };
 export const padSizeFor = (t) => SHIP_PAD_SIZES[String(t || '').toLowerCase()] || null;
+/** The pad a hull needs as Ardent counts them (1 small, 2 medium, 3 large). An unlisted hull needs large. */
+export const padNeedFor = (t) => { const s = padSizeFor(t); return s === 'S' ? 1 : s === 'M' ? 2 : 3; };
 
 // SINGLE SOURCE OF TRUTH for the co-pilot's seat situation — TWO DISTINCT attributes, do not conflate:
 //   - SINGLE_SEAT (crew=1, verified from coriolis-data + INARA; see memory reference_ship_crew_seats):
@@ -1011,14 +1027,17 @@ export function extractStationTravelTimes(journalDir) {
 
 // ===== Exploration data =====
 
-export function extractExplorationData(journalDir) {
+export function extractExplorationData(journalDir, opts) {
+  // opts.address — only the journal files that mention this system address are parsed (the
+  // one-system refresh behind Rescore); the map still holds every system those files contain.
+  const needle = opts && opts.address != null ? String(opts.address) : null;
   const files = listJournalFiles(journalDir);
   const systemMap = new Map();
   const addressToName = new Map();
   const addressToCoords = new Map();
 
   for (const jf of files) {
-    const parsed = parseJournalFile(jf.fullPath);
+    const parsed = needle ? parseJournalFileContaining(jf.fullPath, needle) : parseJournalFile(jf.fullPath);
     if (!parsed) continue;
     for (const ev of parsed.fsdJumpEvents) {
       addressToName.set(ev.SystemAddress, ev.StarSystem);

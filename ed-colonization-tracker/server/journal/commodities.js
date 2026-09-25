@@ -5,6 +5,14 @@
  *
  * This file is the authoritative server-side copy. Keep in sync with the
  * browser copy — they're both small enough that divergence is obvious.
+ *
+ * `journalName` is the game's own symbol (`$..._name;`), which is also what EDDN, Ardent and Spansh
+ * call the commodity. It is NOT derived from the display name: four goods differ — Microbial Furnaces
+ * is `heliostaticfurnaces`, H.E. Suits `hazardousenvironmentsuits`, Land Enrichment Systems
+ * `terrainenrichmentsystems`, Muon Imager `mutomimager` — verified across every 2025–2026 journal
+ * (Cargo, MarketBuy/Sell, CargoTransfer, the depot event; the display-derived symbols never occur).
+ * Until 1.60.15 the dictionary carried the made-up ones, so a hold of Microbial Furnaces resolved to
+ * the raw symbol and never met a project need.
  */
 
 /**
@@ -55,19 +63,19 @@ export const COMMODITIES = [
   { id: 'emergencypowercells', journalName: '$emergencypowercells_name;', name: 'Emergency Power Cells', category: 'light', planetaryOnly: false },
   { id: 'evacuationshelter', journalName: '$evacuationshelter_name;', name: 'Evacuation Shelter', category: 'light', planetaryOnly: false },
   { id: 'survivalequipment', journalName: '$survivalequipment_name;', name: 'Survival Equipment', category: 'light', planetaryOnly: false },
-  { id: 'landenrichmentsystems', journalName: '$landenrichmentsystems_name;', name: 'Land Enrichment Systems', category: 'light', planetaryOnly: false },
-  { id: 'hesuits', journalName: '$hesuits_name;', name: 'H.E. Suits', category: 'light', planetaryOnly: false },
+  { id: 'landenrichmentsystems', journalName: '$terrainenrichmentsystems_name;', name: 'Land Enrichment Systems', category: 'light', planetaryOnly: false },
+  { id: 'hesuits', journalName: '$hazardousenvironmentsuits_name;', name: 'H.E. Suits', category: 'light', planetaryOnly: false },
   { id: 'combatstabilisers', journalName: '$combatstabilisers_name;', name: 'Combat Stabilisers', category: 'light', planetaryOnly: false },
   { id: 'microcontrollers', journalName: '$microcontrollers_name;', name: 'Micro Controllers', category: 'light', planetaryOnly: false },
   { id: 'battleweapons', journalName: '$battleweapons_name;', name: 'Battle Weapons', category: 'light', planetaryOnly: false },
   { id: 'militarygradefabrics', journalName: '$militarygradefabrics_name;', name: 'Military Grade Fabrics', category: 'light', planetaryOnly: false },
   { id: 'advancedcatalysers', journalName: '$advancedcatalysers_name;', name: 'Advanced Catalysers', category: 'light', planetaryOnly: false },
-  { id: 'microbialfurnaces', journalName: '$microbialfurnaces_name;', name: 'Microbial Furnaces', category: 'light', planetaryOnly: false },
+  { id: 'microbialfurnaces', journalName: '$heliostaticfurnaces_name;', name: 'Microbial Furnaces', category: 'light', planetaryOnly: false },
   { id: 'resonatingseparators', journalName: '$resonatingseparators_name;', name: 'Resonating Separators', category: 'light', planetaryOnly: false },
   { id: 'thermalcoolingunits', journalName: '$thermalcoolingunits_name;', name: 'Thermal Cooling Units', category: 'light', planetaryOnly: false },
   { id: 'basicmedicines', journalName: '$basicmedicines_name;', name: 'Basic Medicines', category: 'light', planetaryOnly: false },
   { id: 'bioreducinglichen', journalName: '$bioreducinglichen_name;', name: 'Bioreducing Lichen', category: 'light', planetaryOnly: false },
-  { id: 'muonimager', journalName: '$muonimager_name;', name: 'Muon Imager', category: 'light', planetaryOnly: false },
+  { id: 'muonimager', journalName: '$mutomimager_name;', name: 'Muon Imager', category: 'light', planetaryOnly: false },
   { id: 'biowaste', journalName: '$biowaste_name;', name: 'Biowaste', category: 'light', planetaryOnly: false },
   { id: 'grain', journalName: '$grain_name;', name: 'Grain', category: 'light', planetaryOnly: false },
   { id: 'pesticides', journalName: '$pesticides_name;', name: 'Pesticides', category: 'light', planetaryOnly: false },
@@ -86,6 +94,35 @@ export function findCommodityByJournalName(journalName) {
 export function findCommodityByDisplayName(displayName) {
   if (!displayName) return undefined;
   return COMMODITY_BY_DISPLAY_NAME.get(String(displayName).toLowerCase());
+}
+
+/**
+ * The game's own symbol for a commodity — journalName without the `$`/`_name;` — which is also what
+ * EDDN, Ardent and Spansh call it. For all but four goods it equals the id; unknown ids pass through.
+ */
+export function commoditySymbol(id) {
+  const def = COMMODITY_BY_ID.get(String(id || '').toLowerCase());
+  return def ? def.journalName.replace(/^\$/, '').replace(/_name;$/, '') : String(id || '');
+}
+
+/**
+ * A `{commodityId: count}` map with any key that is a raw game symbol (bare or `$..._name;`) moved
+ * to the dictionary id, counts summed if both exist. Hauling session snapshots taken before 1.60.15
+ * stored `heliostaticfurnaces` beside `microbialfurnaces` needs. Returns the same object when
+ * nothing changes, so callers can test identity.
+ */
+export function canonicaliseCommodityKeys(map) {
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return map;
+  let out = null;
+  for (const [k, v] of Object.entries(map)) {
+    if (COMMODITY_BY_ID.has(k)) continue;
+    const def = findCommodityByJournalName(/^\$/.test(k) ? k : `$${String(k).toLowerCase()}_name;`);
+    if (!def || def.id === k) continue;
+    if (!out) out = { ...map };
+    out[def.id] = (Number(out[def.id]) || 0) + (Number(v) || 0);
+    delete out[k];
+  }
+  return out || map;
 }
 
 export function getCommoditiesByCategory(category) {

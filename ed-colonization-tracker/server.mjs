@@ -55,6 +55,7 @@ import { initCarrierLedger, ensureCarrierLedger, reconcileCarrierMarket, carrier
 import {
   findCommodityByJournalName,
   findCommodityByDisplayName,
+  commoditySymbol,
 } from './server/journal/commodities.js';
 import { isEphemeralStation } from './server/journal/util.js';
 import { extractMaterialInventory, applyMaterialDeltaEvent } from './server/journal/materials.js';
@@ -81,6 +82,7 @@ import {
   isRecordedScreenshot, retractSighting, recordRating, setHullSize, hullSizeFor, setNavTarget, clearNavTarget,
   addPin, removePin, depotShotFiles as surfaceDepotShotFiles,
 } from './server/journal/surfaceMining.js';
+import { initApproach, getApproachTargets, getApproachRuns, getLiveApproach } from './server/journal/approach.js';
 // The nav lock names a body by BodyID only; this turns "Body": 14 into "1 a" for the hero band.
 import { resolveBodyNameById } from './server/journal/processors.js';
 import { getMiningSnapshot, commodityValueNow, rockValueNow, colonySystemsOf, setInHotspot, seedRingContext } from './server/journal/mining.js';
@@ -1167,6 +1169,40 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Exploration refresh: POST /api/exploration/refresh[?address=N] — re-read the journals on the
+  // server and upsert the exploration cache. The server holds the journal folder; in the exe flow the
+  // browser never does, so the page's own read threw and every Rescore silently became Spansh-only
+  // (1.60.13). With an address only the files that mention it are parsed and only that system is
+  // returned; without one this is the Sync All exploration pass.
+  if (pathname === '/api/exploration/refresh' && req.method === 'POST') {
+    try {
+      const existing = readStateFile();
+      const journalDir = resolveJournalDir((existing.settings || {}).journalDirOverride);
+      if (!journalDirExists(journalDir)) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ systems: {}, count: 0, journalDir, error: 'Journal directory not found' }));
+        return;
+      }
+      const url = new URL(req.url, 'http://x');
+      const address = url.searchParams.get('address');
+      const map = extractExplorationData(journalDir, address ? { address } : undefined);
+      const systems = {};
+      for (const [addr, sys] of map.entries()) {
+        if (address && String(addr) !== String(address)) continue;
+        systems[String(addr)] = sys;
+      }
+      const count = Object.keys(systems).length;
+      if (count > 0) applyStatePatch({ journalExplorationCache: { __upsert: systems } });
+      console.log(`[Exploration] Refreshed ${count} system(s) from the journals${address ? ` for ${address}` : ''}`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ systems, count, journalDir }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message || String(e) }));
+    }
+    return;
+  }
+
   // Exploration API: GET /api/exploration/:addr — single system's body data
   const exploMatch = pathname.match(/^\/api\/exploration\/(\d+)$/);
   if (exploMatch && req.method === 'GET') {
@@ -1531,11 +1567,29 @@ const server = http.createServer((req, res) => {
           try {
             const stNow = pendingState ?? readStateFile();
             const haveIds = new Set((Array.isArray(stNow.projects) ? stNow.projects : []).map((p) => p && p.marketId).filter(Boolean));
+            const byMarket = new Map((Array.isArray(stNow.projects) ? stNow.projects : []).filter((p) => p && p.marketId).map((p) => [p.marketId, p]));
             const dismissedIds = new Set(Array.isArray(stNow.dismissedMarketIds) ? stNow.dismissedMarketIds : []);
             const freshProjects = {};
             for (const depot of depots) {
               if (!depot || depot.isComplete || depot.isFailed) continue;
-              if (haveIds.has(depot.marketId) || dismissedIds.has(depot.marketId)) continue;
+              if (dismissedIds.has(depot.marketId)) continue;
+              if (haveIds.has(depot.marketId)) {
+                // Heal an existing project created without its identity (the watcher skips history on
+                // boot): the journal scan knows the station now, so fill the blanks field-level.
+                const p = byMarket.get(depot.marketId);
+                if (p && (!p.systemName || !p.stationName) && (depot.systemName || depot.stationName)) {
+                  const healed = {
+                    ...p,
+                    systemName: p.systemName || depot.systemName || '',
+                    stationName: p.stationName || depot.stationName || '',
+                    systemAddress: p.systemAddress ?? depot.systemAddress ?? null,
+                    stationType: p.stationType || depot.stationType || '',
+                  };
+                  if (!p.systemName || /^Depot \d+$/.test(p.name || '')) healed.name = healed.systemName ? `${healed.systemName}${healed.stationName ? ` - ${healed.stationName}` : ''}` : p.name;
+                  freshProjects[p.id] = healed;
+                }
+                continue;
+              }
               const id = crypto.randomUUID();
               const nowIso = new Date().toISOString();
               const stationName = depot.stationName || '';
@@ -1556,7 +1610,7 @@ const server = http.createServer((req, res) => {
             }
             if (Object.keys(freshProjects).length) {
               applyStatePatch({ projects: { __idKey: 'id', __upsert: freshProjects } });
-              console.log(`[SyncAll] AUTO-CREATED ${Object.keys(freshProjects).length} project(s) server-side: ${Object.values(freshProjects).map((p) => p.name).join('; ')}`);
+              console.log(`[SyncAll] AUTO-CREATED or healed ${Object.keys(freshProjects).length} project(s) server-side: ${Object.values(freshProjects).map((p) => p.name).join('; ')}`);
             }
           } catch (e) {
             console.error('[SyncAll] server-side depot create failed:', e && e.message);
@@ -2104,6 +2158,25 @@ const server = http.createServer((req, res) => {
   }
 
   // Surface (Rhino) mining — opportunities per body + measured results per deposit.
+  // Approach analysis — targets, the runs at one, and the run in progress.
+  if (pathname === '/api/approach/targets' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(getApproachTargets()));
+    return;
+  }
+  if (pathname === '/api/approach/runs' && req.method === 'GET') {
+    const key = url.searchParams.get('target') || '';
+    const ship = url.searchParams.get('ship') || null;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(getApproachRuns(key, ship === 'all' ? null : ship)));
+    return;
+  }
+  if (pathname === '/api/approach/live' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(getLiveApproach()));
+    return;
+  }
+
   if (pathname === '/api/surface-mining/summary' && req.method === 'GET') {
     try {
       const existing = readStateFile();
@@ -2119,7 +2192,11 @@ const server = http.createServer((req, res) => {
         (systemAddress, bodyId) => resolveBodyNameById(existing, systemAddress, bodyId),
         // Best sell among the commander's own visited markets — where a station pays 185% of mean.
         (name) => bestSellFromSnapshots(existing, name),
+        // The galaxy's best real buyer from the live ladder (large pad, real demand, no depots/carriers).
+        (name) => { const l = getLivePrice(commodityKey(name)); return l && l.cr > 0 ? { cr: l.cr, station: l.station || null, system: l.system || null, at: l.at ? new Date(l.at).toISOString() : null } : null; },
       );
+      // Keep the ladder warm for every commodity the page prices (deduped, TTL-gated inside).
+      try { refreshLivePrices(Object.keys(summary.prices || {}).map(commodityKey), existing.commanderPosition && existing.commanderPosition.systemName); } catch { /* best-effort */ }
 
       // Attach each F10 marker to the shot that produced it. recordGameScreenshot already copied
       // the image into the gallery, so the picture of the deposit panel — the one thing that
@@ -3479,6 +3556,8 @@ server.listen(PORT, '0.0.0.0', () => {
     // Surface mining needs the journal dir too: lat/lon comes from Status.json, which is the only
     // place a surface position exists (never archived, so it must be sampled live).
     initSurfaceMining(APP_DIR, jd);
+    // Approach recorder: samples Status.json once a second while a descent is open, nothing otherwise.
+    { const a = initApproach(APP_DIR, jd, { broadcastEvent, sendOverlay: sendOverlayMessage, applyStatePatch, readState: readStateFile }); console.log(`[Approach] ${a.runs} run(s) on file at ${a.targets} target(s)`); }
     initMarketMeans(APP_DIR);
     // Goal markets from the journal — the Sell page tag, and every valuation that must NOT price at a goal.
     { const g = initCommunityGoals(jd); console.log(`[Goals] ${g.goals} community goal(s) on file${g.eventAt ? ` (as of ${g.eventAt.slice(0, 16)})` : ''}`); }
@@ -3508,7 +3587,8 @@ async function sampleMarketHistory() {
   } catch { reach = null; }
   for (const k of sampleKeys()) {
     if (!needsSample(k)) continue;
-    const rows = await ardentJson(`/commodity/name/${encodeURIComponent(k)}/imports?fleetCarriers=false`, 6 * 3600e3);
+    // Ardent knows a commodity by the game's symbol: heliostaticfurnaces answers, microbialfurnaces is "not found".
+    const rows = await ardentJson(`/commodity/name/${encodeURIComponent(commoditySymbol(k))}/imports?fleetCarriers=false`, 6 * 3600e3);
     if (Array.isArray(rows)) recordArdentSample(k, rows, Date.now(), reach);
   }
   const s = historyStats();

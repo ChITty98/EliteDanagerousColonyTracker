@@ -57,6 +57,7 @@ import {
   buildBodyString,
   filterQualifyingBodies,
   classifyStars,
+  SCORE_FORMULA_VERSION,
 } from '../server/journal/scorer.js';
 
 const SELF_PATH = fileURLToPath(import.meta.url);
@@ -217,7 +218,8 @@ function slimSystem(sys) {
     secondEconomy: sys.secondaryEconomy || null,
     score,
     bodyString,
-    bodyCount: rawBodies.length,
+    bodyCount: rawBodies.length, // records on file (incl. barycentres) — NOT the FSS honk
+    honkBodyCount: typeof sys.bodyCount === 'number' ? sys.bodyCount : null, // the honk total, kept since 1.59.0 so an import can tell a partial from a complete
     bodies: rawBodies.map(slimBody).filter(Boolean),
   };
 }
@@ -814,6 +816,9 @@ async function cmdUpsertState() {
     if (existingScouted && existingScouted.fromJournal === true) {
       skippedJournalPrior++;
     } else {
+      // Spansh holds records for the bodies someone scanned, not the whole system: complete only
+      // when the records reach the honk. Slim files built before 1.59.0 carry no honk — unknown.
+      const honk = typeof sys.honkBodyCount === 'number' && sys.honkBodyCount > 0 ? sys.honkBodyCount : undefined;
       scouted[String(sys.id64)] = {
         id64: sys.id64,
         name: sys.name,
@@ -821,8 +826,10 @@ async function cmdUpsertState() {
         bodyString: sys.bodyString || '',
         scoutedAt: nowIso,
         spanshBodyCount: sys.bodyCount,
+        totalBodyCount: honk,
         fromJournal: false,
-        fssAllBodiesFound: true, // Spansh has the full picture
+        fssAllBodiesFound: honk != null ? sys.bodyCount >= honk : undefined,
+        scoreVersion: SCORE_FORMULA_VERSION,
       };
       promoted++;
     }

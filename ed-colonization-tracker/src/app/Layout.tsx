@@ -36,6 +36,7 @@ const navItems = [
   // route keeps its path so existing links still resolve; only the label narrowed.
   { to: '/mining', label: 'Asteroid Mining', icon: '\u{26CF}\u{FE0F}' },
   { to: '/surface-mining', label: 'Surface Mining', icon: '\u{1F69C}' },
+  { to: '/approach', label: 'Approach', icon: '\u{1F6EC}' },
   { to: '/journal-stats', label: 'Journal Stats', icon: '\u{1F4D6}' },
   { to: '/settings', label: 'Settings', icon: '\u2699' },
   { to: '/wiki', label: 'Wiki', icon: '\u{1F4DA}' },

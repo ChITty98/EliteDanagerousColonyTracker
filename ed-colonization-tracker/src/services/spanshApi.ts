@@ -226,7 +226,7 @@ export async function searchNearbySystems(
   return maxResults > 0 ? allResults.slice(0, maxResults) : allResults;
 }
 
-export interface BoxelSystem { index: number; name: string; id64: number; bodyCount: number; }
+export interface BoxelSystem { index: number; name: string; id64: number; bodyCount: number; /* bodies on file — 0 = position only, never FSS'd */ }
 /** A sequence gap: an index Spansh has no system for under this name. `id64` is the
  *  predicted address (linear within the boxel: base + index*step), or null when the
  *  model can't be computed (fewer than 2 distinct known indices). */
@@ -273,7 +273,9 @@ export async function enumerateBoxel(prefix: string): Promise<BoxelEnumeration> 
       const mm = (s.name || '').match(re);
       if (mm) {
         const idx = parseInt(mm[1], 10);
-        if (!seen.has(idx)) { seen.set(idx, { index: idx, name: s.name, id64: s.id64, bodyCount: s.body_count ?? 0 }); added++; }
+        // Bodies on file, not body_count: Spansh's body_count is the honk total and is null for many
+        // systems that have bodies (AX-J d9-96: 22 bodies, body_count null). 0 = position only.
+        if (!seen.has(idx)) { seen.set(idx, { index: idx, name: s.name, id64: s.id64, bodyCount: Array.isArray(s.bodies) ? s.bodies.length : (s.body_count ?? 0) }); added++; }
       }
     }
     emptyStreak = added === 0 ? emptyStreak + 1 : 0;

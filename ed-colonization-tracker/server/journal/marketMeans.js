@@ -11,6 +11,7 @@
 // Thortveitite and Periclase Dunite at 240k against a 129,763 mean), and "skip Thortveitite"
 // was a decision made on the average alone.
 import { isCommunityGoalMarket } from './communityGoals.js';
+import { isNonBuyerMarket } from './util.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { setLiveMeans } from './commodityPricesMirror.js';
@@ -110,6 +111,7 @@ export function bestSellFromSnapshots(state, name, maxAgeMs = FRESH_MARKET_MS, r
     // A goal market is a buyer, not a price: its 8× is gone with the goal and would value every
     // rig and rock at it for a month (Metz Enterprise, September 2026).
     if (isCommunityGoalMarket(snap.stationName, snap.systemName)) continue;
+    if (isNonBuyerMarket(snap.stationType)) continue; // a delivery dock at a construction site is not a market
     if (maxAgeMs > 0 && !(Date.parse(snap.updatedAt) >= cutoff)) continue;
     if (reachLy > 0) { const d = distanceFromCommander(state, snap.systemName); if (d != null && d > reachLy) continue; }
     for (const c of snap.commodities) {

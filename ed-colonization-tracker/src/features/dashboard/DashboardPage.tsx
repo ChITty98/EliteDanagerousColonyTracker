@@ -617,6 +617,17 @@ export function DashboardPage() {
           }
           if (depot.stationName && !existing.stationName) {
             projectUpdates.stationName = cleanJournalString(depot.stationName);
+          } else if (depot.stationName && existing.stationName
+            && isConstructionStationName(depot.stationName) && isConstructionStationName(existing.stationName)
+            && cleanJournalString(depot.stationName) !== existing.stationName) {
+            // A site renamed while still under construction (same market id): follow the station name,
+            // and the display name only while it is still the auto-built "System - Station". A typed name stays.
+            const nextName = cleanJournalString(depot.stationName);
+            projectUpdates.stationName = nextName;
+            const auto = `${existing.systemName ?? ''}${existing.stationName ? ` - ${existing.stationName}` : ''}`;
+            if (!existing.name || existing.name === auto) {
+              projectUpdates.name = `${existing.systemName || depot.systemName || ''}${nextName ? ` - ${nextName}` : ''}`;
+            }
           }
           if (Object.keys(projectUpdates).length > 0) {
             useAppStore.getState().updateProject(existing.id, projectUpdates);

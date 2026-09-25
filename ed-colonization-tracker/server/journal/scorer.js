@@ -11,7 +11,7 @@
 
 // Bumped whenever the formula changes meaning — rescore tools stamp it into entries
 // so v1-formula scores are distinguishable from v2 until re-priced.
-export const SCORE_FORMULA_VERSION = 2;
+export const SCORE_FORMULA_VERSION = 3; // 3 = 1.59.0: body counts are stars + planets, plus the 1.58.8/1.58.9 epic rules — older scores read as stale
 
 export const ICY_SUBTYPES = new Set(['Icy body', 'Rocky ice world', 'Rocky Ice world']);
 
@@ -394,6 +394,9 @@ const BIG_SKY_MIN_DEG = 45;     // parent overhead — only the true monsters (4
 const RING_EDGE_MAX_RATIO = 1.05; // moon sma / ring outer radius — a real edge-skimmer (or inside the rings)
 const RING_EDGE_MIN_DEG = 30;   // ...and the rings must still span a big chunk of sky
 const TWIN_PAIR_MIN_DEG = 20;   // sibling worlds looming in each other's sky (benchmarks 24.7°/28.6°; routine pairs ≤14°)
+const RING_MIN_DENSITY = 5e-6;  // ring mass (megatonnes, as the journal and Spansh report it) per m² of annulus. The ring that let
+                                // down Wregoe JX-A c27-7 7 a reads 2.9e-6 ("a very dim ring"); the gold standard at d9-52 2 reads
+                                // 9.2e-6 and nothing else on file is under 6.1e-6 (2026-09-13). A ring with no mass on file passes.
 function isBrownDwarfStar(b) {
   return b.type === 'Star' && /brown dwarf/i.test(b.subType || '');
 }
@@ -407,6 +410,11 @@ function radiusKmOf(b) {
 function apparentDeg(radiusKm, sepKm) {
   if (!(radiusKm > 0) || !(sepKm > 0)) return 0;
   return (2 * Math.atan(radiusKm / sepKm) * 180) / Math.PI;
+}
+/** Ring material per m² of annulus — the proxy for how bright the band is. Null when the ring has no mass or radii on file. */
+function ringDensity(r) {
+  if (!r || !(r.mass > 0) || !(r.outerRadius > 0) || !(r.innerRadius >= 0) || !(r.outerRadius > r.innerRadius)) return null;
+  return r.mass / (Math.PI * (r.outerRadius ** 2 - r.innerRadius ** 2));
 }
 function immediateParent(body, byId) {
   const p0 = body.parents && body.parents[0];
@@ -511,8 +519,13 @@ export function detectEpicView(bodies) {
     if (!b.isLandable || typeof b.semiMajorAxis !== 'number' || b.semiMajorAxis <= 0) continue;
     const parent = immediateParent(b, byId);
     if (!parent || !Array.isArray(parent.rings) || parent.rings.length === 0) continue;
-    const ringOuterKm = parent.rings.reduce((m, r) => Math.max(m, typeof r.outerRadius === 'number' ? r.outerRadius / 1000 : 0), 0);
+    const outerRing = parent.rings.reduce((best, r) => (typeof r.outerRadius === 'number' && r.outerRadius > (best ? best.outerRadius : 0) ? r : best), null);
+    const ringOuterKm = outerRing ? outerRing.outerRadius / 1000 : 0;
     if (!(ringOuterKm > 0)) continue; // no radius data — can't confirm proximity; don't false-positive
+    // The band the moon skims has to be bright enough to be a sight: a thin ring is a line of nothing
+    // (c27-7 7 a: right geometry, 2.9e-6 ring, "pretty meh"). A dramatic ring would have been enough on its own.
+    const density = ringDensity(outerRing);
+    if (density != null && density < RING_MIN_DENSITY) continue;
     const smaKm = b.semiMajorAxis * AU_KM;
     if (smaKm / ringOuterKm <= RING_EDGE_MAX_RATIO && apparentDeg(ringOuterKm, smaKm) >= RING_EDGE_MIN_DEG) {
       reasons.push(`${short(b)} — ${smaKm < ringOuterKm ? 'orbits INSIDE the rings of' : 'skims the ring edge of'} ${short(parent)}`);
@@ -527,6 +540,9 @@ export function detectEpicView(bodies) {
   // has a natural gap under it. Metric matches the 2026-08-04 calibration exactly:
   // planets grouped by identical immediate parent, adjacent orbits closest = |sma diff|,
   // co-orbiting barycentre pairs = sma sum, angle from the larger body's radius.
+  // The view is from a SURFACE: a pair with neither member landable is not a sight, however close
+  // (Wregoe JX-A c27-7 6 b/6 c, 31° apart and neither landable — "landable or nothing", 2026-09-13).
+  // The landable member is named first: it is the one you stand on.
   let twinDeg = 0;
   let twinPair = null;
   const sibs = new Map();
@@ -542,10 +558,11 @@ export function detectEpicView(bodies) {
     g.sort((a, b) => a.semiMajorAxis - b.semiMajorAxis);
     for (let i = 0; i + 1 < g.length; i++) {
       const A = g[i], B = g[i + 1];
+      if (!A.isLandable && !B.isLandable) continue;
       const coOrbit = 'Null' in (A.parents[0] || {});
       const sepKm = (coOrbit ? A.semiMajorAxis + B.semiMajorAxis : B.semiMajorAxis - A.semiMajorAxis) * AU_KM;
       const d = Math.max(apparentDeg(radiusKmOf(A), sepKm), apparentDeg(radiusKmOf(B), sepKm));
-      if (d > twinDeg) { twinDeg = d; twinPair = [A, B]; }
+      if (d > twinDeg) { twinDeg = d; twinPair = A.isLandable ? [A, B] : [B, A]; }
     }
   }
   if (twinDeg >= TWIN_PAIR_MIN_DEG && twinPair) {

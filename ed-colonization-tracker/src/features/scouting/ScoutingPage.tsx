@@ -24,9 +24,9 @@ import {
   type ScoreBreakdown,
   type BodySegment,
 } from '@/lib/scoutingScorer';
-import { scanCompleteness } from '@/lib/scanCompleteness';
+import { scanCompleteness, countScanRecords } from '@/lib/scanCompleteness';
 import {
-  extractExplorationData,
+  refreshExplorationFromServer,
   journalBodiesToSpanshFormat,
 } from '@/services/journalReader';
 import { formatRelativeTime, freshnessColor } from '@/lib/utils';
@@ -66,6 +66,7 @@ interface ScoutedSystem {
   bodyDetails: BodyDetail[] | null;
   starDetails: StarDetail[] | null;
   scouted: boolean;
+  noData: boolean; // on file with no body records — unclassified: shown as ⚬, never a score
   loading: boolean;
   error: string | null;
 }
@@ -209,6 +210,7 @@ export function ScoutingPage() {
   const manualColonizedSystems = useAppStore((s) => s.manualColonizedSystems);
   const scoutedSystems = useAppStore((s) => s.scoutedSystems);
   const upsertScoutedSystem = useAppStore((s) => s.upsertScoutedSystem);
+  const upsertScoutedSystems = useAppStore((s) => s.upsertScoutedSystems);
   const clearScoutedSystems = useAppStore((s) => s.clearScoutedSystems);
   const journalExplorationCache = useAppStore((s) => s.journalExplorationCache);
   const setJournalExplorationCache = useAppStore((s) => s.setJournalExplorationCache);
@@ -259,7 +261,7 @@ export function ScoutingPage() {
   const [totalCount, setTotalCount] = useState(0);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [showScoutMap, setShowScoutMap] = useState(false);
-  const [scoutAllProgress, setScoutAllProgress] = useState<{ done: number; total: number } | null>(null);
+  const [scoutAllProgress, setScoutAllProgress] = useState<{ done: number; total: number; label?: string } | null>(null);
   const [sortMode, setSortMode] = useState<'score' | 'distance' | 'bodies'>('score');
   const [refCoords, setRefCoords] = useState<{ x: number; y: number; z: number } | null>(null);
   const scoutRunning = scoutAllProgress != null;
@@ -319,7 +321,8 @@ export function ScoutingPage() {
     // Locally-known addresses (id64 / systemAddress). Object keys are strings already;
     // compare as strings so large id64s never lose precision.
     const visited = new Set<string>([
-      ...Object.keys(scoutedSystems),
+      // A record with no body data on file is not a visit — it stays a target.
+      ...Object.entries(scoutedSystems).filter(([, v]) => scanCompleteness(v).hasBodyData).map(([k]) => k),
       ...Object.keys(journalExplorationCache),
     ]);
     // Only look up non-visited gaps that have a computed id64. The rest are either
@@ -361,6 +364,7 @@ export function ScoutingPage() {
   const [geoOnly, setGeoOnly] = useState(false);
   const [landedOnly, setLandedOnly] = useState(false);
   const [partialOnly, setPartialOnly] = useState(false);
+  const [unclassifiedOnly, setUnclassifiedOnly] = useState(false);
   // Buckets mirror the measured yield in the commander's scored data (Aug 2026):
   // 41+ ≈53% score ≥60 · 21–40 ≈26% · 10–20 ≈7% · 1–9 ≈0.4% ("skip entirely").
   const [bodyCountFilter, setBodyCountFilter] = useState<'all' | 'ge41' | 'b21to40' | 'gt20' | 'b10to20' | 'b1to9'>('all');
@@ -450,6 +454,10 @@ export function ScoutingPage() {
       }
 
       setTotalCount(results.length);
+      // The radius search carries the FSS honk for many systems. A record scored before the app kept
+      // the total takes it from here, no fetch: 864 of the 1,644 near-home records without one, 169
+      // of them false zeros that become "N of M" partials. One store write for the lot.
+      const honkBackfill: Array<typeof scoutedSystems[number]> = [];
       // Hydrate from persisted scouting data
       setSystems(
         results.map((s) => {
@@ -462,14 +470,21 @@ export function ScoutingPage() {
             if (isCol && !saved.isColonised) {
               upsertScoutedSystem({ ...saved, isColonised: true });
             }
+            if (!saved.fromJournal && !((saved.totalBodyCount ?? 0) > 0) && typeof s.body_count === 'number' && s.body_count > 0) {
+              honkBackfill.push({ ...saved, totalBodyCount: s.body_count, fssAllBodiesFound: (saved.spanshBodyCount ?? 0) >= s.body_count });
+            }            // A record with no body records on file (a Spansh position-only entry, a honk-only
+            // journal entry, a favourite stub) is unclassified: nothing to score, and Scout All
+            // rechecks it. It must never read as a 0.
+            const noData = !scanCompleteness(saved).hasBodyData;
             return {
               search: s,
-              score: saved.score,
-              bodyString: saved.bodyString,
+              score: noData ? null : saved.score,
+              bodyString: noData ? null : saved.bodyString,
               bodySegments: null, // segments not persisted, computed fresh on scout
               bodyDetails: null, // details not persisted, computed fresh on scout
               starDetails: null,
-              scouted: true,
+              scouted: !noData,
+              noData,
               loading: false,
               error: null,
             };
@@ -482,11 +497,13 @@ export function ScoutingPage() {
             bodyDetails: null,
             starDetails: null,
             scouted: false,
+            noData: false,
             loading: false,
             error: null,
           };
         }),
       );
+      if (honkBackfill.length > 0) upsertScoutedSystems(honkBackfill);
       setSearchPhase('done');
     } catch (err) {
       setSearchError(err instanceof Error ? err.message : 'Search failed');
@@ -495,7 +512,7 @@ export function ScoutingPage() {
   }, [refSystem, searchRadius, maxResults, scoutedSystems, colonizedSystems, upsertScoutedSystem, knownSystems, journalExplorationCache]);
 
   // --- Scout a single system (score from journal cache or Spansh + persist) ---
-  const scoutSystem = useCallback(async (id64: number) => {
+  const scoutSystem = useCallback(async (id64: number, batch?: { journal: Map<number, import('@/services/journalReader').JournalExplorationSystem> | null }) => {
     setSystems((prev) =>
       prev.map((s) => (s.search.id64 === id64 ? { ...s, loading: true, error: null } : s)),
     );
@@ -505,13 +522,16 @@ export function ScoutingPage() {
       const existingScouted = scoutedSystems[id64];
       let journalCached = journalExplorationCache[id64];
 
-      // If the cache is empty, the live watcher may have missed scan events
-      // (Chrome FSA NotReadableError). Inline re-parse the journals now so
-      // this manual Rescore always sees fresh data before falling back to Spansh.
+      // If the cache is empty, the live watcher may have missed the scans (a relog never armed it
+      // before 1.60.13). Ask the server to re-read the journals now, before falling back to Spansh:
+      // it holds the journal folder, and the browser never does in the exe flow — the old in-browser
+      // read threw there, so every Rescore silently became Spansh-only.
       if (!journalCached || journalCached.scannedBodies.length === 0) {
         try {
-          const data = await extractExplorationData();
-          const fresh = data.get(id64);
+          // A batch run refreshes the whole cache once up front and hands the map in;
+          // a single Rescore refreshes its one system on demand.
+          const data = batch ? batch.journal : await refreshExplorationFromServer(id64);
+          const fresh = data ? data.get(id64) : undefined;
           if (fresh && fresh.scannedBodies.length > 0) {
             journalCached = fresh;
             // Merge into store so other pages benefit
@@ -542,7 +562,7 @@ export function ScoutingPage() {
         try {
           const dump = await fetchSystemDump(id64);
           if (dump && dump.bodies && dump.bodies.length > 0) {
-            spanshBodyCount = dump.bodies.length;
+            spanshBodyCount = countScanRecords(dump.bodies); // stars + planets — barycentre records never count
             spanshUpdatedAt = dump.updateTime || undefined;
             systemName = dump.name || systemName;
             // Spansh preferred when it has same or more bodies (richer multi-CMDR data)
@@ -566,12 +586,47 @@ export function ScoutingPage() {
       } else {
         // No journal body data — fetch from Spansh
         const dump = await fetchSystemDump(id64);
-        bodies = dump.bodies ?? [];
-        spanshBodyCount = bodies.length;
-        totalBodyCount = dump.bodyCount; // true total — may exceed records (partial scan)
+        const dumpBodies = Array.isArray(dump.bodies) ? dump.bodies : [];
+        spanshBodyCount = countScanRecords(dumpBodies); // stars + planets — barycentre records never count
+        totalBodyCount = dump.bodyCount ?? searchEntry?.search.body_count ?? undefined; // the honk total — may exceed records (partial scan)
         spanshUpdatedAt = dump.updateTime || undefined;
         systemName = dump.name || systemName;
         fromJournal = false;
+        if (spanshBodyCount === 0) {
+          // Spansh knows the position and nothing else. That is an unclassified system, not an
+          // empty one: record the fact so the pool, the map and the boxel scout can say so, and
+          // never score an empty list (44 near-home systems wore a 0 this way).
+          upsertScoutedSystem({
+            id64,
+            name: systemName,
+            score: emptyScore(),
+            bodyString: '',
+            coordinates: searchEntry?.search
+              ? { x: searchEntry.search.x, y: searchEntry.search.y, z: searchEntry.search.z }
+              : journalCached?.coordinates || existingScouted?.coordinates,
+            isColonised: !!(searchEntry?.search.is_colonised || colonizedSystems.some((c) => c.toLowerCase() === systemName.toLowerCase())),
+            region: searchEntry?.search?.region ?? existingScouted?.region,
+            isFavorite: existingScouted?.isFavorite,
+            notes: existingScouted?.notes,
+            fromJournal: false,
+            spanshBodyCount: 0,
+            totalBodyCount,
+            spanshUpdatedAt,
+            journalBodyCount: journalCached?.bodyCount,
+            journalScannedCount: 0,
+            scoreVersion: SCORE_FORMULA_VERSION,
+            scoutedAt: new Date().toISOString(),
+          });
+          setSystems((prev) =>
+            prev.map((s) =>
+              s.search.id64 === id64
+                ? { ...s, score: null, bodyString: null, bodySegments: null, bodyDetails: null, starDetails: null, scouted: false, noData: true, loading: false }
+                : s,
+            ),
+          );
+          return;
+        }
+        bodies = dumpBodies;
       }
 
       const score = scoreSystem(bodies);
@@ -648,7 +703,7 @@ export function ScoutingPage() {
       setSystems((prev) =>
         prev.map((s) =>
           s.search.id64 === id64
-            ? { ...s, score, bodyString, bodySegments, bodyDetails, starDetails: starDetailsList, scouted: true, loading: false }
+            ? { ...s, score, bodyString, bodySegments, bodyDetails, starDetails: starDetailsList, scouted: true, noData: false, loading: false }
             : s,
         ),
       );
@@ -716,18 +771,57 @@ export function ScoutingPage() {
   // Uses a ref so the callback always reads the latest filtered list
   const filteredRef = useRef<ScoutedSystem[]>([]);
 
-  const scoutAll = useCallback(async () => {
-    abortRef.current = false;
-    const unscouted = filteredRef.current.filter((s) => !s.scouted && !s.loading);
-    setScoutAllProgress({ done: 0, total: unscouted.length });
+  /** One journal refresh per batch run — the per-row Rescore asks the server for every
+   *  system without a cache entry, which a run over hundreds of rows must not repeat. */
+  const parseJournalOnce = useCallback(async () => {
+    try { return await refreshExplorationFromServer(); } catch { return null; }
+  }, []);
 
-    for (let i = 0; i < unscouted.length; i++) {
+  const runBatch = useCallback(async (rows: ScoutedSystem[], label: string) => {
+    abortRef.current = false;
+    setScoutAllProgress({ done: 0, total: rows.length, label });
+    const batch = { journal: await parseJournalOnce() };
+    for (let i = 0; i < rows.length; i++) {
       if (abortRef.current) break;
-      await scoutSystem(unscouted[i].search.id64);
-      setScoutAllProgress({ done: i + 1, total: unscouted.length });
+      await scoutSystem(rows[i].search.id64, batch);
+      setScoutAllProgress({ done: i + 1, total: rows.length, label });
     }
     setScoutAllProgress(null);
-  }, [scoutSystem]);
+  }, [scoutSystem, parseJournalOnce]);
+
+  // Spansh holds more stars and planets for this system than the record was scored on: the one case
+  // where a refetch learns something. Search rows carry body types, so no fetch is needed to know.
+  const grewOnSpansh = useCallback((row: ScoutedSystem, sd: typeof scoutedSystems[number] | undefined) => {
+    if (!sd || sd.fromJournal) return false;
+    return countScanRecords(row.search.bodies) > (sd.spanshBodyCount ?? 0);
+  }, []);
+
+  // Scout All takes the rows never scouted, and a no-data row only when its search row shows bodies
+  // now — refetching a position-only entry that has not changed teaches nothing.
+  const isScoutable = useCallback((row: ScoutedSystem, sd: typeof scoutedSystems[number] | undefined) =>
+    !row.scouted && !row.loading && (!row.noData || grewOnSpansh(row, sd)), [grewOnSpansh]);
+  const scoutAll = useCallback(async () => {
+    const live = useAppStore.getState().scoutedSystems;
+    await runBatch(filteredRef.current.filter((s) => isScoutable(s, live[s.search.id64])), 'Scouting');
+  }, [runBatch, isScoutable]);
+
+  // Stale = a refetch would learn something: Spansh has more bodies than the record saw, the record
+  // still has no scan total after the search backfill, or it carries an epic flag scored before the
+  // 1.58.8/1.58.9 rules (the only records those rules can change). Not "everything scored by an
+  // older formula" — near home that was 1,872 fetches for nothing. Refreshed rows leave the set,
+  // so a stopped run resumes where it left off.
+  const isStaleRow = useCallback((row: ScoutedSystem, sd: typeof scoutedSystems[number] | undefined) => {
+    if (!sd) return false;
+    const sc = scanCompleteness(sd);
+    if (!sc.hasBodyData) return false;
+    if (grewOnSpansh(row, sd)) return true;
+    if (sc.state === 'unknown') return true;
+    return !!sd.score.epicView?.isEpic && (sd.scoreVersion ?? 0) < SCORE_FORMULA_VERSION;
+  }, [grewOnSpansh]);
+  const rescoreStale = useCallback(async () => {
+    const live = useAppStore.getState().scoutedSystems;
+    await runBatch(filteredRef.current.filter((s) => s.scouted && !s.loading && isStaleRow(s, live[s.search.id64])), 'Rescoring stale');
+  }, [runBatch, isStaleRow]);
 
   const stopScoutAll = useCallback(() => {
     abortRef.current = true;
@@ -759,7 +853,7 @@ export function ScoutingPage() {
   const scanJournalsForScouting = useCallback(async () => {
     setJournalScanProgress('Reading journal files...');
     try {
-      const explorationData = await extractExplorationData();
+      const explorationData = await refreshExplorationFromServer();
       const cache: Record<number, import('@/services/journalReader').JournalExplorationSystem> = {};
       let withBodies = 0;
       let honkOnly = 0;
@@ -852,6 +946,13 @@ export function ScoutingPage() {
       // Partial-only filter — just the systems with a known body total but unrecorded bodies.
       if (partialOnly && !(saved && scanCompleteness(saved).isPartial)) return false;
 
+      // Unclassified filter — the ones to go FSS: no body data on file, or a 0 with no scan total.
+      if (unclassifiedOnly) {
+        if (!saved) return false;
+        const sc = scanCompleteness(saved);
+        if (!(!sc.hasBodyData || (sc.state === 'unknown' && saved.score.total === 0))) return false;
+      }
+
       // Geo filter — systems with at least one geological-signal body. Persisted
       // geoCount (v1.31+ scores) first; falls back to this run's bodyDetails.
       if (geoOnly) {
@@ -865,13 +966,30 @@ export function ScoutingPage() {
 
       return true;
     });
-  }, [sortedSystems, hideColonized, partialOnly, geoOnly, landedOnly, landedSystemAddresses, bodyCountFilter, sourceFilters, colonizedSystems, scoutedSystems, journalExplorationCache]);
+  }, [sortedSystems, hideColonized, partialOnly, unclassifiedOnly, geoOnly, landedOnly, landedSystemAddresses, bodyCountFilter, sourceFilters, colonizedSystems, scoutedSystems, journalExplorationCache]);
 
   // Keep filteredRef in sync so scoutAll always uses the latest filtered list
   filteredRef.current = filteredSystems;
 
   const filteredTotal = filteredSystems.length;
   const filteredScoutedCount = filteredSystems.filter((s) => s.scouted).length;
+  const staleCount = useMemo(
+    () => filteredSystems.filter((s) => s.scouted && isStaleRow(s, scoutedSystems[s.search.id64])).length,
+    [filteredSystems, scoutedSystems, isStaleRow],
+  );
+  const scoutableCount = useMemo(
+    () => filteredSystems.filter((s) => isScoutable(s, scoutedSystems[s.search.id64])).length,
+    [filteredSystems, scoutedSystems, isScoutable],
+  );
+  const unclassifiedCount = useMemo(
+    () => filteredSystems.filter((s) => {
+      const sd = scoutedSystems[s.search.id64];
+      if (!sd) return false;
+      const sc = scanCompleteness(sd);
+      return !sc.hasBodyData || (sc.state === 'unknown' && sd.score.total === 0);
+    }).length,
+    [filteredSystems, scoutedSystems],
+  );
 
   // Split into systems with bodies vs without (no-body systems are less interesting)
   // Use journal body count as fallback for systems not well-cataloged in Spansh
@@ -1641,23 +1759,50 @@ export function ScoutingPage() {
           {boxelErr && <div className="mt-2 text-xs text-red-400">{boxelErr}</div>}
           {boxelInfo && (() => {
             const fruit = COLONIZATION_BY_CODE[boxelInfo.massCode];
-            const scoredKnown = boxelInfo.enum.known.filter((k) => typeof scoutedSystems[k.id64]?.score?.total === 'number');
+            const scoredKnown = boxelInfo.enum.known.filter((k) => {
+              const sd = scoutedSystems[k.id64];
+              return !!sd && scanCompleteness(sd).hasBodyData && typeof sd.score?.total === 'number';
+            });
             const best = scoredKnown.reduce((m, k) => Math.max(m, scoutedSystems[k.id64]!.score.total), 0);
+            // Known by name but with no bodies on file: Spansh has the position, nobody has FSS'd it.
+            // Not gaps, so they never showed — 20 of the 106 AX-J d9 entries are like this.
+            const knownNoBodies = boxelInfo.enum.known.filter((k) => k.bodyCount === 0 && !scanCompleteness(scoutedSystems[k.id64]).hasBodyData);
             return (
               <div className="mt-3 space-y-2">
                 <div className="text-xs text-muted-foreground">
                   <span className="text-foreground font-medium">Mass {boxelInfo.massCode}</span>
                   {fruit ? ` · ~${fruit.bodies.toFixed(0)} bodies · ${fruit.pInteresting.toFixed(0)}% interesting-atmo odds · avg score ${fruit.score.toFixed(0)}` : ''}
-                  {` · ${boxelInfo.enum.known.length} known, max index ${boxelInfo.enum.maxIndex}`}
+                  {` · ${boxelInfo.enum.known.length} known${knownNoBodies.length > 0 ? ` (${knownNoBodies.length} position-only)` : ''}, max index ${boxelInfo.enum.maxIndex}`}
                   {scoredKnown.length > 0 ? ` · ${scoredKnown.length} scored here, best ${best}` : ''}
                 </div>
+                {/* ⚬ In Spansh by name with no bodies on file — position only. Targets, listed
+                    whether or not the numbering has gaps. */}
+                {knownNoBodies.length > 0 && (
+                  <div>
+                    <div className="text-xs text-green-300 font-medium mb-1">
+                      {'\u26AC'} {knownNoBodies.length} in Spansh with no body data &mdash; position only, never FSS&rsquo;d, go classify:
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {knownNoBodies.map((k) => (
+                        <span
+                          key={`pk-${k.index}`}
+                          title="Spansh has the position and nothing else — unclassified, not empty"
+                          className="text-[11px] font-mono bg-green-500/10 text-green-200/90 border border-green-500/30 border-dashed rounded px-1.5 py-0.5 select-all"
+                        >
+                          {k.name} {'\u26AC'}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {boxelInfo.enum.gaps.length > 0 ? (() => {
                   // Classify each gap by its predicted id64:
                   //   visited      — locally known (scoutedSystems / journalExplorationCache)
                   //   mapped       — Spansh has a system under another canonical name (NOT a target)
                   //   unclassified — no Spansh data (or no id64 model, or still resolving) = the real find
                   const visitedKeys = new Set<string>([
-                    ...Object.keys(scoutedSystems),
+                    // A record with no body data on file is not a visit — it stays a target.
+                    ...Object.entries(scoutedSystems).filter(([, v]) => scanCompleteness(v).hasBodyData).map(([k]) => k),
                     ...Object.keys(journalExplorationCache),
                   ]);
                   const unclassified: typeof boxelInfo.enum.gaps = [];
@@ -1771,7 +1916,7 @@ export function ScoutingPage() {
                     </div>
                   );
                 })() : (
-                  <div className="text-xs text-green-400">No gaps below the max index &mdash; this boxel is fully mapped in Spansh.</div>
+                  <div className="text-xs text-green-400">No gaps below the max index{knownNoBodies.length > 0 ? <> &mdash; but {knownNoBodies.length} known {knownNoBodies.length === 1 ? 'entry has' : 'entries have'} no body data (listed above).</> : <> &mdash; this boxel is fully mapped in Spansh.</>}</div>
                 )}
               </div>
             );
@@ -1827,6 +1972,9 @@ export function ScoutingPage() {
               {systemsNoBodies.length > 0 && (
                 <span className="opacity-60"> + {systemsNoBodies.length} with no data</span>
               )}
+              {unclassifiedCount > 0 && (
+                <span className="text-green-300/80" title="No body data on file, or a 0 with no scan total — not duds, unscanned"> {'\u00B7'} {unclassifiedCount} unclassified</span>
+              )}
               {totalCount > 0 && filteredSystems.length < systems.length && (
                 <span className="ml-2 text-xs opacity-70">
                   ({systems.length - filteredSystems.length} hidden by filters)
@@ -1853,6 +2001,16 @@ export function ScoutingPage() {
                   className="accent-amber-500"
                 />
                 {'⚠'} Partial only
+              </label>
+              {/* Filter: unclassified — no body data on file, or a 0 with no scan total */}
+              <label className="flex items-center gap-1.5 text-xs text-green-300 cursor-pointer select-none" title="Systems with no body data on file, or a 0 score with no scan total — the ones to go FSS">
+                <input
+                  type="checkbox"
+                  checked={unclassifiedOnly}
+                  onChange={(e) => setUnclassifiedOnly(e.target.checked)}
+                  className="accent-green-500"
+                />
+                {'\u26AC'} Unclassified
               </label>
               {/* Filter: geo-signal systems (surface-mining venues) */}
               <label className="flex items-center gap-1.5 text-xs text-orange-300 cursor-pointer select-none" title="Only systems with geological signals (needs v1.31+ score or this run's bodies)">
@@ -1932,7 +2090,7 @@ export function ScoutingPage() {
               {scoutAllProgress ? (
                 <>
                   <span className="text-xs text-muted-foreground">
-                    Scouting {scoutAllProgress.done}/{scoutAllProgress.total}...
+                    {scoutAllProgress.label ?? 'Scouting'} {scoutAllProgress.done}/{scoutAllProgress.total}...
                   </span>
                   <button
                     onClick={stopScoutAll}
@@ -1942,17 +2100,29 @@ export function ScoutingPage() {
                   </button>
                 </>
               ) : (
+                <>
+                {staleCount > 0 && (
+                  <button
+                    onClick={rescoreStale}
+                    className="px-3 py-1 bg-amber-500/15 text-amber-300 rounded text-xs hover:bg-amber-500/25 transition-colors"
+                    title="Re-fetch only the scouted systems a fetch can teach something about: Spansh holds more bodies than the record saw, the record still has no scan total, or an epic flag predates the current rules — one Spansh fetch each, abortable; refreshed systems drop out of the set"
+                  >
+                    {`Rescore stale (${staleCount})`}
+                  </button>
+                )}
                 <button
                   onClick={scoutAll}
-                  disabled={filteredScoutedCount === filteredTotal}
+                  disabled={scoutableCount === 0}
                   className="px-3 py-1 bg-secondary/20 text-secondary rounded text-xs hover:bg-secondary/30 transition-colors disabled:opacity-50"
+                  title="Score the systems not yet scouted; an unclassified row is rechecked only when Spansh shows bodies for it now"
                 >
-                  {filteredScoutedCount === filteredTotal
-                    ? `All ${filteredScoutedCount} scouted`
+                  {scoutableCount === 0
+                    ? (filteredScoutedCount === filteredTotal ? `All ${filteredScoutedCount} scouted` : 'Nothing new to scout')
                     : filteredScoutedCount > 0
-                      ? `Scout remaining (${filteredTotal - filteredScoutedCount})`
-                      : `Scout All (${filteredTotal})`}
+                      ? `Scout remaining (${scoutableCount})`
+                      : `Scout All (${scoutableCount})`}
                 </button>
+                </>
               )}
             </div>
           </div>
@@ -2101,9 +2271,11 @@ export function ScoutingPage() {
                       </button>
                     )}
 
-                    {/* Score */}
+                    {/* Score — a record with no body data shows ⚬, never a 0 */}
                     <div className="w-12 text-right shrink-0">
-                      {sys.scouted ? (
+                      {sys.noData ? (
+                        <span className="text-lg font-bold text-green-300/80" title="No body data on file — unclassified, not empty">{'\u26AC'}</span>
+                      ) : sys.scouted ? (
                         <span className={`text-lg font-bold ${scoreColor(sys.score!.total)}`}>
                           {sys.score!.total}
                         </span>
@@ -2193,12 +2365,27 @@ export function ScoutingPage() {
                         <span className="text-red-400">{sys.error}</span>
                       ) : (() => {
                         const sd = scoutedSystems[sys.search.id64];
-                        const bodyCount = sys.search.body_count || sd?.journalBodyCount || 0;
-                        const isHonkOnly = sd?.fromJournal && sd.journalBodyCount && (sd.journalScannedCount || 0) === 0;
+                        const sc = sd ? scanCompleteness(sd) : null;
+                        const honk = sys.search.body_count || sd?.journalBodyCount || 0;
+                        // What the score saw, on the row itself: "2 of 28" is a partial, "12 on file,
+                        // scan total unknown" is provisional, and no body data at all is unclassified.
+                        let bodyText: string;
+                        let tone = 'opacity-50';
+                        if (sys.noData) {
+                          bodyText = `no body data on file \u2014 unclassified${sc && sc.known ? ` \u00B7 ${sc.total} by honk, none scanned` : honk ? ` \u00B7 ${honk} by honk, none scanned` : ''}`;
+                          tone = 'text-green-300/80';
+                          const nowHas = countScanRecords(sys.search.bodies);
+                          if (nowHas > 0) bodyText += ` \u00B7 Spansh holds ${nowHas} ${nowHas === 1 ? 'body' : 'bodies'} now \u2014 Scout`;
+                        } else if (sc && sc.hasBodyData) {
+                          if (sc.isPartial) { bodyText = `${sc.records} of ${sc.total} bodies`; tone = 'text-amber-300/80'; }
+                          else if (!sc.known) { bodyText = `${sc.records} on file, scan total unknown`; tone = (sys.score?.total ?? 0) === 0 ? 'text-amber-300/80' : 'opacity-50'; }
+                          else bodyText = `${sc.total} bodies`;
+                        } else {
+                          bodyText = honk ? `${honk} bodies` : 'no data';
+                        }
                         return (
-                          <span className="opacity-50">
-                            {bodyCount ? `${bodyCount} bodies` : 'no data'}
-                            {isHonkOnly && ' \u00B7 needs FSS scan'}
+                          <span className={tone}>
+                            {bodyText}
                             {sys.search.population > 0 &&
                               ` \u00B7 pop ${(sys.search.population / 1e6).toFixed(1)}M`}
                           </span>
@@ -2347,9 +2534,14 @@ export function ScoutingPage() {
                         const sd = scoutedSystems[sys.search.id64];
                         if (!sd) return null;
                         const source = sd.fromJournal ? 'Journal' : sd.spanshBodyCount ? 'Spansh' : 'Unknown';
-                        const bodyInfo = sd.fromJournal
-                          ? `${sd.journalScannedCount || '?'}/${sd.journalBodyCount || '?'} bodies scanned`
-                          : `${sd.spanshBodyCount || '?'} bodies from Spansh`;
+                        const sc = scanCompleteness(sd);
+                        const bodyInfo = !sc.hasBodyData
+                          ? 'no body data on file'
+                          : sd.fromJournal
+                            ? `${sc.records}/${sc.known ? sc.total : '?'} bodies scanned`
+                            : sc.known
+                              ? `${sc.records} of ${sc.total} bodies from Spansh`
+                              : `${sc.records} bodies from Spansh, scan total unknown`;
                         return (
                           <div className="mt-2 text-xs text-muted-foreground">
                             Source: <span className="text-foreground font-medium">{source}</span> — {bodyInfo}

@@ -27,6 +27,7 @@ const ARDENT_ALIAS = { voidopal: 'opal' };
 
 const cache = new Map(); // key -> { cr, station, system, demand, updatedAt, at }
 let queue = [];
+let coldPriced = 0; // commodities priced for the first time since boot — summarised once per pass (1.60.36)
 let running = false;
 
 // Shared Ardent fetch for everything on the server (this module, the Sell page, the history
@@ -107,6 +108,7 @@ async function drain() {
     }
   } finally {
     running = false;
+    if (coldPriced > 0) { console.log(`[LivePrice] first pass since boot: ${coldPriced} commodities priced from Ardent — changes are logged from here on`); coldPriced = 0; }
   }
 }
 
@@ -138,8 +140,10 @@ async function fetchOne(key) {
       updatedAt: best.updatedAt || '',
       at: Date.now(),
     });
-    if (moved) {
-      const delta = prev && prev.cr ? ` (was ${prev.cr.toLocaleString()})` : '';
+    if (!prev) {
+      coldPriced++; // the first answer after boot is not news — the pass is summarised once when the queue drains
+    } else if (moved) {
+      const delta = prev.cr ? ` (was ${prev.cr.toLocaleString()})` : '';
       console.log(`[LivePrice] ${key}: ${best.sellPrice.toLocaleString()} Cr/t @ ${best.stationName} (${best.systemName})${best.distance != null ? ` ${Math.round(best.distance)} ly` : ''}${delta}`);
     }
   } catch {

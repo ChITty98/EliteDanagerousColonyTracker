@@ -22,10 +22,14 @@ const faqItems: FaqItem[] = [
           orbital cruise onward, and distances are measured on the body&rsquo;s radius.
         </p>
         <p className="mt-2">
-          The reference is your shortest clean run: a ghost line on the slope, ahead or behind in the live
-          figures, and the recommendation for where to begin the glide, what seconds-to-target to hold, and
-          where to hand off to the docking computer. A glide that ends above 5 km counts as broken and
-          stays out of the reference; the corridor is nominal until three clean glides set your own. Runs
+          The reference is your shortest clean run: a ghost line on the slope and ahead or behind in the live
+          figures. The recommended entry is two numbers from the HUD: the range to cross the orbital-cruise
+          line at and the countdown to show there, taken from your own crossings at that site that were on
+          track and at 0:07 or over. A site with fewer than three borrows the ones from other sites on the same
+          body. The overlay shows the target until the line, then how the crossing went. A glide whose flag
+          clears more than 5 km above where
+          glides usually end at that site counts as broken and stays out of the reference (3 km is taken as
+          usual until a site has three glides on file); the corridor is nominal until three clean glides set your own. Runs
           live in <code>approach-runs.jsonl</code> next to the exe.
         </p>
       </>
@@ -1368,6 +1372,58 @@ const faqItems: FaqItem[] = [
 
   {
     category: 'Co-pilot',
+    question: 'Can the co-pilot use my Anthropic API credits, and what are station opinions?',
+    answer: (
+      <>
+        <p>
+          Yes. In Settings, set <strong>Live lines written by</strong> to <strong>Anthropic API</strong>, then
+          create a file called <code>anthropic-key.txt</code> beside the exe with your API key on one line. The
+          server alone reads it — it is never stored in <code>colony-data.json</code>, never sent to other
+          devices and never logged; Settings only shows whether it was found. Each call is priced from the
+          API&rsquo;s own usage figures into <code>copilot-spend.json</code>, and the co-pilot falls back to its
+          canned lines once this month&rsquo;s cap (default $100) is reached.
+        </p>
+        <p className="mt-2">
+          On the API the co-pilot also gives <strong>station opinions</strong>: when docking is granted, the
+          active persona says what it thinks of the place, built only from what the app knows — pads, economy
+          mix, owner and wars, the world under it, your history there, who else is docking right now. Every fact
+          and number in the line is checked against that sheet before it is said; it is remembered, so the next
+          visit builds on it, and a 👎 drops it. Each call sends that moment&rsquo;s prompt to Anthropic (and,
+          when it reads a screenshot, a scaled copy of the shot); nothing else leaves this PC. It never pays
+          twice for the same news: a moment whose facts it already spoke about in the last three hours stays
+          quiet, or takes a free canned line.
+        </p>
+      </>
+    ),
+  },
+
+  {
+    category: 'Co-pilot',
+    question: 'Does the co-pilot look at my screenshots?',
+    answer: (
+      <>
+        <p>
+          On the Anthropic API, yes: every F10 is read once. The shot gets a short factual description and
+          Sights tags, kept on the photo and shown under it in the gallery viewer. A shot of the station
+          services screen also keeps the station&rsquo;s representative &mdash; title, name and greeting &mdash; on
+          that station, shown on its system page, but only when the screen names the station you are docked at.
+        </p>
+        <p className="mt-2">
+          Every line it writes about a shot is spoken &mdash; a paid line is never thrown away &mdash; unless you
+          are in combat. The only text the app changes is your commander name (to &ldquo;Commander&rdquo;), a
+          carrier callsign (to the carrier&rsquo;s name) and a ship called &ldquo;she&rdquo;; the photo notes
+          what was changed. A station screen whose representative it already knows gets a remark on something
+          else, or nothing. Your commander name, credits and other players are never kept. Shots taken on the
+          ground while you are surface mining are deposit records and are not read. A scaled copy of the shot
+          goes to Anthropic; the original stays in Pictures. Turn it off with <strong>Co-pilot looks at your
+          screenshots</strong> in Settings.
+        </p>
+      </>
+    ),
+  },
+
+  {
+    category: 'Co-pilot',
     question: 'Who are Wren, Tycho and K2?',
     answer: (
       <>
@@ -1527,7 +1583,7 @@ const faqItems: FaqItem[] = [
     answer: (
       <>
         <p>
-          Your engineering material inventory, from the journal&rsquo;s Materials snapshot and the pickup events after it (run <strong>Sync All from Journal</strong> once to seed it). Three tabs: <strong>inventory</strong> by category with grade and cap, <strong>trade</strong> with material-trader yields including cross-line trades, and <strong>engineering</strong> with blueprints and how many grades your stock covers. The surface-mining overlay uses the same grades and caps to say how much room you have for what a deposit or a brain-tree grove drops.
+          Your engineering material inventory, from the journal&rsquo;s Materials snapshot and the pickup events after it (run <strong>Sync All from Journal</strong> once to seed it). Four tabs: <strong>inventory</strong> by category with grade and cap, <strong>trade</strong> with material-trader yields including cross-line trades, <strong>engineering</strong> with blueprints and how many grades your stock covers, and <strong>colony bodies</strong>, which lists every body in your colony systems that carries a raw material, with its share of the surface mix from your own scans (Spansh&rsquo;s figure only where you have no scan). The surface-mining overlay uses the same grades and caps to say how much room you have for what a deposit or a brain-tree grove drops.
         </p>
       </>
     ),
@@ -2094,10 +2150,10 @@ const faqItems: FaqItem[] = [
     answer: (
       <>
         <p>
-          Canned lines only, so nothing arrives a minute late: an arrival line keyed by the driving band you rated the signal (never the number), the hold filling with the ship near or far (it never promises to move her), the ship going up on her own, a nudge after a while on site for the most valuable commodity logged there, and stepping out on foot keyed by the body&rsquo;s scanned temperature. It is silent while combat music plays.
+          Canned lines only, so nothing arrives a minute late: an arrival line keyed by the driving band you rated the signal (never the number), the hold filling with the ship near or far (it never promises to move it), the ship going up on its own, a nudge after a while on site for the most valuable commodity logged there, and stepping out on foot keyed by the body&rsquo;s scanned temperature. It is silent while combat music plays.
         </p>
         <p className="mt-2">
-          There is no journal event for a recall, but the game tells on itself: the moment the ship&rsquo;s AI takes over it re-emits <code>SAASignalsFound</code> for every mapped body in range, while you are sitting in an SRV or standing on the surface where the scanner cannot fire. A Liftoff inside five seconds of that burst means she is leaving; nothing means she is coming, about thirty seconds out. That is the &ldquo;on my way&rdquo; line.
+          There is no journal event for a recall, but the game tells on itself: the moment the ship&rsquo;s AI takes over it re-emits <code>SAASignalsFound</code> for every mapped body in range, while you are sitting in an SRV or standing on the surface where the scanner cannot fire. A Liftoff inside five seconds of that burst means the ship is leaving; nothing means it is coming, about thirty seconds out. That is the &ldquo;on my way&rdquo; line.
         </p>
       </>
     ),

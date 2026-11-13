@@ -628,7 +628,7 @@ function SignalMapFor(props: {
       departM={snap?.ship?.departM ?? 2000}
       rigM={snap?.rigDestructM ?? 4500}
       // 'you' is a SURFACE position: in the SRV or on foot. In the ship it is the ship — the triangle
-      // already says where she is, and a ship on approach or in orbit would zoom the whole site away.
+      // already says where it is, and a ship on approach or in orbit would zoom the whole site away.
       live={snap?.body === b.body && (snap.inSrv || snap.onFoot) && snap.lat != null && snap.lon != null ? { lat: snap.lat, lon: snap.lon, heading: snap.heading ?? null } : null}
       recall={s2.recall ?? null}
       target={snap?.target ?? null}

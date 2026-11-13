@@ -45,6 +45,9 @@ export function parseJournalLines(lines) {
   // Ship
   const loadoutEvents = [];
   const shipyardSwapEvents = [];
+  const storedShipsEvents = [];     // the fleet list, read at a shipyard (1.60.33)
+  const launchFighterEvents = [];
+  const launchVesselEvents = [];
   // Market
   const marketBuyEvents = [];
   const marketSellEvents = [];
@@ -58,6 +61,7 @@ export function parseJournalLines(lines) {
   const liftoffEvents = [];
   // ApproachBody — the only body context for pre-2019 Touchdowns (no Body field back then)
   const approachBodyEvents = [];
+  const approachSettlementEvents = []; // names a settlement/port by MarketID — a rename shows here without a dock (1.60.39)
   // Exobiology (brain trees et al.)
   const scanOrganicEvents = [];
   // DSS body signals — carries the GENUS list for bio bodies (also fires for rings)
@@ -132,6 +136,9 @@ export function parseJournalLines(lines) {
       case 'SAAScanComplete': saaScanCompleteEvents.push(event); break;
       case 'Loadout': loadoutEvents.push(event); break;
       case 'ShipyardSwap': shipyardSwapEvents.push(event); break;
+      case 'StoredShips': storedShipsEvents.push(event); break;
+      case 'LaunchFighter': launchFighterEvents.push(event); break;
+      case 'LaunchVessel': launchVesselEvents.push(event); break;
       case 'SupercruiseEntry': supercruiseEntryEvents.push(event); break;
       case 'SupercruiseDestinationDrop': supercruiseDestDropEvents.push(event); break;
       case 'CarrierJump': carrierJumpEvents.push(event); break;
@@ -147,6 +154,7 @@ export function parseJournalLines(lines) {
       case 'Embark': embarkEvents.push(event); break;
       case 'Touchdown': touchdownEvents.push(event); break;
       case 'ApproachBody': approachBodyEvents.push(event); break;
+      case 'ApproachSettlement': approachSettlementEvents.push(event); break;
       case 'ScanOrganic': scanOrganicEvents.push(event); break;
       case 'SAASignalsFound': saaSignalsFoundEvents.push(event); break;
       case 'Screenshot': screenshotEvents.push(event); break;
@@ -209,6 +217,9 @@ export function parseJournalLines(lines) {
     saaScanCompleteEvents,
     loadoutEvents,
     shipyardSwapEvents,
+    storedShipsEvents,
+    launchFighterEvents,
+    launchVesselEvents,
     marketBuyEvents,
     marketSellEvents,
     launchSrvEvents,
@@ -218,6 +229,7 @@ export function parseJournalLines(lines) {
     touchdownEvents,
     liftoffEvents,
     approachBodyEvents,
+    approachSettlementEvents,
     scanOrganicEvents,
     saaSignalsFoundEvents,
     screenshotEvents,

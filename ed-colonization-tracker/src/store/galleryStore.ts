@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage, type StateStorage } from 'zustand/middleware';
+import { sseSubscribe } from '../services/sseBus';
 
 export interface GalleryImage {
   id: string;
@@ -13,6 +14,10 @@ export interface GalleryImage {
    * Representative thumbnails skip these, so a photo of a rock face is never a system's portrait.
    */
   utility?: boolean;
+  /** What the co-pilot saw in the shot (1.62.0): the kind, a factual description and Sights tags. */
+  vision?: { kind: string; description: string; tags: string[]; at: string; model?: string; silent?: string; fixed?: string[] }; // silent: why it said nothing; fixed: what the app changed in the line (1.62.3)
+  /** The co-pilot's in-character remark on this shot, when it made one. */
+  copilotLine?: { line: string; persona: string; at: string };
 }
 
 // Key format: "system:SystemName" or "system:SystemName:body:BodyName" or "system:SystemName:station:StationName"
@@ -189,9 +194,39 @@ export const useGalleryStore = create<GalleryState>()(
       name: 'ed-colonization-gallery',
       version: 1,
       storage: createJSONStorage(() => galleryStorage),
+      // Once this tab has its copy, follow the server's own additions (below).
+      onRehydrateStorage: () => () => { watchServerGallery(); },
     }
   )
 );
+
+// The server adds to the gallery on its own — F10 adoptions, the co-pilot's reads, BMP→JPEG — and this tab's
+// copy must follow (1.62.3). Every edit here is saved as the whole map; the server now merges that, but a copy
+// that is current is still the right thing to send. One refetch per burst of server events.
+let watchingServer = false;
+function watchServerGallery(): void {
+  if (watchingServer) return;
+  watchingServer = true;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const refetch = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(async () => {
+      timer = null;
+      try {
+        const res = await fetch(apiUrl('/api/gallery'));
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && typeof data === 'object') useGalleryStore.setState({ images: data });
+      } catch { /* the next event will try again */ }
+    }, 1500);
+  };
+  try {
+    sseSubscribe('gallery_updated', refetch);
+    sseSubscribe('screenshot_saved', refetch);
+  } catch {
+    watchingServer = false;
+  }
+}
 
 /**
  * Resize an image file to a JPEG data URL with max dimension.

@@ -1,0 +1,3458 @@
+{
+ "note": "Real Loadout events from the commander journals (trimmed to the modules the ship stable reads); StoredShips of 2026-10-23T05:49:38Z; craft launches since 2026-09. Ship names, the carrier callsign, the carrier market ids and every credit figure are placeholders, not the commander's own.",
+ "loadouts": [
+  {
+   "timestamp": "2021-05-05T02:56:24Z",
+   "Ship": "anaconda",
+   "ShipID": 16,
+   "ShipName": "Fixture Ship 01",
+   "UnladenMass": 666.81488,
+   "CargoCapacity": 406,
+   "MaxJumpRange": 32.5242,
+   "FuelCapacity": {
+    "Main": 32,
+    "Reserve": 1.07
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size7_class2",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "Engine_Tuned",
+      "Level": 3,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "Integrity",
+        "Value": 96.599998,
+        "OriginalValue": 105
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 7.814417,
+        "OriginalValue": 6.84
+       },
+       {
+        "Label": "EngineOptimalMass",
+        "Value": 1510.677124,
+        "OriginalValue": 1620
+       },
+       {
+        "Label": "EngineOptPerformance",
+        "Value": 113.456703,
+        "OriginalValue": 100
+       },
+       {
+        "Label": "EngineHeatRate",
+        "Value": 0.847704,
+        "OriginalValue": 1.3
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_size6_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "FSD_FastBoot",
+      "Level": 2,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "Mass",
+        "Value": 37.186085,
+        "OriginalValue": 40
+       },
+       {
+        "Label": "Integrity",
+        "Value": 123.323662,
+        "OriginalValue": 141
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 0.812592,
+        "OriginalValue": 0.75
+       },
+       {
+        "Label": "BootTime",
+        "Value": 6.975793,
+        "OriginalValue": 10
+       },
+       {
+        "Label": "FSDHeatRate",
+        "Value": 40.380791,
+        "OriginalValue": 37
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size5_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size7",
+     "Item": "int_cargorack_size7_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size6",
+     "Item": "int_shieldgenerator_size6_class2",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot04_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot05_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot06_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot07_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot08_Size4",
+     "Item": "int_cargorack_size4_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot09_Size4",
+     "Item": "int_cargorack_size4_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot10_Size4",
+     "Item": "int_cargorack_size4_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot13_Size2",
+     "Item": "int_cargorack_size2_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot14_Size1",
+     "Item": "int_cargorack_size1_class1",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2021-05-05T02:19:08Z",
+   "Ship": "anaconda",
+   "ShipID": 6,
+   "ShipName": "Fixture Ship 02",
+   "UnladenMass": 1012.703613,
+   "CargoCapacity": 16,
+   "MaxJumpRange": 23.904158,
+   "FuelCapacity": {
+    "Main": 32,
+    "Reserve": 1.07
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "TinyHardpoint2",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint6",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint7",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size7_class5",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_size6_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "FSD_LongRange",
+      "Level": 1,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "Mass",
+        "Value": 40.942276,
+        "OriginalValue": 40
+       },
+       {
+        "Label": "Integrity",
+        "Value": 136.178787,
+        "OriginalValue": 141
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 0.772199,
+        "OriginalValue": 0.75
+       },
+       {
+        "Label": "FSDOptimalMass",
+        "Value": 1969.714111,
+        "OriginalValue": 1800
+       },
+       {
+        "Label": "FSDHeatRate",
+        "Value": 40.165497,
+        "OriginalValue": 37
+       },
+       {
+        "Label": "MaxFuelPerJump",
+        "Value": 8.342216,
+        "OriginalValue": 8
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size5_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size7",
+     "Item": "int_shieldgenerator_size7_class5",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size6",
+     "Item": "int_fighterbay_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot08_Size4",
+     "Item": "int_cargorack_size4_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot13_Size2",
+     "Item": "int_buggybay_size2_class2",
+     "On": false
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2018-12-15T21:10:01Z",
+   "Ship": "FerDeLance",
+   "ShipID": 4,
+   "ShipName": "Fixture Ship 03",
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "TinyHardpoint4",
+     "Item": "Hpt_ShieldBooster_Size0_Class1",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint5",
+     "Item": "Hpt_ShieldBooster_Size0_Class5",
+     "On": true
+    },
+    {
+     "Slot": "MainEngines",
+     "Item": "Int_Engine_Size5_Class5",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "Int_Hyperdrive_Size4_Class5",
+     "On": true
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "Int_FuelTank_Size3_Class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size5",
+     "Item": "Int_ShieldGenerator_Size5_Class5",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "Int_PlanetApproachSuite",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2018-12-20T03:51:05Z",
+   "Ship": "Empire_Fighter",
+   "ShipID": 15,
+   "ShipName": "",
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": []
+  },
+  {
+   "timestamp": "2019-12-18T01:16:45Z",
+   "Ship": "anaconda",
+   "ShipID": 18,
+   "ShipName": " ",
+   "UnladenMass": 26.799999,
+   "CargoCapacity": 0,
+   "MaxJumpRange": 0,
+   "FuelCapacity": {
+    "Main": 0,
+    "Reserve": 0.24
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size7_class5",
+     "On": true
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size5_class3",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2024-11-03T23:38:20Z",
+   "Ship": "eagle",
+   "ShipID": 19,
+   "ShipName": "",
+   "UnladenMass": 76.300003,
+   "CargoCapacity": 2,
+   "MaxJumpRange": 9.153705,
+   "FuelCapacity": {
+    "Main": 4,
+    "Reserve": 0.34
+   },
+   "HullValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size3_class1",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_size3_class1",
+     "On": true
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size2_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size3",
+     "Item": "int_shieldgenerator_size3_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size2",
+     "Item": "int_cargorack_size1_class1",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2024-12-09T07:45:12Z",
+   "Ship": "python",
+   "ShipID": 2,
+   "ShipName": "Fixture Ship 04",
+   "UnladenMass": 642.299988,
+   "CargoCapacity": 228,
+   "MaxJumpRange": 20.934536,
+   "FuelCapacity": {
+    "Main": 32,
+    "Reserve": 0.83
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "TinyHardpoint1",
+     "Item": "hpt_shieldbooster_size0_class4",
+     "On": true
+    },
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size6_class4",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size5_class5",
+     "On": true
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size5_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size6",
+     "Item": "int_shieldgenerator_size6_class4",
+     "On": true
+    },
+    {
+     "Slot": "Slot04_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot05_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot06_Size4",
+     "Item": "int_cargorack_size4_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot07_Size3",
+     "Item": "int_cargorack_size3_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot08_Size3",
+     "Item": "int_cargorack_size3_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot09_Size2",
+     "Item": "int_cargorack_size2_class1",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2025-09-02T04:28:51Z",
+   "Ship": "krait_mkii",
+   "ShipID": 22,
+   "ShipName": "",
+   "UnladenMass": 593.799988,
+   "CargoCapacity": 160,
+   "MaxJumpRange": 22.629568,
+   "FuelCapacity": {
+    "Main": 32,
+    "Reserve": 0.63
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "TinyHardpoint3",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size6_class5",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size5_class5",
+     "On": true
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size5_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot05_Size4",
+     "Item": "int_shieldgenerator_size4_class5",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2024-12-30T00:12:23Z",
+   "Ship": "anaconda",
+   "ShipID": 23,
+   "ShipName": "Fixture Ship 05",
+   "UnladenMass": 940.900024,
+   "CargoCapacity": 196,
+   "MaxJumpRange": 49.665348,
+   "FuelCapacity": {
+    "Main": 32,
+    "Reserve": 1.07
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "TinyHardpoint2",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint3",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": false
+    },
+    {
+     "Slot": "TinyHardpoint4",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": false
+    },
+    {
+     "Slot": "TinyHardpoint7",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": false
+    },
+    {
+     "Slot": "TinyHardpoint8",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": false
+    },
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size7_class5",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size6_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "FSD_LongRange",
+      "Level": 5,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "Mass",
+        "Value": 52,
+        "OriginalValue": 40
+       },
+       {
+        "Label": "Integrity",
+        "Value": 119.850006,
+        "OriginalValue": 141
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 0.8625,
+        "OriginalValue": 0.75
+       },
+       {
+        "Label": "FSDOptimalMass",
+        "Value": 3100,
+        "OriginalValue": 2000
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size5_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size7",
+     "Item": "int_cargorack_size7_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size6",
+     "Item": "int_shieldgenerator_size6_class5",
+     "On": true
+    },
+    {
+     "Slot": "Slot04_Size6",
+     "Item": "int_guardianfsdbooster_size5",
+     "On": true
+    },
+    {
+     "Slot": "Slot13_Size2",
+     "Item": "int_cargorack_size2_class1",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2025-08-30T05:39:15Z",
+   "Ship": "federation_corvette",
+   "ShipID": 46,
+   "ShipName": "",
+   "UnladenMass": 1931.199951,
+   "CargoCapacity": 64,
+   "MaxJumpRange": 12.366254,
+   "FuelCapacity": {
+    "Main": 32,
+    "Reserve": 1.13
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "TinyHardpoint5",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint6",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint7",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint8",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size7_class5",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size6_class5",
+     "On": true
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size5_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size7",
+     "Item": "int_shieldgenerator_size7_class3_fast",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size7",
+     "Item": "int_fighterbay_size7_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot06_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot07_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot09_Size4",
+     "Item": "int_buggybay_size4_class2",
+     "On": false
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2024-11-18T00:23:15Z",
+   "Ship": "empire_courier",
+   "ShipID": 3,
+   "ShipName": "Fixture Ship 06",
+   "UnladenMass": 77.300003,
+   "CargoCapacity": 20,
+   "MaxJumpRange": 21.42297,
+   "FuelCapacity": {
+    "Main": 8,
+    "Reserve": 0.41
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size3_class5",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size3_class5",
+     "On": true
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size3_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size3",
+     "Item": "int_cargorack_size3_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size3",
+     "Item": "int_cargorack_size3_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size2",
+     "Item": "int_shieldgenerator_size2_class5",
+     "On": true
+    },
+    {
+     "Slot": "Slot05_Size2",
+     "Item": "int_buggybay_size2_class2",
+     "On": true
+    },
+    {
+     "Slot": "Slot06_Size1",
+     "Item": "int_cargorack_size1_class1",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    },
+    {
+     "Slot": "Slot07_Size1",
+     "Item": "int_cargorack_size1_class1",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2024-11-25T03:36:02Z",
+   "Ship": "viper_mkiv",
+   "ShipID": 24,
+   "ShipName": "",
+   "UnladenMass": 245.300003,
+   "CargoCapacity": 18,
+   "MaxJumpRange": 25.791973,
+   "FuelCapacity": {
+    "Main": 16,
+    "Reserve": 0.46
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "TinyHardpoint2",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size4_class3",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size4_class5",
+     "On": true
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size4_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size4",
+     "Item": "int_cargorack_size3_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size4",
+     "Item": "int_cargorack_size3_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size3",
+     "Item": "int_shieldgenerator_size3_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot04_Size2",
+     "Item": "int_cargorack_size1_class1",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2025-08-20T04:48:43Z",
+   "Ship": "cutter",
+   "ShipID": 25,
+   "ShipName": "",
+   "UnladenMass": 1482.800049,
+   "CargoCapacity": 768,
+   "MaxJumpRange": 38.429935,
+   "FuelCapacity": {
+    "Main": 64,
+    "Reserve": 1.16
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "TinyHardpoint1",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint2",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint3",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint4",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint7",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint8",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size8_class2",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size7_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "FSD_LongRange",
+      "Level": 5,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "Mass",
+        "Value": 104,
+        "OriginalValue": 80
+       },
+       {
+        "Label": "Integrity",
+        "Value": 139.400009,
+        "OriginalValue": 164
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 1.035,
+        "OriginalValue": 0.9
+       },
+       {
+        "Label": "FSDOptimalMass",
+        "Value": 4650,
+        "OriginalValue": 3000
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size6_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size8",
+     "Item": "int_cargorack_size8_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size8",
+     "Item": "int_cargorack_size8_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot04_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot05_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot06_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot07_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2026-07-20T18:17:21Z",
+   "Ship": "mandalay",
+   "ShipID": 26,
+   "ShipName": "",
+   "UnladenMass": 308.276001,
+   "CargoCapacity": 34,
+   "MaxJumpRange": 80.204987,
+   "FuelCapacity": {
+    "Main": 32,
+    "Reserve": 0.5
+   },
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size5_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "Engine_Dirty",
+      "Level": 1,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "Integrity",
+        "Value": 102.82,
+        "OriginalValue": 106
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 6.364799,
+        "OriginalValue": 6.12
+       },
+       {
+        "Label": "EngineOptimalMass",
+        "Value": 819,
+        "OriginalValue": 840
+       },
+       {
+        "Label": "EngineOptPerformance",
+        "Value": 112,
+        "OriginalValue": 100
+       },
+       {
+        "Label": "EngineHeatRate",
+        "Value": 1.56,
+        "OriginalValue": 1.3
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size5_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "FSD_LongRange",
+      "Level": 5,
+      "ExperimentalEffect_Localised": "Mass Manager",
+      "Modifiers": [
+       {
+        "Label": "Mass",
+        "Value": 26,
+        "OriginalValue": 20
+       },
+       {
+        "Label": "Integrity",
+        "Value": 93.840004,
+        "OriginalValue": 120
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 0.69,
+        "OriginalValue": 0.6
+       },
+       {
+        "Label": "FSDOptimalMass",
+        "Value": 1894.099976,
+        "OriginalValue": 1175
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size5_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size5",
+     "Item": "int_guardianfsdbooster_size5",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size4",
+     "Item": "int_cargorack_size4_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot04_Size4",
+     "Item": "int_shieldgenerator_size4_class2",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "ShieldGenerator_Optimised",
+      "Level": 3,
+      "ExperimentalEffect_Localised": "Stripped Down",
+      "Modifiers": [
+       {
+        "Label": "Mass",
+        "Value": 2.376,
+        "OriginalValue": 4
+       },
+       {
+        "Label": "Integrity",
+        "Value": 40.800003,
+        "OriginalValue": 48
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 1.232,
+        "OriginalValue": 1.76
+       },
+       {
+        "Label": "ShieldGenOptimalMass",
+        "Value": 273.600006,
+        "OriginalValue": 285
+       },
+       {
+        "Label": "ShieldGenStrength",
+        "Value": 98.099998,
+        "OriginalValue": 90
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "Slot05_Size3",
+     "Item": "int_cargorack_size3_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot06_Size3",
+     "Item": "int_cargorack_size3_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot07_Size2",
+     "Item": "int_buggybay_size2_class2",
+     "On": true
+    },
+    {
+     "Slot": "Slot08_Size1",
+     "Item": "int_cargorack_size1_class1",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2026-10-25T21:11:10Z",
+   "Ship": "type8",
+   "ShipID": 28,
+   "ShipName": " ",
+   "UnladenMass": 463.299988,
+   "CargoCapacity": 384,
+   "MaxJumpRange": 44.846157,
+   "FuelCapacity": {
+    "Main": 32,
+    "Reserve": 0.52
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size5_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "Engine_Dirty",
+      "Level": 5,
+      "ExperimentalEffect_Localised": "Drag Drives",
+      "Modifiers": [
+       {
+        "Label": "Integrity",
+        "Value": 90.100006,
+        "OriginalValue": 106
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 6.8544,
+        "OriginalValue": 6.12
+       },
+       {
+        "Label": "EngineOptimalMass",
+        "Value": 735,
+        "OriginalValue": 840
+       },
+       {
+        "Label": "EngineOptPerformance",
+        "Value": 145.599991,
+        "OriginalValue": 100
+       },
+       {
+        "Label": "EngineHeatRate",
+        "Value": 2.288,
+        "OriginalValue": 1.3
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size5_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "FSD_LongRange",
+      "Level": 5,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "Mass",
+        "Value": 26,
+        "OriginalValue": 20
+       },
+       {
+        "Label": "Integrity",
+        "Value": 102,
+        "OriginalValue": 120
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 0.69,
+        "OriginalValue": 0.6
+       },
+       {
+        "Label": "FSDOptimalMass",
+        "Value": 1821.25,
+        "OriginalValue": 1175
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size5_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size7",
+     "Item": "int_cargorack_size7_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot04_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot05_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot06_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot07_Size4",
+     "Item": "int_shieldgenerator_size4_class2",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "ShieldGenerator_Reinforced",
+      "Level": 2,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "ShieldGenStrength",
+        "Value": 108.000008,
+        "OriginalValue": 90
+       },
+       {
+        "Label": "BrokenRegenRate",
+        "Value": 2.277,
+        "OriginalValue": 2.53
+       },
+       {
+        "Label": "EnergyPerRegen",
+        "Value": 0.636,
+        "OriginalValue": 0.6
+       },
+       {
+        "Label": "KineticResistance",
+        "Value": 44.5,
+        "OriginalValue": 39.999996
+       },
+       {
+        "Label": "ThermicResistance",
+        "Value": -11.000002,
+        "OriginalValue": -20.000004
+       },
+       {
+        "Label": "ExplosiveResistance",
+        "Value": 53.750004,
+        "OriginalValue": 50
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2025-09-02T04:08:04Z",
+   "Ship": "corsair",
+   "ShipID": 30,
+   "ShipName": "",
+   "UnladenMass": 462.299988,
+   "CargoCapacity": 224,
+   "MaxJumpRange": 28.994892,
+   "FuelCapacity": {
+    "Main": 32,
+    "Reserve": 0.41
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size7_class5",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size5_class5",
+     "On": true
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size5_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot04_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot05_Size5",
+     "Item": "int_shieldgenerator_size4_class5",
+     "On": true
+    },
+    {
+     "Slot": "Slot08_Size3",
+     "Item": "int_buggybay_size2_class2",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2026-10-23T04:09:57Z",
+   "Ship": "panthermkii",
+   "ShipID": 31,
+   "ShipName": "",
+   "UnladenMass": 1525.300049,
+   "CargoCapacity": 1304,
+   "MaxJumpRange": 38.862995,
+   "FuelCapacity": {
+    "Main": 128,
+    "Reserve": 1.11
+   },
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size8_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "Engine_Dirty",
+      "Level": 5,
+      "ExperimentalEffect_Localised": "Drag Drives",
+      "Modifiers": [
+       {
+        "Label": "Integrity",
+        "Value": 140.25,
+        "OriginalValue": 165
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 12.096001,
+        "OriginalValue": 10.8
+       },
+       {
+        "Label": "EngineOptimalMass",
+        "Value": 2940,
+        "OriginalValue": 3360
+       },
+       {
+        "Label": "EngineOptPerformance",
+        "Value": 145.599991,
+        "OriginalValue": 100
+       },
+       {
+        "Label": "EngineHeatRate",
+        "Value": 2.288,
+        "OriginalValue": 1.3
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size7_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "FSD_LongRange",
+      "Level": 5,
+      "ExperimentalEffect_Localised": "Mass Manager",
+      "Modifiers": [
+       {
+        "Label": "Mass",
+        "Value": 104,
+        "OriginalValue": 80
+       },
+       {
+        "Label": "Integrity",
+        "Value": 128.248016,
+        "OriginalValue": 164
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 1.035,
+        "OriginalValue": 0.9
+       },
+       {
+        "Label": "FSDOptimalMass",
+        "Value": 4836,
+        "OriginalValue": 3000
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size7_class3",
+     "On": true
+    },
+    {
+     "Slot": "Cargo01",
+     "Item": "int_largecargorack_size8_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size8",
+     "Item": "int_cargorack_size8_class1",
+     "On": true
+    },
+    {
+     "Slot": "Cargo02",
+     "Item": "int_largecargorack_size7_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size7",
+     "Item": "int_cargorack_size7_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "CargoRack_IncreasedCapacity",
+      "Level": 5,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "CargoCapacity",
+        "Value": 86,
+        "OriginalValue": 64
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "Slot04_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "CargoRack_IncreasedCapacity",
+      "Level": 5,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "CargoCapacity",
+        "Value": 86,
+        "OriginalValue": 64
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "Slot05_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "CargoRack_IncreasedCapacity",
+      "Level": 5,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "CargoCapacity",
+        "Value": 86,
+        "OriginalValue": 64
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "Slot06_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "CargoRack_IncreasedCapacity",
+      "Level": 5,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "CargoCapacity",
+        "Value": 43,
+        "OriginalValue": 32
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "Slot07_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "CargoRack_IncreasedCapacity",
+      "Level": 5,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "CargoCapacity",
+        "Value": 43,
+        "OriginalValue": 32
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    },
+    {
+     "Slot": "EngineColour",
+     "Item": "enginecustomisation_blue",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2025-07-28T07:55:51Z",
+   "Ship": "sidewinder",
+   "ShipID": 33,
+   "ShipName": "",
+   "UnladenMass": 42.900002,
+   "CargoCapacity": 4,
+   "MaxJumpRange": 8.149507,
+   "FuelCapacity": {
+    "Main": 2,
+    "Reserve": 0.3
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size2_class1",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_size2_class1",
+     "On": true
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size1_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size2",
+     "Item": "int_shieldgenerator_size2_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size2",
+     "Item": "int_cargorack_size2_class1",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2025-08-30T02:28:02Z",
+   "Ship": "mandalay",
+   "ShipID": 9,
+   "ShipName": " ",
+   "UnladenMass": 364,
+   "CargoCapacity": 40,
+   "MaxJumpRange": 22.263685,
+   "FuelCapacity": {
+    "Main": 32,
+    "Reserve": 0.5
+   },
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size5_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size6",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size5",
+     "Item": "int_shieldgenerator_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size4",
+     "Item": "int_cargorack_size3_class1",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2026-08-25T16:55:01Z",
+   "Ship": "corsair",
+   "ShipID": 34,
+   "ShipName": "Fixture Ship 07",
+   "UnladenMass": 462.299988,
+   "CargoCapacity": 288,
+   "MaxJumpRange": 44.942081,
+   "FuelCapacity": {
+    "Main": 32,
+    "Reserve": 0.41
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size7_class5",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size5_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "FSD_LongRange",
+      "Level": 5,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "Mass",
+        "Value": 26,
+        "OriginalValue": 20
+       },
+       {
+        "Label": "Integrity",
+        "Value": 102,
+        "OriginalValue": 120
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 0.69,
+        "OriginalValue": 0.6
+       },
+       {
+        "Label": "FSDOptimalMass",
+        "Value": 1821.25,
+        "OriginalValue": 1175
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size5_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot04_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot05_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot06_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot07_Size4",
+     "Item": "int_shieldgenerator_size4_class5",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2025-09-01T01:58:23Z",
+   "Ship": "mandalay",
+   "ShipID": 51,
+   "ShipName": "",
+   "UnladenMass": 364,
+   "CargoCapacity": 40,
+   "MaxJumpRange": 22.263685,
+   "FuelCapacity": {
+    "Main": 32,
+    "Reserve": 0.5
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size5_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size6",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size5",
+     "Item": "int_shieldgenerator_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size4",
+     "Item": "int_cargorack_size3_class1",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2026-07-04T05:24:00Z",
+   "Ship": "smallcombat01_nx",
+   "ShipID": 38,
+   "ShipName": "",
+   "UnladenMass": 368.799988,
+   "CargoCapacity": 0,
+   "MaxJumpRange": 23.259577,
+   "FuelCapacity": {
+    "Main": 16,
+    "Reserve": 0.61
+   },
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "TinyHardpoint1",
+     "Item": "hpt_shieldbooster_size0_class3",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint2",
+     "Item": "hpt_shieldbooster_size0_class3",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint3",
+     "Item": "hpt_shieldbooster_size0_class2",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint4",
+     "Item": "hpt_shieldbooster_size0_class2",
+     "On": true
+    },
+    {
+     "Slot": "MainEngines",
+     "Item": "int_mkiiagileboost_engine_size5_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "Engine_Dirty",
+      "Level": 5,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "Integrity",
+        "Value": 90.100006,
+        "OriginalValue": 106
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 7.0448,
+        "OriginalValue": 6.29
+       },
+       {
+        "Label": "EngineOptimalMass",
+        "Value": 735,
+        "OriginalValue": 840
+       },
+       {
+        "Label": "EngineOptPerformance",
+        "Value": 140,
+        "OriginalValue": 100
+       },
+       {
+        "Label": "EngineHeatRate",
+        "Value": 2.08,
+        "OriginalValue": 1.3
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size4_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "FSD_LongRange",
+      "Level": 3,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "Mass",
+        "Value": 12,
+        "OriginalValue": 10
+       },
+       {
+        "Label": "Integrity",
+        "Value": 91,
+        "OriginalValue": 100
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 0.4905,
+        "OriginalValue": 0.45
+       },
+       {
+        "Label": "FSDOptimalMass",
+        "Value": 789.75,
+        "OriginalValue": 585
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size4_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size5",
+     "Item": "int_shieldgenerator_size5_class3_fast",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "ShieldGenerator_Reinforced",
+      "Level": 3,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "ShieldGenStrength",
+        "Value": 113.399994,
+        "OriginalValue": 90
+       },
+       {
+        "Label": "BrokenRegenRate",
+        "Value": 5.067,
+        "OriginalValue": 5.63
+       },
+       {
+        "Label": "EnergyPerRegen",
+        "Value": 0.648,
+        "OriginalValue": 0.6
+       },
+       {
+        "Label": "KineticResistance",
+        "Value": 46.299999,
+        "OriginalValue": 39.999996
+       },
+       {
+        "Label": "ThermicResistance",
+        "Value": -7.4,
+        "OriginalValue": -20.000004
+       },
+       {
+        "Label": "ExplosiveResistance",
+        "Value": 55.25,
+        "OriginalValue": 50
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2025-09-05T23:39:37Z",
+   "Ship": "type8",
+   "ShipID": 52,
+   "ShipName": " ",
+   "UnladenMass": 475,
+   "CargoCapacity": 368,
+   "MaxJumpRange": 28.228054,
+   "FuelCapacity": {
+    "Main": 32,
+    "Reserve": 0.52
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size5_class5",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size5_class5",
+     "On": true
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size5_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size7",
+     "Item": "int_cargorack_size7_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot04_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot05_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot06_Size5",
+     "Item": "int_shieldgenerator_size4_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot07_Size4",
+     "Item": "int_cargorack_size4_class1",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2025-09-02T03:37:07Z",
+   "Ship": "cobramkv",
+   "ShipID": 29,
+   "ShipName": "Fixture Ship 08",
+   "UnladenMass": 203,
+   "CargoCapacity": 36,
+   "MaxJumpRange": 31.082956,
+   "FuelCapacity": {
+    "Main": 16,
+    "Reserve": 0.49
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size4_class5",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size4_class5",
+     "On": true
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size4_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size5",
+     "Item": "int_shieldgenerator_size4_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size4",
+     "Item": "int_cargorack_size4_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size4",
+     "Item": "int_cargorack_size4_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot05_Size3",
+     "Item": "int_cargorack_size2_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot07_Size3",
+     "Item": "int_buggybay_size2_class2",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2025-09-02T03:53:34Z",
+   "Ship": "krait_light",
+   "ShipID": 35,
+   "ShipName": "",
+   "UnladenMass": 500,
+   "CargoCapacity": 96,
+   "MaxJumpRange": 26.831179,
+   "FuelCapacity": {
+    "Main": 32,
+    "Reserve": 0.63
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size6_class5",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size5_class5",
+     "On": true
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size5_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size6",
+     "Item": "int_shieldgenerator_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot04_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot06_Size3",
+     "Item": "int_buggybay_size2_class2",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2026-10-07T18:01:33Z",
+   "Ship": "explorer_nx",
+   "ShipID": 36,
+   "ShipName": " ",
+   "UnladenMass": 1460.599976,
+   "CargoCapacity": 322,
+   "MaxJumpRange": 74.832611,
+   "FuelCapacity": {
+    "Main": 128,
+    "Reserve": 1.14
+   },
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size7_class5_gravityoptimised_mkii",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "Engine_Dirty",
+      "Level": 3,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "Integrity",
+        "Value": 131.039993,
+        "OriginalValue": 144
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 9.8496,
+        "OriginalValue": 9.12
+       },
+       {
+        "Label": "EngineOptimalMass",
+        "Value": 1998,
+        "OriginalValue": 2160
+       },
+       {
+        "Label": "EngineOptPerformance",
+        "Value": 126,
+        "OriginalValue": 100
+       },
+       {
+        "Label": "EngineHeatRate",
+        "Value": 1.82,
+        "OriginalValue": 1.3
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size8_class5_overchargebooster_mkii",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "FSD_LongRange",
+      "Level": 5,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "Mass",
+        "Value": 208,
+        "OriginalValue": 160
+       },
+       {
+        "Label": "Integrity",
+        "Value": 159.800003,
+        "OriginalValue": 188
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 1.2075,
+        "OriginalValue": 1.05
+       },
+       {
+        "Label": "FSDOptimalMass",
+        "Value": 7238.5,
+        "OriginalValue": 4670
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size7_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size7",
+     "Item": "int_cargorack_size7_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size6",
+     "Item": "int_fighterbaymk2_size6_class1_free",
+     "On": true
+    },
+    {
+     "Slot": "Slot04_Size5",
+     "Item": "int_guardianfsdbooster_size5",
+     "On": true
+    },
+    {
+     "Slot": "Slot05_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "CargoRack_IncreasedCapacity",
+      "Level": 5,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "CargoCapacity",
+        "Value": 43,
+        "OriginalValue": 32
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "Slot06_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot07_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "CargoRack_IncreasedCapacity",
+      "Level": 5,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "CargoCapacity",
+        "Value": 43,
+        "OriginalValue": 32
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "Slot08_Size4",
+     "Item": "int_mkiilargebuggybay_size4_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot10_Size3",
+     "Item": "int_cargorack_size3_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot11_Size2",
+     "Item": "int_cargorack_size2_class1",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2026-03-20T03:38:16Z",
+   "Ship": "sidewinder",
+   "ShipID": 37,
+   "ShipName": "",
+   "UnladenMass": 42.900002,
+   "CargoCapacity": 4,
+   "MaxJumpRange": 8.149507,
+   "FuelCapacity": {
+    "Main": 2,
+    "Reserve": 0.3
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size2_class1",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_size2_class1",
+     "On": true
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size1_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size2",
+     "Item": "int_shieldgenerator_size2_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size2",
+     "Item": "int_cargorack_size2_class1",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2026-05-15T01:11:37Z",
+   "Ship": "mediumtransport01",
+   "ShipID": 39,
+   "ShipName": "",
+   "UnladenMass": 517.799988,
+   "CargoCapacity": 56,
+   "MaxJumpRange": 40.172894,
+   "FuelCapacity": {
+    "Main": 32,
+    "Reserve": 0.75
+   },
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size6_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "Engine_Dirty",
+      "Level": 5,
+      "ExperimentalEffect_Localised": "Drag Drives",
+      "Modifiers": [
+       {
+        "Label": "Integrity",
+        "Value": 105.400002,
+        "OriginalValue": 124
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 8.4672,
+        "OriginalValue": 7.56
+       },
+       {
+        "Label": "EngineOptimalMass",
+        "Value": 1260,
+        "OriginalValue": 1440
+       },
+       {
+        "Label": "EngineOptPerformance",
+        "Value": 145.599991,
+        "OriginalValue": 100
+       },
+       {
+        "Label": "EngineHeatRate",
+        "Value": 2.288,
+        "OriginalValue": 1.3
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size5_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "FSD_LongRange",
+      "Level": 5,
+      "ExperimentalEffect_Localised": "Stripped Down",
+      "Modifiers": [
+       {
+        "Label": "Mass",
+        "Value": 23.4,
+        "OriginalValue": 20
+       },
+       {
+        "Label": "Integrity",
+        "Value": 102,
+        "OriginalValue": 120
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 0.69,
+        "OriginalValue": 0.6
+       },
+       {
+        "Label": "FSDOptimalMass",
+        "Value": 1821.25,
+        "OriginalValue": 1175
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size5_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size4",
+     "Item": "int_shieldgenerator_size4_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "ShieldGenerator_Reinforced",
+      "Level": 2,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "ShieldGenStrength",
+        "Value": 144,
+        "OriginalValue": 120.000008
+       },
+       {
+        "Label": "BrokenRegenRate",
+        "Value": 2.277,
+        "OriginalValue": 2.53
+       },
+       {
+        "Label": "EnergyPerRegen",
+        "Value": 0.636,
+        "OriginalValue": 0.6
+       },
+       {
+        "Label": "KineticResistance",
+        "Value": 44.5,
+        "OriginalValue": 39.999996
+       },
+       {
+        "Label": "ThermicResistance",
+        "Value": -11.000002,
+        "OriginalValue": -20.000004
+       },
+       {
+        "Label": "ExplosiveResistance",
+        "Value": 53.750004,
+        "OriginalValue": 50
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "Slot04_Size4",
+     "Item": "int_cargorack_size4_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot05_Size3",
+     "Item": "int_cargorack_size3_class1",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2026-09-13T23:33:54Z",
+   "Ship": "lakonminer",
+   "ShipID": 40,
+   "ShipName": "",
+   "UnladenMass": 672.799988,
+   "CargoCapacity": 278,
+   "MaxJumpRange": 26.990267,
+   "FuelCapacity": {
+    "Main": 32,
+    "Reserve": 0.6
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "TinyHardpoint1",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": false
+    },
+    {
+     "Slot": "TinyHardpoint3",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": false
+    },
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size5_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "Engine_Dirty",
+      "Level": 5,
+      "ExperimentalEffect_Localised": "Drag Drives",
+      "Modifiers": [
+       {
+        "Label": "Integrity",
+        "Value": 90.100006,
+        "OriginalValue": 106
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 6.8544,
+        "OriginalValue": 6.12
+       },
+       {
+        "Label": "EngineOptimalMass",
+        "Value": 735,
+        "OriginalValue": 840
+       },
+       {
+        "Label": "EngineOptPerformance",
+        "Value": 145.599991,
+        "OriginalValue": 100
+       },
+       {
+        "Label": "EngineHeatRate",
+        "Value": 2.288,
+        "OriginalValue": 1.3
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size5_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "FSD_LongRange",
+      "Level": 3,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "Mass",
+        "Value": 24,
+        "OriginalValue": 20
+       },
+       {
+        "Label": "Integrity",
+        "Value": 109.199997,
+        "OriginalValue": 120
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 0.654,
+        "OriginalValue": 0.6
+       },
+       {
+        "Label": "FSDOptimalMass",
+        "Value": 1586.25,
+        "OriginalValue": 1175
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size5_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot04_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "CargoRack_IncreasedCapacity",
+      "Level": 5,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "CargoCapacity",
+        "Value": 43,
+        "OriginalValue": 32
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "Slot05_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "CargoRack_IncreasedCapacity",
+      "Level": 5,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "CargoCapacity",
+        "Value": 43,
+        "OriginalValue": 32
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FighterBay01",
+     "Item": "int_fighterbay_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot06_Size4",
+     "Item": "int_shieldgenerator_size4_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "ShieldGenerator_Reinforced",
+      "Level": 1,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "ShieldGenStrength",
+        "Value": 136.800003,
+        "OriginalValue": 120.000008
+       },
+       {
+        "Label": "BrokenRegenRate",
+        "Value": 2.277,
+        "OriginalValue": 2.53
+       },
+       {
+        "Label": "EnergyPerRegen",
+        "Value": 0.624,
+        "OriginalValue": 0.6
+       },
+       {
+        "Label": "KineticResistance",
+        "Value": 42.699997,
+        "OriginalValue": 39.999996
+       },
+       {
+        "Label": "ThermicResistance",
+        "Value": -14.600002,
+        "OriginalValue": -20.000004
+       },
+       {
+        "Label": "ExplosiveResistance",
+        "Value": 52.250004,
+        "OriginalValue": 50
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2026-08-31T04:57:23Z",
+   "Ship": "type8",
+   "ShipID": 44,
+   "ShipName": "",
+   "UnladenMass": 456.5,
+   "CargoCapacity": 400,
+   "MaxJumpRange": 40.368809,
+   "FuelCapacity": {
+    "Main": 32,
+    "Reserve": 0.52
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size5_class5",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size5_class5",
+     "On": true,
+     "Engineering": {
+      "BlueprintName": "FSD_LongRange",
+      "Level": 4,
+      "ExperimentalEffect_Localised": null,
+      "Modifiers": [
+       {
+        "Label": "Mass",
+        "Value": 25,
+        "OriginalValue": 20
+       },
+       {
+        "Label": "Integrity",
+        "Value": 105.599998,
+        "OriginalValue": 120
+       },
+       {
+        "Label": "PowerDraw",
+        "Value": 0.672,
+        "OriginalValue": 0.6
+       },
+       {
+        "Label": "FSDOptimalMass",
+        "Value": 1615.625,
+        "OriginalValue": 1175
+       }
+      ]
+     }
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size5_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size7",
+     "Item": "int_cargorack_size7_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot04_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot05_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot06_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot07_Size4",
+     "Item": "int_cargorack_size4_class1",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2026-08-27T19:23:08Z",
+   "Ship": "krait_mkii",
+   "ShipID": 45,
+   "ShipName": "Fixture Ship 09",
+   "UnladenMass": 593.799988,
+   "CargoCapacity": 160,
+   "MaxJumpRange": 22.629568,
+   "FuelCapacity": {
+    "Main": 32,
+    "Reserve": 0.63
+   },
+   "HullValue": 1000000,
+   "ModulesValue": 1000000,
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "TinyHardpoint3",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size6_class5",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size5_class5",
+     "On": true
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size5_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot02_Size6",
+     "Item": "int_cargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot03_Size5",
+     "Item": "int_cargorack_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot05_Size4",
+     "Item": "int_shieldgenerator_size4_class5",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  },
+  {
+   "timestamp": "2026-10-23T04:06:53Z",
+   "Ship": "anacondamkii",
+   "ShipID": 47,
+   "ShipName": "",
+   "UnladenMass": 2145.800049,
+   "CargoCapacity": 96,
+   "MaxJumpRange": 27.397148,
+   "FuelCapacity": {
+    "Main": 64,
+    "Reserve": 1.08
+   },
+   "Rebuy": 100000,
+   "Modules": [
+    {
+     "Slot": "TinyHardpoint1",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint2",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint4",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint5",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint6",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "TinyHardpoint7",
+     "Item": "hpt_shieldbooster_size0_class5",
+     "On": true
+    },
+    {
+     "Slot": "MainEngines",
+     "Item": "int_engine_size7_class5",
+     "On": true
+    },
+    {
+     "Slot": "FrameShiftDrive",
+     "Item": "int_hyperdrive_overcharge_size8_class5",
+     "On": true
+    },
+    {
+     "Slot": "FuelTank",
+     "Item": "int_fueltank_size6_class3",
+     "On": true
+    },
+    {
+     "Slot": "Slot01_Size8",
+     "Item": "int_shieldgenerator_size8_class3_fast",
+     "On": true
+    },
+    {
+     "Slot": "Slot04_Size5",
+     "Item": "int_fighterbay_size5_class1",
+     "On": true
+    },
+    {
+     "Slot": "Slot08_Size4",
+     "Item": "int_mkiilargebuggybay_size4_class3",
+     "On": true
+    },
+    {
+     "Slot": "Cargo01",
+     "Item": "int_largecargorack_size6_class1",
+     "On": true
+    },
+    {
+     "Slot": "PlanetaryApproachSuite",
+     "Item": "int_planetapproachsuite_advanced",
+     "On": true
+    }
+   ]
+  }
+ ],
+ "storedShips": {
+  "timestamp": "2026-10-23T05:49:38Z",
+  "StationName": "K8R-M2X",
+  "StarSystem": "Col 173 Sector AX-J d9-52",
+  "MarketID": 3700000101,
+  "ShipsHere": [
+   {
+    "ShipID": 47,
+    "ShipType": "anacondamkii",
+    "ShipType_Localised": "Anaconda Mk II",
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 38,
+    "ShipType": "smallcombat01_nx",
+    "ShipType_Localised": "Kestrel Mk II",
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 36,
+    "ShipType": "explorer_nx",
+    "ShipType_Localised": "Caspian Explorer",
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 39,
+    "ShipType": "mediumtransport01",
+    "ShipType_Localised": "Lynx Highliner",
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 28,
+    "ShipType": "type8",
+    "ShipType_Localised": "Type-8 Transporter",
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 40,
+    "ShipType": "lakonminer",
+    "ShipType_Localised": "Type-11 Prospector",
+    "Value": 2000000,
+    "Hot": false
+   }
+  ],
+  "ShipsRemote": [
+   {
+    "ShipID": 8,
+    "ShipType": "SideWinder",
+    "Name": "",
+    "StarSystem": "HIP 43296",
+    "ShipMarketID": 3229076736,
+    "TransferPrice": 10000,
+    "TransferTime": 10672,
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 33,
+    "ShipType": "SideWinder",
+    "Name": "Fixture Ship 10",
+    "StarSystem": "HIP 55469",
+    "ShipMarketID": 3540363776,
+    "TransferPrice": 10000,
+    "TransferTime": 9030,
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 37,
+    "ShipType": "SideWinder",
+    "Name": "",
+    "StarSystem": "HIP 54285",
+    "ShipMarketID": 4208162819,
+    "TransferPrice": 10000,
+    "TransferTime": 8912,
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 13,
+    "ShipType": "Eagle",
+    "Name": "",
+    "StarSystem": "Aleumoxii",
+    "ShipMarketID": 3229235200,
+    "TransferPrice": 10000,
+    "TransferTime": 10401,
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 19,
+    "ShipType": "Eagle",
+    "Name": "",
+    "StarSystem": "Epsilon Eridani",
+    "ShipMarketID": 128133368,
+    "TransferPrice": 10000,
+    "TransferTime": 10553,
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 24,
+    "ShipType": "Viper_MkIV",
+    "ShipType_Localised": "Viper Mk IV",
+    "Name": "",
+    "StarSystem": "Shinrarta Dezhra",
+    "ShipMarketID": 128666762,
+    "TransferPrice": 10000,
+    "TransferTime": 10021,
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 3,
+    "ShipType": "Empire_Courier",
+    "ShipType_Localised": "Imperial Courier",
+    "Name": "Fixture Ship 06",
+    "StarSystem": "Antliae Sector PN-T b3-0",
+    "ShipMarketID": 4248683267,
+    "TransferPrice": 10000,
+    "TransferTime": 8630,
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 7,
+    "ShipType": "Viper_MkIV",
+    "ShipType_Localised": "Viper Mk IV",
+    "Name": "Fixture Ship 11",
+    "StarSystem": "Aleumoxii",
+    "ShipMarketID": 3229235200,
+    "TransferPrice": 10000,
+    "TransferTime": 10401,
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 26,
+    "ShipType": "Mandalay",
+    "Name": "",
+    "StarSystem": "HIP 47126",
+    "ShipMarketID": 4319002883,
+    "TransferPrice": 10000,
+    "TransferTime": 1331,
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 44,
+    "ShipType": "Type8",
+    "ShipType_Localised": "Type-8 Transporter",
+    "Name": "",
+    "StarSystem": "Scorpii Sector DG-X b1-4",
+    "ShipMarketID": 3700000102,
+    "TransferPrice": 10000,
+    "TransferTime": 10029,
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 2,
+    "ShipType": "Python",
+    "Name": "Fixture Ship 04",
+    "StarSystem": "Antliae Sector DL-X b1-4",
+    "ShipMarketID": 4236656643,
+    "TransferPrice": 10000,
+    "TransferTime": 8764,
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 4,
+    "ShipType": "FerDeLance",
+    "ShipType_Localised": "Fer-de-Lance",
+    "Name": "Fixture Ship 03",
+    "StarSystem": "Aleumoxii",
+    "ShipMarketID": 3229235200,
+    "TransferPrice": 10000,
+    "TransferTime": 10401,
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 34,
+    "ShipType": "Corsair",
+    "Name": "Fixture Ship 07",
+    "StarSystem": "Scorpii Sector DG-X b1-4",
+    "ShipMarketID": 3700000102,
+    "TransferPrice": 10000,
+    "TransferTime": 10029,
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 16,
+    "ShipType": "Anaconda",
+    "Name": "Fixture Ship 01",
+    "StarSystem": "Scorpii Sector DG-X b1-4",
+    "ShipMarketID": 3700000102,
+    "TransferPrice": 10000,
+    "TransferTime": 10029,
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 23,
+    "ShipType": "Anaconda",
+    "Name": "Fixture Ship 05",
+    "StarSystem": "HIP 52629",
+    "ShipMarketID": 4246657027,
+    "TransferPrice": 10000,
+    "TransferTime": 8322,
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 25,
+    "ShipType": "Cutter",
+    "ShipType_Localised": "Imperial Cutter",
+    "Name": "",
+    "StarSystem": "Facece",
+    "ShipMarketID": 128047104,
+    "TransferPrice": 10000,
+    "TransferTime": 9889,
+    "Value": 2000000,
+    "Hot": false
+   },
+   {
+    "ShipID": 6,
+    "ShipType": "Anaconda",
+    "Name": "Fixture Ship 02",
+    "StarSystem": "Aleumoxii",
+    "ShipMarketID": 3229235200,
+    "TransferPrice": 10000,
+    "TransferTime": 10401,
+    "Value": 2000000,
+    "Hot": false
+   }
+  ]
+ },
+ "launches": [
+  {
+   "t": "2026-09-02T03:03:06Z",
+   "e": "LaunchFighter",
+   "ship": 36,
+   "type": "advanced"
+  },
+  {
+   "t": "2026-09-02T15:44:27Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-02T17:49:52Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-02T18:20:03Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-03T01:20:47Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-03T02:37:00Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-03T03:17:51Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-03T04:07:01Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-03T04:26:53Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-03T04:48:53Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-03T05:50:26Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-03T06:15:04Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-03T14:11:00Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-04T02:54:27Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-04T04:24:30Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-04T17:28:55Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-04T18:08:39Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-06T07:16:00Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-08T02:59:51Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-08T04:56:53Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-09T04:44:51Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-11T03:28:32Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-11T04:00:24Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-14T00:16:10Z",
+   "e": "LaunchSRV",
+   "ship": 36,
+   "type": "SRV Rhino"
+  },
+  {
+   "t": "2026-09-22T03:39:08Z",
+   "e": "LaunchVessel",
+   "ship": 36,
+   "type": "Nomad"
+  }
+ ]
+}

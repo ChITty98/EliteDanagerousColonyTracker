@@ -28,17 +28,40 @@ export function isCannedScenario(key) {
   return SCENARIO_KEYS.has(key) || DAMAGE_CANNED_TIERS.has(key);
 }
 
+/** Is there a usable canned line for this beat right now? A paid moment with nothing new may still speak free (1.62.0). */
+export function cannedAvailable(personality, key, ctx) {
+  return poolFor(personality, key).some((l) => slotsSatisfied(l, ctx) && fitsPlace(l, ctx));
+}
+
+// A dial value as words for the voice ("ninety"), so a canned line quotes the REAL setting — never a
+// number baked into the text ("My humor setting is at forty percent" with the dial at 90, 1.62.0).
+const ONES_W = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven',
+  'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+const TENS_W = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+export function percentWords(n) {
+  const v = Math.round(Number(n));
+  if (!Number.isFinite(v) || v < 0 || v > 100) return '';
+  if (v === 100) return 'one hundred';
+  if (v < 20) return ONES_W[v];
+  return v % 10 ? `${TENS_W[Math.floor(v / 10)]}-${ONES_W[v % 10]}` : TENS_W[v / 10];
+}
+
 /**
  * Pick a canned line for `key` in the given personality's voice, filling any
  * {slots} from `ctx`. Returns '' if there's no usable line — the caller then
  * stays silent rather than paying to generate routine chatter.
  */
+// Lines that only make sense inside an ORBITAL station — "the station is rotating" said at a surface pad
+// (commander: "This is not an orbital station"). Clamps and berths exist on every pad, so they stay.
+const ORBITAL_ONLY = /\brotat(e|es|ing|ion)\b|\bspin(s|ning)?\b|mail[- ]?slot|letter[- ]?box|toaster|docking slot|\bthe slot\b/i;
+const fitsPlace = (line, ctx) => !(ctx && ctx.surface && ORBITAL_ONLY.test(line));
+
 export function pickCanned(personality, key, ctx) {
   const pool = poolFor(personality, key);
   if (!pool.length) return '';
   // Usable = lines with no slots, or whose every slot we can fill. (A slotless
   // line satisfies this vacuously, so we never show a literal "{station}".)
-  const usable = pool.filter((l) => slotsSatisfied(l, ctx));
+  const usable = pool.filter((l) => slotsSatisfied(l, ctx) && fitsPlace(l, ctx));
   if (!usable.length) return '';
   const seen = recentByKey.get(key) || [];
   const fresh = usable.filter((l) => !seen.includes(l));

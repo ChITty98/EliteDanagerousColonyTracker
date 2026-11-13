@@ -77,6 +77,7 @@ function buildPrompt(flavor, group) {
     '- Never invent specific numbers, place names, factions, or events beyond the listed placeholders.',
     '- Sound like TALK, not writing: no aphorisms, no polished kicker lines ("the routine is the job"), no narration ABOUT the commander (what they are, what their choices reveal). Plain words a working pilot would actually say out loud.',
     '- The commander is the captain and your employer. Never give orders, never flatter ("excellent choice"), never cheerlead the work. You inform, or you crack something wry — an employee with a dry sense of humour, not a fan.',
+    '- Never refer to the ship or a fleet carrier as "she" or "her" — say "the ship", "it", or its name.',
     `- Within each scenario the ${LINES_PER} lines must be genuinely different from one another in wording AND angle. No near-duplicates.`,
     '',
     `Write ${LINES_PER} lines for EACH of these ${group.length} scenarios:`,

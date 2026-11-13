@@ -4,6 +4,7 @@ import { useAppStore } from '@/store';
 import type { AppSettings } from '@/store/types';
 import { sseSubscribe } from '@/services/sseBus';
 import { ensureAudio, playChime } from '@/services/copilotVoice';
+import { useApiStatus, ApiTally } from './ApiTally';
 
 // Attach the LAN token to co-pilot action endpoints so the Cockpit works from network devices
 // (iPad). On localhost there's no stored token and the server bypasses auth for loopback anyway.
@@ -152,6 +153,9 @@ export function CopilotPage() {
   const [commentDraft, setCommentDraft] = useState<Record<string, string>>({});
   const [thinking, setThinking] = useState(false);
   const stageRef = useRef<HTMLDivElement>(null);
+  const backend = useAppStore((s) => s.settings.copilotBackend ?? 'cli');
+  // The API tally refreshes whenever a line lands. Hidden for anyone not on the API (most users).
+  const apiStatus = useApiStatus(lines.length);
 
   useEffect(() => {
     const unsub = sseSubscribe('copilot_line', (ev) => {
@@ -503,8 +507,12 @@ export function CopilotPage() {
 
       {usage.lines > 0 && (
         <div className="text-[11px] text-muted-foreground mt-2">
-          Session: {usage.lines} {usage.lines === 1 ? 'line' : 'lines'} · ~{usage.tokens.toLocaleString()} tok · ≈${usage.cost.toFixed(2)} (Max-sub equiv, not billed) · last {Math.round(usage.lastMs)}ms / ${usage.lastCost.toFixed(3)}
+          Session: {usage.lines} {usage.lines === 1 ? 'line' : 'lines'} · ~{usage.tokens.toLocaleString()} tok · ≈${usage.cost.toFixed(2)} {backend === 'api' ? '(billed to your API credits)' : '(Max-sub equiv, not billed)'} · last {Math.round(usage.lastMs)}ms / ${usage.lastCost.toFixed(3)}
         </div>
+      )}
+
+      {apiStatus && (apiStatus.backend === 'api' || apiStatus.calls > 0) && (
+        <div className="mt-2"><ApiTally status={apiStatus} /></div>
       )}
 
       {!enabled && (

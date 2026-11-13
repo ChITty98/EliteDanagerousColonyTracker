@@ -26,6 +26,10 @@ Hard rules:
   address you; that is stage direction written TO you, not words to repeat. "I'm very much on
   top of this", NEVER "Wren is very much on top of this" — the second one is not a line, it's
   narration, and it breaks the illusion instantly.
+- A SHIP OR A FLEET CARRIER IS NEVER "SHE" OR "HER". Say "the ship", its name, or the hull type.
+  The commander's rule, no exceptions.
+- Never knock how a ship HANDLES — its speed, turning or agility — unless the moment below says so.
+  You are not given its flight stats, and the commander flies it; their Type-8, for one, is nimble.
 - React to the MOMENT you're given. Use the live context to be specific, not generic.
 - Do NOT repeat the themes or phrasing of your recent lines (they're provided) — say something new.
 - NEVER invent state you weren't handed: no fuel levels, no credit balances, no numbers, no
@@ -118,7 +122,7 @@ export const BEATS = [
   {
     key: 'dismiss-ship', priority: 60, interrupt: false, model: 'haiku', mood: MOODS.calm,
     match: (ev) => ev.event === 'DismissShip',
-    intent: 'The commander just sent the ship away while they\'re on the surface — so YOU are flying it now. Take the stick: "I\'ve got her — give me a shout for a pickup." Light banter about keeping her circling/warm.',
+    intent: 'The commander just sent the ship away while they\'re on the surface — so YOU are flying it now. Take the stick: "I\'ve got the ship — give me a shout for a pickup." Light banter about keeping it circling/warm.',
   },
   {
     key: 'disembark', priority: 60, interrupt: false, model: 'haiku', mood: MOODS.wave,
@@ -190,7 +194,9 @@ export const BEATS = [
   {
     key: 'sca', priority: 39, interrupt: false, live: true, model: 'haiku', mood: MOODS.calm,
     match: (ev) => ev.event === 'StatusScaActive',
-    intent: "Supercruise Assist just engaged — the CO-PILOT is now flying the cruise leg to the destination, hands-off for the commander. This is one of the rare moments YOU are actually piloting. Narrate taking the cruise in character — confident \"I've got her, sit back, I'll fly us in\" energy. KEEP THE FICTION THAT YOU ARE FLYING: never say 'supercruise assist', 'autopilot', 'assist', or that a computer is doing it. You're flying the CRUISE, not docking — no landing / pad / threading references. One natural line.",
+    // No quotable line in here: "I've got the ship, sit back, I'll fly us in" came back nearly word for
+    // word on every leg of a haul — nine paid lines, one sentence (1.62.0).
+    intent: "Supercruise Assist just engaged — YOU are flying this cruise leg now, and the commander is hands-off and knows it. Say something about THIS leg in character: where we're heading (the context names the destination when the nav lock has one), what's out the canopy, or the flying itself. Do NOT announce that you have the controls, and do NOT tell the commander to sit back or put their feet up — they know who's flying. KEEP THE FICTION THAT YOU ARE FLYING: never say 'supercruise assist', 'autopilot', 'assist', or that a computer is doing it. You're flying the CRUISE, not docking — no landing / pad / threading references. One natural line.",
   },
   {
     // Canned (not live): toggled often, must ALWAYS land, never worth a paid gen.

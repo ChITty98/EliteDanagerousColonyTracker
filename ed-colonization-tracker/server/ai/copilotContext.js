@@ -10,6 +10,7 @@
 import { findMarketMatches, findCarrierLoadMatches } from '../journal/overlay.js';
 import { friendlyShip, isSingleSeatShip, isCrampedShip } from '../journal/extractor.js';
 import { getMemory, saveMemory } from './copilotMemory.js';
+import { recentlyOpined } from './copilotOpinionMarks.js';
 import { pickQuestion } from './copilotQuestions.js';
 import { getGalaxyTick } from '../journal/tick.js';
 
@@ -20,6 +21,22 @@ let navDestination = null; // { name, system, body } of the nav-locked target (s
 /** Set the nav-locked destination from the Status.json poll — lets the arrival beat tell a CARRIER
  *  drop from a body/site drop (calling the FC a "rock" was a real 👎). */
 export function setNavDestination(d) { navDestination = (d && d.name) ? d : null; }
+/** The nav-locked destination right now ({ name, nameLocalised, system, body }), or null. */
+export function getNavDestination() { return navDestination; }
+
+/**
+ * Cargo capacity of the ship being FLOWN — its own figure from the journal Loadout. The Settings number
+ * is the planning one (the commander set it by hand to 1,304 t); read in the Type-8 (384 t) it turned 43
+ * loads of carrier space into "twelve Type-8 loads" (1.62.0). Settings only when the journal has not
+ * reported this ship's capacity.
+ */
+export function flownCargoCapacity(state) {
+  const cs = state && state.currentShip;
+  const own = cs && typeof cs === 'object' ? Number(cs.cargoCapacity) : 0;
+  if (Number.isFinite(own) && own > 0) return own;
+  const set = Number(state && state.settings && state.settings.cargoCapacity);
+  return Number.isFinite(set) && set > 0 ? set : 0;
+}
 let lastHullDamageTs = 0; // journal-time of the last HullDamage — for the docking-grudge inference
 
 // Atmosphere → its visual CHARACTER, deliberately hedged ("in daylight", "when
@@ -181,13 +198,14 @@ export function buildSnapshot(state) {
   const pos = s.commanderPosition || {};
   const system = pos.name || pos.system || pos.systemName || s.currentSystem || 'an unknown system';
   const parts = [
-    `Commander: ${settings.commanderName || 'the commander'}.`,
+    // Never the commander's name: the gamer tag reads badly aloud ("Call me Commander, not my gamer tag").
+    'Address the commander as "Commander" — never by their name or gamer tag.',
     `System: ${system}.`,
   ];
   const cs = s.currentShip;
   const shipNm = (cs && typeof cs === 'object' && cs.name && String(cs.name).trim()) || '';
   const ship = currentShip(s);
-  if (ship) parts.push(`Ship: ${ship}.${shipNm ? ` She's named "${shipNm}" — call her that when it fits, not just "she".` : ''}`);
+  if (ship) parts.push(`Ship: ${ship}.${shipNm ? ` It's named "${shipNm}" — call it that when it fits, otherwise "the ship"; never "she" or "her".` : ''}`);
   if (world.hull != null && world.hull < 0.95) {
     const pct = Math.round(world.hull * 100);
     parts.push(world.hull < 0.5
@@ -203,6 +221,15 @@ export function buildSnapshot(state) {
     .filter((a) => a && a.question && a.label).map((a) => `"${a.question}" -> ${a.label}`);
   if (known.length) parts.push(`Things the commander has TOLD you — use them to quietly INFORM your read of them, almost never mention them out loud. NEVER quote their answers back at them ("for someone who says the port's the best part…"), never allude to "what you told me", never recite as a list: ${known.join('; ')}.`);
   if (s.currentDock && s.currentDock.stationName) parts.push(`Docked at ${s.currentDock.stationName}.`);
+  // The persona's own stored opinion of this station (1.61.0) — background so other lines here agree with it.
+  const dockOp = s.currentDock && s.currentDock.marketId != null
+    ? ((((getMemory().opinions || {})[settings.copilotPersonality || 'wash']) || {})[String(s.currentDock.marketId)] || null)
+    : null;
+  if (dockOp && dockOp.line) parts.push(`Your OWN standing opinion of this place (background — keep your tone consistent with it; never restate or quote it): "${dockOp.line}"`);
+  // The station's representative, read off the commander's own screenshot (1.62.0) — the one real person here.
+  const dockRepRec = s.currentDock && s.currentDock.marketId != null ? Object.values(s.knownStations || {}).find((k) => k && k.marketId === s.currentDock.marketId) : null;
+  const dockRep = dockRepRec && dockRepRec.representative;
+  if (dockRep && dockRep.name) parts.push(`This station's representative (read off the commander's screenshot): ${dockRep.title ? `${dockRep.title} ` : ''}${dockRep.name}. Background — name them only when it fits; never invent anyone else.`);
 
   // Active hauling session → the commander is WORKING, not resting. Without this,
   // ambient lines wrongly read downtime ("good place to catch our breath").
@@ -267,7 +294,7 @@ function activeSession(s) {
 
 function currentShip(s) {
   // currentShip is the captured object { type, name, ident, ... }. Surface the
-  // user-given NAME (so the co-pilot can call her by it) + the type — NOT
+  // user-given NAME (so the co-pilot can call it by name) + the type — NOT
   // String(object) === "[object Object]", which is what used to leak.
   const cs = s.currentShip;
   if (cs && typeof cs === 'object') {
@@ -537,6 +564,8 @@ export function detectCargoBayGripe(parsed, state, persona) {
   return {
     key: 'cargo-bay-gripe', priority: 56, interrupt: false, live: true, model: 'sonnet', mood: 'calm', character: true,
     inputs: { hull: shipNm },
+    // Same hull, same hand-off → the same joke: once per three hours, not on every launch (1.62.0).
+    fp: `cargo-bay|${String(type).toLowerCase()}|${what}`,
     intent: `This ${shipNm} is a SINGLE-SEATER — there is no co-pilot seat for you, so you are crammed into the CARGO HOLD, ${what} by remote from back there: no forward view, wedged between cargo racks, flying by feel and instruments. React in character to the absurd indignity of it. ${angle} A wry one-liner — do not over-explain the joke.`,
     detail: `You (the co-pilot) are physically in the cargo hold of a single-seat ${shipNm}; the commander has the only seat.`,
   };
@@ -722,7 +751,7 @@ function haulActions(state, marketId, stationName) {
   const project = outstandingNeeds(s, activeHaulProjectId(s));
   if (!project.commodities.length) return null;
   const now = Date.now();
-  const cargoCap = (s.settings && s.settings.cargoCapacity) || 0;
+  const cargoCap = flownCargoCapacity(s); // the ship being flown, not the Settings planning figure (1.62.0)
   // A single run only carries ~cargoCap — NEVER quote the build's whole remaining
   // tonnage (the commander can't grab 35,000t in a ~1,300t hold). When the need
   // overflows a hold, say "fill the hold" instead of an absurd number.
@@ -797,7 +826,7 @@ export function detectDockComplete(parsed, state) {
   // lastDock set → an auto-DOCK just finished (we're on the pad): "we're down + the job".
   if (lastDock) return haulBeat(haulActions(state, lastDock.marketId, lastDock.stationName), 'dock-complete', true);
   // lastDock cleared (Undocked already fired) → an auto-LAUNCH just finished: the stick is
-  // the commander's again. Canned handoff ("she's yours, we're clear").
+  // the commander's again. Canned handoff ("it's all yours, we're clear").
   return { key: 'launch-complete', priority: 48, interrupt: false, mood: 'calm' };
 }
 
@@ -1103,6 +1132,7 @@ export function detectDockFlavor(parsed, state) {
   if (!dock || dock.MarketID == null) return null;
   const fc = (state && state.settings) || {};
   if ((fc.myFleetCarrierMarketId != null && dock.MarketID === fc.myFleetCarrierMarketId) || (!!fc.myFleetCarrier && dock.StationName === fc.myFleetCarrier)) return null;
+  if (recentlyOpined(dock.MarketID)) return null; // the persona just gave its own take on this place
   const last = dockFlavorSaid.get(dock.MarketID);
   if (last && now - last < DOCK_FLAVOR_MS) return null;
   const s = state || {};
@@ -1166,14 +1196,20 @@ export function dossierFlavour(d, opts = {}) {
       ? `you have been to THIS world a great MANY times (${d.timesHere} on the books — allude to the scale, do NOT quote the figure unless your character is the precise-machine type, and even then rarely)`
       : `roughly your ${d.timesHere}${ordinal(d.timesHere)} time at THIS world${d.landings > 0 ? ` (${d.landings} surface set-downs + ${d.dockings} dockings at sites on it)` : ''}`);
   }
-  if (d.atmoType) {
+  // No atmosphere is a fact too. The scan writes it as "None", and that used to come out as "a none atmosphere — it tints
+  // the sky" at every airless site (Deshpande Plant on 1 a, Kewell Range on 1 c).
+  if (/^(none|no atmosphere)$/i.test(String(d.atmoType || '').trim())) f.push('no atmosphere: an airless world, with no air, wind, haze or weather to speak of');
+  else if (d.atmoType) {
+    // The TYPE is the air (the commander's rule: never the composition). A trace gas is not the
+    // atmosphere: 0.14% sulphur dioxide on a 99.9% oxygen world made the model call 2 b "thin
+    // sulphurous air" (commander: "It's an oxygen atmo on this planet"). Sulphur only when it IS the type.
     const thin = /thin/i.test(d.atmoType);
-    const sulphur = d.traces.some((g) => /sulph|sulf/i.test(g));
-    f.push(`a ${d.atmoType.toLowerCase()} atmosphere${d.traces.length ? ` (trace ${d.traces.join(', ').toLowerCase()})` : ''} — it tints the sky${thin ? ', and thin air means less bite on the controls on the way down' : ''}${sulphur ? '; sulphurous and acrid — not air you would want to crack the canopy in' : ''}`);
+    const sulphur = /sulph|sulf/i.test(d.atmoType);
+    f.push(`a ${d.atmoType.toLowerCase()} atmosphere — it tints the sky${thin ? ', and thin air means less bite on the controls on the way down' : ''}${sulphur ? '; sulphurous and acrid — not air you would want to crack the canopy in' : ''}`);
   }
   if (Number.isFinite(d.gravityG)) {
-    f.push(d.gravityG < 0.5 ? `low gravity, about ${d.gravityG.toFixed(2)}g — she will feel floaty and lift off easy`
-      : d.gravityG > 2 ? `heavy gravity, ${d.gravityG.toFixed(2)}g — she will fly like a brick, mind the descent`
+    f.push(d.gravityG < 0.5 ? `low gravity, about ${d.gravityG.toFixed(2)}g — the ship will feel floaty and lift off easy`
+      : d.gravityG > 2 ? `heavy gravity, ${d.gravityG.toFixed(2)}g — the ship will fly like a brick, mind the descent`
       : `gravity around ${d.gravityG.toFixed(2)}g`);
   }
   if (Number.isFinite(d.tempK)) {
@@ -1346,8 +1382,8 @@ export function detectCarrierFuel(state) {
     priority: crit ? 62 : 54, interrupt: false, live: true, model: 'haiku', mood: crit ? 'brace' : 'calm',
     inputs: { fuel, carrier: nm },
     intent: crit
-      ? `The ${nm} is CRITICALLY low on tritium — about ${fuel}t in the reserve, not enough for a full jump; she risks being stranded. A pointed, practical heads-up: refuel her before moving her. Refer to her by NAME, never the callsign.`
-      : `The ${nm} is getting low on tritium — about ${fuel}t in the reserve. A brief, practical heads-up to top her up before her next jump. Refer to her by NAME, never the callsign.`,
+      ? `The ${nm} is CRITICALLY low on tritium — about ${fuel}t in the reserve, not enough for a full jump; the carrier risks being stranded. A pointed, practical heads-up: refuel it before moving it. Refer to it by NAME, never the callsign, and never as "she" or "her".`
+      : `The ${nm} is getting low on tritium — about ${fuel}t in the reserve. A brief, practical heads-up to top it up before its next jump. Refer to it by NAME, never the callsign, and never as "she" or "her".`,
     detail: `Detail: carrier tritium ~${fuel}t${crit ? ' (critical)' : ' (low)'}.`,
   };
 }

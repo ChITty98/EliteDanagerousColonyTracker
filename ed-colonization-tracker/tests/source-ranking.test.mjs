@@ -44,3 +44,48 @@ describe('source ranking — sufficiency first', () => {
     expect(rankSources([akhenaten], 0)).toBeNull();
   });
 });
+
+describe('source ranking — starred factions (1.60.32)', () => {
+  const thagard = c({ stationName: "Thagard's Progress", stock: 63892, buyPrice: 4145, faction: 'Order of Copernicus' });
+  const kewell = c({ stationName: 'Kewell Range', stock: 655363, buyPrice: 3709, faction: 'The 9th Legion', hasLargePads: true });
+  const deshpande = c({ stationName: 'Deshpande Plant', stock: 1021043, buyPrice: 2140, faction: 'HIP 104349 Ring', hasLargePads: true });
+  it('without stars the plain ranking stands and nothing is marked preferred', () => {
+    const pick = rankSources([thagard, kewell, deshpande], 3084);
+    expect(pick.best.stationName).toBe('Deshpande Plant'); // all cover it, same system, large pads: most stock wins
+    expect(pick.preferred).toBe(false);
+    expect(pick.fallback).toBeNull();
+  });
+  it("a starred faction's in-system station is the pick, the plain pick becomes the fallback", () => {
+    const pick = rankSources([thagard, kewell, deshpande], 3084, { preferredFactions: ['Order of Copernicus'] });
+    expect(pick.best.stationName).toBe("Thagard's Progress");
+    expect(pick.preferred).toBe(true);
+    expect(pick.covers).toBe(true);
+    expect(pick.fallback.stationName).toBe('Deshpande Plant');
+  });
+  it('the starred station is kept even when it falls short, flagged by covers=false', () => {
+    const pick = rankSources([c({ ...thagard, stock: 1859 }), kewell], 3084, { preferredFactions: ['Order of Copernicus'] });
+    expect(pick.best.stationName).toBe("Thagard's Progress");
+    expect(pick.covers).toBe(false);
+    expect(pick.fallback.stationName).toBe('Kewell Range');
+  });
+  it('a starred faction with no stocked station here falls through to the next star, then to the plain pick', () => {
+    const pick = rankSources([kewell, c({ ...deshpande, stock: 5000 })], 3084, { preferredFactions: ['Order of Copernicus', 'HIP 104349 Ring'] });
+    expect(pick.best.stationName).toBe('Deshpande Plant');
+    expect(pick.preferred).toBe(true);
+    const none = rankSources([kewell], 3084, { preferredFactions: ['Order of Copernicus'] });
+    expect(none.best.stationName).toBe('Kewell Range');
+    expect(none.preferred).toBe(false);
+  });
+  it('a star only reaches stations in the project\'s own system', () => {
+    const far = c({ stationName: 'Order Depot Far Away', systemName: 'HIP 47126', sameSystem: false, distanceLy: 103, stock: 90000, faction: 'Order of Copernicus' });
+    const pick = rankSources([far, kewell], 3084, { preferredFactions: ['Order of Copernicus'] });
+    expect(pick.best.stationName).toBe('Kewell Range');
+    expect(pick.preferred).toBe(false);
+  });
+  it('when the starred station is also the plain pick nothing is flagged', () => {
+    const pick = rankSources([thagard], 3084, { preferredFactions: ['Order of Copernicus'] });
+    expect(pick.best.stationName).toBe("Thagard's Progress");
+    expect(pick.preferred).toBe(false);
+    expect(pick.fallback).toBeNull();
+  });
+});

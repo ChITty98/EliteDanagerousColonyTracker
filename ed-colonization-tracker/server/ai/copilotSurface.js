@@ -56,11 +56,11 @@ const BEATS = {
     key: `surface-arrive-${bandFor(d.driving)}`, priority: 44, interrupt: false, live: false, mood: 'calm',
     inputs: { site: d.siteIndex != null ? String(d.siteIndex) : 'this signal', body: d.body || 'the surface' },
   }),
-  // Two states. The ship does NOT move on her own — only a RECALL brings her — and during Rhino
-  // ops she never lands at all: she hovers ~30 m up, the Rhino drops from her and docks back into
-  // her. "near" = the app knows where she is (the deploy point, an unmanned touchdown, or where a
-  // recall brought her — see shipMoveKind) and the SRV is within reach of that spot. "far" = she
-  // is not within reach, or the app lost her (a relog: she is simply not there until recalled).
+  // Two states. The ship does NOT move on its own — only a RECALL brings it — and during Rhino
+  // ops it never lands at all: it hovers ~30 m up, the Rhino drops from it and docks back into
+  // it. "near" = the app knows where it is (the deploy point, an unmanned touchdown, or where a
+  // recall brought it — see shipMoveKind) and the SRV is within reach of that spot. "far" = it
+  // is not within reach, or the app lost it (a relog: it is simply not there until recalled).
   hold: (d) => ({
     key: d.ship === 'near' ? 'surface-hold-near' : 'surface-hold-far',
     priority: 56, interrupt: false, live: false, mood: 'calm',
@@ -73,7 +73,7 @@ const BEATS = {
     key: 'surface-target', priority: 42, interrupt: false, live: false, mood: 'calm',
     inputs: { commodity: String(d.commodity), site: d.siteIndex != null ? String(d.siteIndex) : 'this signal' },
   } : null),
-  // The ship leaving on her own once the SRV drives out of range (or on a dismiss) — Liftoff with
+  // The ship leaving on its own once the SRV drives out of range (or on a dismiss) — Liftoff with
   // PlayerControlled: false. The co-pilot is the one flying it up.
   'ship-away': () => ({
     key: 'surface-ship-away', priority: 50, interrupt: false, live: false, mood: 'calm',
@@ -82,10 +82,10 @@ const BEATS = {
   // The commander pressed RECALL. The journal has no event for it, but the game tells on itself:
   // the moment the ship's AI takes over it re-emits SAASignalsFound for every mapped body in
   // range — while the commander is sitting in an SRV or standing on the surface, where the DSS
-  // cannot fire. On foot she lands ~30 s later (26–33 s in 25 of 26 recalls on file); from the
-  // Rhino she hovers and gets boarded 40–75 s later. The same burst precedes an auto-departure
-  // by 3 s, which is what shipMoveKind and the departure window are for. She IS coming: this is
-  // the one place "on my way" is true — still never "land", "set down" or "hover" (she does one
+  // cannot fire. On foot it lands ~30 s later (26–33 s in 25 of 26 recalls on file); from the
+  // Rhino it hovers and gets boarded 40–75 s later. The same burst precedes an auto-departure
+  // by 3 s, which is what shipMoveKind and the departure window are for. It IS coming: this is
+  // the one place "on my way" is true — still never "land", "set down" or "hover" (it does one
   // or the other depending on where the commander is, and the app does not know which).
   recall: () => ({
     key: 'surface-recall', priority: 52, interrupt: false, live: false, mood: 'calm',
@@ -142,8 +142,8 @@ export function pickTargetCommodity(names, priceOf, minCr = TARGET_MIN_CR) {
 
 // ---- the ship's AI taking over: recall or departure ------------------------------------------
 // Empirical (every journal on this PC, 2018–2026): an SAASignalsFound burst seen from an SRV or on
-// foot is followed by an unmanned Liftoff within 3 s when she is LEAVING (drove out of range), and
-// by nothing at all when she is COMING (recall) — then a landing ~30 s later on foot, a boarding
+// foot is followed by an unmanned Liftoff within 3 s when it is LEAVING (drove out of range), and
+// by nothing at all when it is COMING (recall) — then a landing ~30 s later on foot, a boarding
 // 40–75 s later from the Rhino. The pusher waits out the window before calling it a recall.
 export const BURST_DEPARTURE_WINDOW_MS = 5_000;
 export const RECALL_ARRIVAL_MS = 30_000;

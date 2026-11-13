@@ -221,6 +221,14 @@ export function ImageGallery({ galleryKey, title, compact }: ImageGalleryProps) 
   );
 }
 
+// What the co-pilot saw in a shot (1.62.0) — labels for its persona and the Sights tags it may use.
+const SHOT_PERSONA: Record<string, string> = { wash: 'Wren', tars: 'Tycho', k2: 'K2' };
+const SHOT_TAG: Record<string, string> = {
+  closebodies: '✨ Close bodies', rings: '\u{1F48D} Rings', terrain: '\u{1F3DC}\u{FE0F} Terrain', sky: '\u{1F308} Pretty sky',
+  life: '\u{1F9EC} Life', braintrees: '\u{1F333} Brain Trees', geology: '\u{1F30B} Geology', home: '\u{1F3E0} Home candidate',
+  landmark: '\u{1F5FD} Landmark', cool: '⭐ Just cool',
+};
+
 // --- Lightbox modal with prev/next navigation ---
 function Lightbox({
   image, imageIndex, totalImages, onClose, onDelete, onSetPrimary, onNext, onPrev,
@@ -298,6 +306,20 @@ function Lightbox({
           alt={image.caption}
           className="max-h-[80vh] w-auto object-contain rounded-lg"
         />
+        {(image.vision || image.copilotLine) && (
+          <div className="mt-2 max-w-3xl space-y-1 text-sm text-muted-foreground">
+            {image.copilotLine && (
+              <div className="italic text-foreground/90">
+                “{image.copilotLine.line}”
+                <span className="not-italic text-xs text-muted-foreground"> — {SHOT_PERSONA[image.copilotLine.persona] || 'co-pilot'}</span>
+              </div>
+            )}
+            {image.vision?.description && <div>{image.vision.description}</div>}
+            {image.vision?.tags && image.vision.tags.length > 0 && (
+              <div className="text-xs">{image.vision.tags.map((t) => SHOT_TAG[t] || t).join(' · ')}</div>
+            )}
+          </div>
+        )}
         <div className="mt-3 flex items-center justify-between gap-3">
           {editingCaption === image.id ? (
             <form className="flex-1 flex gap-2" onSubmit={(e) => { e.preventDefault(); onSaveCaption(image.id); }}>

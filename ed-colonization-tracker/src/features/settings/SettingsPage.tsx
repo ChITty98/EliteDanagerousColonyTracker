@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { useAppStore } from '@/store';
 import { selectJournalFolder, isFileSystemAccessSupported, getJournalFolderHandle } from '@/services/journalReader';
 import { ensureAudio } from '@/services/copilotVoice';
+import { CopilotApiPanel } from './CopilotApiPanel';
 import {
   ALL_STAR_TYPES,
   ALL_ATMO_TYPES,
@@ -736,6 +737,11 @@ function OverlaySection({
             <span className="text-muted-foreground"> — off = canned lines only, instant and free</span>
           </span>
         </label>
+
+        {/* Which engine writes the live lines (1.61.0): the local `claude` CLI on the Max login, or the
+            Anthropic API on the commander's own credits. The key is a FILE beside the exe — never typed
+            here and never stored in the synced state; the panel only shows whether the server found it. */}
+        <CopilotApiPanel settings={settings} updateSettings={updateSettings} />
 
         {/* Spoken lines. Off by default. ensureAudio() rides THIS click because it is a real
             user gesture — browsers refuse to start an AudioContext without one, and if the

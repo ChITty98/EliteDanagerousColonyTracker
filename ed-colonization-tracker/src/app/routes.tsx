@@ -17,6 +17,9 @@ import { ChainPlannerPage } from '@/features/planner/ChainPlannerPage';
 import { JournalStatsPage } from '@/features/journal-stats/JournalStatsPage';
 import { CompanionPage } from '@/features/companion/CompanionPage';
 import { ArchitectDomainPage } from '@/features/domain/ArchitectDomainPage';
+import { InstallationsPage } from '@/features/installations/InstallationsPage';
+import { ShipsPage } from '@/features/ships/ShipsPage';
+import { FactionsPage } from '@/features/factions/FactionsPage';
 import { ColonyMapPage } from '@/features/map/ColonyMapPage';
 import { SightsPage } from '@/features/sights/SightsPage';
 import { SystemViewPage } from '@/features/system-view/SystemViewPage';
@@ -50,6 +53,9 @@ export const router = createBrowserRouter([
       { path: 'sessions', element: <SessionsPage /> },
       { path: 'threats', element: <ThreatsPage /> },
       { path: 'domain', element: <ArchitectDomainPage /> },
+      { path: 'installations', element: <InstallationsPage /> },
+      { path: 'ships', element: <ShipsPage /> },
+      { path: 'factions', element: <FactionsPage /> },
       { path: 'map', element: <ColonyMapPage /> },
       { path: 'system-view', element: <SystemViewPage /> },
       { path: 'sights', element: <SightsPage /> },

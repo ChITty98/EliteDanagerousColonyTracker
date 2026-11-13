@@ -1,7 +1,7 @@
 import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAppStore } from '@/store';
-import { cleanJournalString, cleanProjectName } from '@/lib/utils';
+import { cleanJournalString, cleanProjectName, stripConstructionPrefix } from '@/lib/utils';
 import { resolveStationType, getStationTypeInfo } from '@/data/stationTypes';
 import { computeTierPoints } from '@/data/installationTypes';
 import {
@@ -629,6 +629,12 @@ export function DashboardPage() {
               projectUpdates.name = `${existing.systemName || depot.systemName || ''}${nextName ? ` - ${nextName}` : ''}`;
             }
           }
+          // A project still wearing its auto-created placeholder name takes the real one once the identity is known (1.60.30).
+          const sysNow = (projectUpdates.systemName as string | undefined) ?? existing.systemName;
+          const stNow = (projectUpdates.stationName as string | undefined) ?? existing.stationName;
+          if (!projectUpdates.name && /^Depot \d+( \(\))?$/.test(existing.name || '') && sysNow) {
+            projectUpdates.name = `${sysNow}${stNow ? ` - ${stNow}` : ''}`;
+          }
           if (Object.keys(projectUpdates).length > 0) {
             useAppStore.getState().updateProject(existing.id, projectUpdates);
           }
@@ -700,6 +706,9 @@ export function DashboardPage() {
             completedStationName: resolved.stationName,
             completedStationType: resolved.stationType || project.stationType || 'Outpost',
           });
+        } else if (project.stationName && isConstructionStationName(project.stationName)) {
+          // An installation never takes a dock: its finished name is the construction site's own (1.60.30).
+          useAppStore.getState().updateProject(project.id, { completedStationName: stripConstructionPrefix(cleanJournalString(project.stationName)) });
         }
       }
 

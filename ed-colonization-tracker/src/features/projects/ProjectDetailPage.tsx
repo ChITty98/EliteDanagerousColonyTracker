@@ -39,6 +39,8 @@ export function ProjectDetailPage() {
 
   const marketSnapshots = useAppStore((s) => s.marketSnapshots);
   const liveShipCargo = useAppStore((s) => s.liveShipCargo);
+  const factionPriorities = useAppStore((s) => s.factionPriorities);
+  const currentShip = useAppStore((s) => s.currentShip);
 
   // Compute best source per commodity from visited markets + market snapshots
 
@@ -57,6 +59,8 @@ export function ProjectDetailPage() {
       return Math.sqrt(dx * dx + dy * dy + dz * dz);
     };
     const result: Record<string, SourcePick> = {};
+    // Starred factions for the project's system: their in-system stations are picked first (1.60.32).
+    const preferred = projectSystem ? (factionPriorities[projectSystem]?.factions ?? []) : [];
     for (const c of project.commodities) {
       const remaining = c.requiredQuantity - c.providedQuantity;
       if (remaining <= 0) continue;
@@ -75,13 +79,14 @@ export function ProjectDetailPage() {
           hasLargePads: snap.hasLargePads, isPlanetary: snap.isPlanetary,
           stock: item.stock, buyPrice: item.buyPrice, lastSeen: snap.updatedAt,
           distanceLy: distanceTo(snap.systemName), sameSystem: snap.systemName?.toLowerCase() === projectSystem,
+          faction: knownStations[snap.marketId]?.faction ?? null, marketId: snap.marketId,
         });
       }
-      const pick = rankSources(candidates, remaining);
+      const pick = rankSources(candidates, remaining, { preferredFactions: preferred });
       if (pick) result[c.commodityId] = pick;
     }
     return result;
-  }, [project, marketSnapshots, settings.myFleetCarrierMarketId, settings.myFleetCarrier, knownSystems, commanderPosition]);
+  }, [project, marketSnapshots, settings.myFleetCarrierMarketId, settings.myFleetCarrier, knownSystems, knownStations, commanderPosition, factionPriorities]);
 
   const [editingCell, setEditingCell] = useState<{ commodityId: string; field: 'requiredQuantity' | 'providedQuantity' | 'remaining' } | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -725,6 +730,12 @@ export function ProjectDetailPage() {
         </div>
       )}
 
+      {project.systemName && (factionPriorities[project.systemName.toLowerCase()]?.factions.length ?? 0) > 0 && (
+        <div className="text-xs text-muted-foreground mb-2">
+          <span className="text-amber-400">{'\u2605'}</span> Sourcing favours {factionPriorities[project.systemName.toLowerCase()].factions.join(', ')} — stations of a starred faction are picked first, even when short; the plain pick shows beneath.
+          {' '}<Link to={`/systems/${encodeURIComponent(project.systemName)}`} className="underline hover:text-foreground">change on the system page</Link>
+        </div>
+      )}
       {/* Commodity table */}
       <div className="bg-card border border-border rounded-lg overflow-hidden">
         <table className="w-full">
@@ -810,17 +821,22 @@ export function ProjectDetailPage() {
                             return (
                               <div className="text-[11px] mt-0.5 text-muted-foreground">
                                 <div>
-                                  {'\u2190'} {src.stationName}
+                                  {'\u2190'} {pick.preferred && <span className="text-amber-400" title="A starred faction's station">{'\u2605'} </span>}{src.stationName}
+                                  {src.faction && <span className="opacity-60"> · {src.faction}</span>}
                                   <span className="opacity-60"> ({src.systemName}{src.distanceLy != null && !src.sameSystem ? `, ${Math.round(src.distanceLy)} ly` : ''})</span>
                                   {pick.covers
                                     ? <span className="text-sky-400 ml-1">{formatNumber(src.stock)}t</span>
                                     : <span className="text-amber-400 ml-1" title="Less on file than the project still needs — no station on file covers it">{formatNumber(src.stock)} of {formatNumber(remaining)}t</span>}
                                   {src.buyPrice != null && <span className="opacity-60 ml-1">{formatNumber(src.buyPrice)}cr</span>}
+                                  {(() => { const hold = currentShip?.cargoCapacity ?? settings.cargoCapacity; const loads = hold > 0 ? Math.ceil(Math.min(src.stock, remaining) / hold) : 0; return loads > 0 ? <span className="opacity-60 ml-1" title={`Loads of ${formatNumber(hold)} t in the current ship`}>{loads} load{loads === 1 ? '' : 's'}</span> : null; })()}
                                   {!src.hasLargePads && <span className="text-amber-400 ml-1">M</span>}
                                   {ageDays > 7 && <span className="opacity-60 ml-1" title={`Snapshot from ${new Date(src.lastSeen).toLocaleDateString()}`}>seen {ageDays} d ago</span>}
                                 </div>
                                 {pick.local && (
                                   <div className="opacity-70" title="Stocked in the project's own system, but not enough on file to cover the need">in-system: {pick.local.stationName} <span className="text-amber-400">{formatNumber(pick.local.stock)}t</span></div>
+                                )}
+                                {pick.fallback && (
+                                  <div className="opacity-70" title="The pick without the star">otherwise: {pick.fallback.stationName}{pick.fallback.faction ? ` · ${pick.fallback.faction}` : ''}{!pick.fallback.sameSystem ? ` (${pick.fallback.systemName})` : ''} <span className={pick.fallback.stock >= remaining ? 'text-sky-400' : 'text-amber-400'}>{formatNumber(pick.fallback.stock)}t</span></div>
                                 )}
                               </div>
                             );

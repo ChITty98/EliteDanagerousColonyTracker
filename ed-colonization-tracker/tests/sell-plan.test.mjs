@@ -39,8 +39,8 @@ const state = {
 };
 
 const ardent = {
-  [`/system/name/${encodeURIComponent(ME)}/commodity/name/thortveitite/nearby/imports?maxDistance=50&fleetCarriers=false`]: [],
-  [`/system/name/${encodeURIComponent(ME)}/commodity/name/thortveitite/nearby/imports?maxDistance=500&fleetCarriers=false`]: [
+  [`/system/name/${encodeURIComponent(ME)}/commodity/name/thortveitite/nearby/imports?maxDistance=50&fleetCarriers=false&maxDaysAgo=7`]: [],
+  [`/system/name/${encodeURIComponent(ME)}/commodity/name/thortveitite/nearby/imports?maxDistance=500&fleetCarriers=false&maxDaysAgo=7`]: [
     { commodityName: 'thortveitite', marketId: 300, stationName: 'Borel Vista', systemName: 'Synuefe YL-J d10-60', stationType: 'Orbis', maxLandingPadSize: 3, sellPrice: 327007, demand: 254520, updatedAt: iso(NOW - DAY), distance: 303, systemX: 303, systemY: 0, systemZ: 0 },
     { commodityName: 'thortveitite', marketId: 301, stationName: 'Tiny Demand', systemName: 'Nearby', stationType: 'Outpost', maxLandingPadSize: 2, sellPrice: 500000, demand: 5, updatedAt: iso(NOW), distance: 40, systemX: 40, systemY: 0, systemZ: 0 },
     // A construction depot 30 ly out at the cap: neither local nor galaxy, whatever it lists.
@@ -48,9 +48,13 @@ const ardent = {
     // A medium pad 45 ly out paying more than anyone: the Caspian Explorer cannot land there.
     { commodityName: 'thortveitite', marketId: 303, stationName: 'Medium Pad Bonanza', systemName: 'Nearby Too', stationType: 'Outpost', maxLandingPadSize: 2, sellPrice: 950000, demand: 50000, updatedAt: iso(NOW), distance: 45, systemX: 45, systemY: 0, systemZ: 0 },
   ],
-  '/commodity/name/thortveitite/imports?fleetCarriers=false': [
+  '/commodity/name/thortveitite/imports?fleetCarriers=false&maxDaysAgo=7': [
     { commodityName: 'thortveitite', marketId: 400, stationName: "TolaGarf's Junkyard", systemName: 'Kojeara', stationType: 'Outpost', maxLandingPadSize: 3, sellPrice: 894814, demand: 18576, updatedAt: iso(NOW), systemX: 22000, systemY: 0, systemZ: 0 },
     { commodityName: 'thortveitite', marketId: 401, stationName: 'Carrier X', systemName: 'Kojeara', stationType: 'FleetCarrier', sellPrice: 2000000, demand: 500, updatedAt: iso(NOW), systemX: 22000, systemY: 0, systemZ: 0 },
+    // the 7 September 2026 placeholder, eighteen days on: 1,038,104 at demand 999,999 off the goal list
+    { commodityName: 'thortveitite', marketId: 402, stationName: 'Cormack Beacon', systemName: 'Wregoe CD-A b56-2', stationType: 'Outpost', maxLandingPadSize: 3, sellPrice: 1038104, demand: 999999, updatedAt: iso(NOW - 18 * DAY), systemX: 100, systemY: 0, systemZ: 0 },
+    // a real-looking row three weeks old: not a price any more
+    { commodityName: 'thortveitite', marketId: 403, stationName: 'Stale Star', systemName: 'Old News', stationType: 'Coriolis', maxLandingPadSize: 3, sellPrice: 1500000, demand: 20000, updatedAt: iso(NOW - 20 * DAY), systemX: 120, systemY: 0, systemZ: 0 },
   ],
   [`/system/name/${encodeURIComponent(ME)}/commodities`]: [
     { commodityName: 'steel', marketId: 100, stationName: 'Atmo Sky Cairn Asc', systemName: ME, stationType: 'CraterOutpost', maxLandingPadSize: 3, buyPrice: 2200, stock: 9000, sellPrice: 0, demand: 0, updatedAt: iso(NOW - 30 * DAY) },
@@ -140,7 +144,7 @@ describe('sell plan', () => {
   });
 
   it('fast mode answers from the cache alone, says what is pending, and never waits on the network', async () => {
-    const cachedOnly = new Set(['/commodity/name/thortveitite/imports?fleetCarriers=false']);
+    const cachedOnly = new Set(['/commodity/name/thortveitite/imports?fleetCarriers=false&maxDaysAgo=7']);
     const peek = (p) => (cachedOnly.has(p) ? { cached: true, data: ardent[p] } : { cached: false, data: null });
     let waited = 0;
     const slow = async (p) => { waited++; await new Promise((r) => setTimeout(r, 50)); return ardent[p] ?? null; };
@@ -198,7 +202,7 @@ describe('sell plan', () => {
   it('a top-of-book buyer within reach shows as the top and is sampled into the history', async () => {
     const near = {
       ...ardent,
-      '/commodity/name/thortveitite/imports?fleetCarriers=false': [
+      '/commodity/name/thortveitite/imports?fleetCarriers=false&maxDaysAgo=7': [
         { commodityName: 'thortveitite', marketId: 402, stationName: 'Asimov Landing', systemName: 'LHS 2441', stationType: 'Outpost', maxLandingPadSize: 3, sellPrice: 600104, demand: 2517, updatedAt: iso(NOW), systemX: 991, systemY: 0, systemZ: 0 },
         { commodityName: 'thortveitite', marketId: 400, stationName: "TolaGarf's Junkyard", systemName: 'Kojeara', stationType: 'Outpost', maxLandingPadSize: 3, sellPrice: 894814, demand: 18576, updatedAt: iso(NOW), systemX: 22000, systemY: 0, systemZ: 0 },
       ],
@@ -249,5 +253,24 @@ describe('sell plan', () => {
     expect(bestSell([], 1)).toBeNull();
     // Demand that merely equals the load is not cover: the bulk sales tax starts near a quarter of demand.
     expect(bestSell([{ sellPrice: 500, demand: 39, distance: 1 }], 10)).toBeNull();
+  });
+
+  it('never offers a ghost: the 999,999 placeholder off the goal list and a row older than a week are dropped, a listed goal market at 999,999 stands', async () => {
+    const IMPORTS = '/commodity/name/thortveitite/imports?fleetCarriers=false&maxDaysAgo=7';
+    calls.length = 0;
+    const plan = await buildSellPlan({ state, journalDir, rangeLy: 50, fetchJson, now: NOW });
+    expect(calls.some((p) => p.includes('/imports?') && p.includes('maxDaysAgo=7'))).toBe(true); // Ardent is asked for fresh rows
+    const t = plan.rows.find((r) => r.key === 'thortveitite');
+    const offers = [t.here, t.local, t.galaxy, t.top].filter(Boolean);
+    expect(offers.every((o) => o.station !== 'Cormack Beacon' && o.station !== 'Stale Star'), JSON.stringify(offers.map((o) => [o.station, o.price]))).toBe(true);
+    expect(t.galaxy.price).toBe(327007);                       // Borel Vista, a carrier jump out — the ghosts never displaced it
+    expect(t.top == null || t.top.station !== 'Cormack Beacon').toBe(true); // TolaGarf's sits 22,000 ly out, beyond reach, as in the base test
+    _setCommunityGoals([{ market: 'Goal Port', system: 'Goalsys', expiry: new Date(Date.now() + DAY).toISOString() }]); // the goal list is judged against the real clock
+    const withGoal = { ...ardent, [IMPORTS]: [...ardent[IMPORTS], { commodityName: 'thortveitite', marketId: 404, stationName: 'Goal Port', systemName: 'Goalsys', stationType: 'Coriolis', maxLandingPadSize: 3, sellPrice: 1200000, demand: 999999, updatedAt: iso(NOW), systemX: 300, systemY: 0, systemZ: 0 }] };
+    const p2 = await buildSellPlan({ state, journalDir, rangeLy: 50, fetchJson: async (p) => withGoal[p] ?? null, now: NOW });
+    const t2 = p2.rows.find((r) => r.key === 'thortveitite');
+    expect((t2.top || t2.galaxy).station).toBe('Goal Port');
+    expect((t2.top || t2.galaxy).cg).toBe(true);
+    _setCommunityGoals([]);
   });
 });

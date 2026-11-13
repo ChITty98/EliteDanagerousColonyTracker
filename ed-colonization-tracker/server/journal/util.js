@@ -7,6 +7,8 @@
  * in dev mode via `node server.mjs`.
  */
 
+import { agoLabel } from './populationEstimate.js';
+
 /**
  * Module-scope registry of MarketIDs known to be Fleet Carriers, populated
  * from the persisted dossier (knownStations) at server startup and updated
@@ -216,4 +218,144 @@ export function depotRename(project, ident, marketId) {
     out.name = depotProjectName({ systemName: project.systemName || ident.systemName, stationName: next }, marketId);
   }
   return out;
+}
+
+/**
+ * The faction state a dock leaves on the dossier. The game omits FactionState when the faction is in
+ * no state, and a Docked event always carries the faction block — so "faction named, no state" means
+ * the state has CLEARED, never "keep the old one" (Deshpande Plant wore a June War for three months,
+ * 1.60.23). Only an event with no faction block at all (an FSS-only sighting) says nothing and leaves
+ * the record as it was. `changed` is true only for a transition away from a recorded state, so the
+ * first observed state is not logged as a change — as before.
+ * @param {string|null|undefined} prevState  the dossier's recorded state
+ * @param {{ faction?: string|null, factionState?: string|null } | null | undefined} payload  what the event said
+ * @returns {{ state: string|null, changed: boolean }}
+ */
+export function resolveDockFactionState(prevState, payload) {
+  const prev = prevState || null;
+  const named = !!(payload && payload.faction != null);
+  const stated = payload && payload.factionState != null ? payload.factionState : null;
+  const state = named ? stated : (stated != null ? stated : prev);
+  const changed = !!(prev && (named || stated != null) && state !== prev);
+  return { state, changed };
+}
+
+// ===== Arrival and dock context (1.60.30) =====
+
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "2 Sep" in the machine's local calendar, with the year when it is not the current one: "11 Sep 2025". */
+export function shortDate(iso, now = Date.now()) {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  const d = new Date(t);
+  const n = new Date(now);
+  return `${d.getDate()} ${SHORT_MONTHS[d.getMonth()]}${d.getFullYear() !== n.getFullYear() ? ` ${d.getFullYear()}` : ''}`;
+}
+
+/** "2 Sep (4 weeks ago)" — a date and how long ago, for the arrival and welcome lines. */
+export function lastVisitLabel(iso, now = Date.now()) {
+  const date = shortDate(iso, now);
+  if (!date) return null;
+  const ago = agoLabel(iso, now);
+  return ago ? `${date} (${ago})` : date;
+}
+
+/** 1st, 2nd, 3rd, 4th … 11th, 12th, 13th … 21st, 22nd … 111th, 112th. */
+export function ordinal(n) {
+  const v = Math.abs(Math.trunc(n)) % 100;
+  const s = (v >= 11 && v <= 13) ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' })[v % 10] || 'th';
+  return `${n}${s}`;
+}
+
+/**
+ * The arrival line's visit part, from the system record AS IT STOOD BEFORE THIS JUMP:
+ * "Last here 2 Sep (4 weeks ago) · 77th visit", or the first-time note when there is no record.
+ * The count suffix needs a count on record; this jump is visitCount + 1.
+ */
+export function describeLastVisit(known, now = Date.now()) {
+  const last = known && known.lastSeen ? lastVisitLabel(known.lastSeen, now) : null;
+  if (!last) return '\u2728 First time in this system';
+  const visits = known.visitCount > 0 ? ` \u00B7 ${ordinal(known.visitCount + 1)} visit` : '';
+  return `Last here ${last}${visits}`;
+}
+
+/**
+ * Merge a live jump's system record into the stored one. The extractor counts the visits in the
+ * lines it was given, so a live batch says "1" — before 1.60.30 that REPLACED the record (HIP 47126
+ * read visit 1 with 77 arrivals on file) and dropped the fields a jump event does not carry.
+ * Counts accumulate; fields the jump carries win; fields it lacks survive; lastSeen never moves back.
+ * Sync All still recounts from the full journal and replaces.
+ */
+export function mergeKnownSystem(prior, incoming) {
+  if (!prior) return incoming;
+  if (!incoming) return prior;
+  const out = { ...prior, ...incoming };
+  out.visitCount = (Number(prior.visitCount) || 0) + (Number(incoming.visitCount) || 0);
+  if (!(incoming.population > 0)) out.population = prior.population;
+  if (!incoming.coordinates) out.coordinates = prior.coordinates;
+  if (incoming.bodyCount == null) out.bodyCount = prior.bodyCount;
+  if (!incoming.economy || incoming.economy === 'Unknown') { out.economy = prior.economy; out.economyLocalised = prior.economyLocalised; }
+  if (incoming.secondEconomy == null) { out.secondEconomy = prior.secondEconomy; out.secondEconomyLocalised = prior.secondEconomyLocalised; }
+  if (!incoming.lastSeen || (prior.lastSeen && incoming.lastSeen < prior.lastSeen)) out.lastSeen = prior.lastSeen;
+  return out;
+}
+
+/**
+ * Where the commander is docked according to a journal file's lines: the latest Docked (or a login
+ * while docked) with no Undocked, FSDJump, CarrierJump or Shutdown after it. The watcher seeds
+ * currentDock from this at boot — it tails from the end of the file, so a dock made while the exe
+ * was down is otherwise invisible, and a depot event then has no station to name its project after
+ * ("Depot 3964283138", Plait Reach, 2026-10-07).
+ */
+export function latestDockFromLines(lines) {
+  for (let i = (lines || []).length - 1; i >= 0; i--) {
+    const line = String(lines[i] || '').trim();
+    if (!line) continue;
+    let ev;
+    try { ev = JSON.parse(line); } catch { continue; }
+    if (!ev || typeof ev !== 'object') continue;
+    if (ev.event === 'Undocked' || ev.event === 'FSDJump' || ev.event === 'CarrierJump' || ev.event === 'Shutdown') return null;
+    const dockedHere = ev.event === 'Docked' || (ev.event === 'Location' && ev.Docked === true);
+    if (dockedHere && typeof ev.MarketID === 'number' && ev.StationName) {
+      return { marketId: ev.MarketID, stationName: ev.StationName, systemName: ev.StarSystem || '', dockedAt: ev.timestamp || new Date().toISOString() };
+    }
+    if (ev.event === 'Location') return null; // logged in, not docked
+  }
+  return null;
+}
+
+/**
+ * Field-level fixes for a construction project created without its identity, or still wearing the
+ * auto-created placeholder name ("Depot 3964283138", "Depot 4389829123 ()") after another path filled
+ * the identity in: blanks are filled from the identity, and the display name is rebuilt from
+ * "System - Station" when it is still a placeholder. A name the commander typed is never touched.
+ * Returns the updates, or null when there is nothing to change.
+ */
+export function healDepotProject(project, ident, marketId) {
+  if (!project) return null;
+  const id = ident || {};
+  const out = {};
+  const sys = project.systemName || id.systemName || '';
+  const st = project.stationName || id.stationName || '';
+  if (!project.systemName && sys) out.systemName = sys;
+  if (!project.stationName && st) out.stationName = st;
+  if (project.systemAddress == null && typeof id.systemAddress === 'number') out.systemAddress = id.systemAddress;
+  if (!project.stationType && id.stationType) out.stationType = id.stationType;
+  const placeholder = !project.name || /^Depot \d+( \(\))?$/.test(project.name);
+  if (placeholder && sys) out.name = depotProjectName({ systemName: sys, stationName: st }, marketId);
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * The finished facility's name from its construction-site name: "Orbital Construction Site: Plait
+ * Reach" → "Plait Reach". A plain name stands as it is; a colonisation ship gives nothing. An
+ * installation never takes a dock, so this is the only place its finished name can come from.
+ */
+export function finishedNameFromSite(name) {
+  const s = String(name || '').trim();
+  if (!s || isColonisationShip(s)) return '';
+  const m = s.match(/^(?:Planetary|Orbital|Surface|Space)\s+Construction\s+Site:\s*(.+)$/i);
+  if (m) return m[1].trim();
+  return isConstructionStationName(s) ? '' : s;
 }

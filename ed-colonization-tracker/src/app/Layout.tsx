@@ -12,6 +12,9 @@ import { UpdateBanner } from '@/features/update/UpdateBanner';
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '\u25C6' },
   { to: '/domain', label: "Architect's Domain", icon: '\u{1F3DB}\u{FE0F}' },
+  { to: '/installations', label: 'Installations', icon: '\u{1F3ED}' },
+  { to: '/factions', label: 'Factions', icon: '\u2691' },
+  { to: '/ships', label: 'Ship Stable', icon: '\u{1F680}' },
   { to: '/map', label: 'Map', icon: '\u{1F30C}' },
   { to: '/system-view', label: 'System View', icon: '\u{2604}\u{FE0F}' },
   { to: '/sights', label: 'Sights', icon: '\u{1F4F8}' },

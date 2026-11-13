@@ -393,6 +393,24 @@ export function fetchLatestPositionFromJournal(journalDir) {
   return null;
 }
 
+/**
+ * One FSS signal row per system + signal name + type, carrying the latest sighting; isStation stays true once any
+ * sighting said so. Every sighting since 2018 was kept before (107,627 rows, 16 MB of the state every browser
+ * fetched on every change) when the pages only ask which station signals a system has (1.60.36).
+ */
+export function dedupeFssSignals(list) {
+  const byKey = new Map();
+  for (const s of Array.isArray(list) ? list : []) {
+    if (!s || s.systemAddress == null || !s.signalName) continue;
+    const key = `${s.systemAddress}|${String(s.signalName).toLowerCase()}|${s.signalType || ''}`;
+    const cur = byKey.get(key);
+    if (!cur) { byKey.set(key, { ...s }); continue; }
+    if (String(s.timestamp || '') > String(cur.timestamp || '')) { cur.timestamp = s.timestamp; cur.signalName = s.signalName; }
+    if (s.isStation) cur.isStation = true;
+  }
+  return Array.from(byKey.values());
+}
+
 /** Latest Loadout event's cargo capacity + ship name. Walks newest-first; stops at first file with a Loadout. */
 export function extractLatestCargoCapacity(journalDir) {
   const files = listJournalFiles(journalDir);
@@ -570,7 +588,7 @@ export function extractKnowledgeBaseFromEvents(parsed, settings) {
     addressMap[ev.SystemAddress] = ev.StarSystem;
   }
 
-  // FSSSignalDiscovered
+  // FSSSignalDiscovered — collapsed to one row per system + signal below (dedupeFssSignals, 1.60.36)
   for (const ev of fssSignalEvents) {
     fssSignals.push({
       signalName: ev.SignalName_Localised || ev.SignalName,
@@ -691,7 +709,7 @@ export function extractKnowledgeBaseFromEvents(parsed, settings) {
     systems: Array.from(systemsMap.values()),
     stations: Array.from(stationsMap.values()),
     systemAddressMap: addressMap,
-    fssSignals,
+    fssSignals: dedupeFssSignals(fssSignals),
     fleetCarriers: Array.from(fcMap.values()),
     claimedSystems: Array.from(new Set(systemClaimEvents.map((e) => e.StarSystem))),
     bodyVisits: Array.from(bodyVisitsMap.values()),

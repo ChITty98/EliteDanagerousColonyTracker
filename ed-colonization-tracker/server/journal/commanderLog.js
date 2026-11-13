@@ -14,7 +14,8 @@
 //            system · a scouted system scoring high on the app's own scale · first landing on a
 //            body that is "cool" (oxygen/ammonia atmosphere, rings, gravity at the extremes,
 //            first discovered by the commander, brain trees, a recorded sighting)
-//   notable  a long-haul day (80+ jumps) · a wing sitting · a bounty night · a Codex first ·
+//   notable  a long-haul day (80+ jumps) · a wing sitting · a bounty night · a war night
+//            (conflict-zone kills, paid in combat bonds) · a Codex first ·
 //            an engineer unlocked · a big carrier move · first landing on an ordinary body
 //   routine  everything else, folded into the sitting's summary line
 // Deliberately absent: Community Goal rewards, exploration sales (the find is the event, the
@@ -69,6 +70,7 @@ const KIND_WORDS = {
   codex_first: ['codex'], engineer: ['engineer', 'engineers'],
   long_haul: ['haul', 'hauls', 'jumps', 'trip'],
   bounty_night: ['bounty', 'bounties', 'combat'],
+  war_night: ['war', 'wars', 'combat', 'conflict', 'conflict zone', 'conflict zones', 'cz', 'bonds', 'combat bonds', 'kills'],
   missions: ['mission', 'missions', 'job', 'jobs', 'courier', 'massacre', 'donation', 'donations'],
   scouted: ['scouted', 'scouting'],
   vehicle_first: ['srv', 'srvs', 'buggy', 'vehicle', 'vehicles', 'scarab', 'scorpion', 'nomad', 'rhino', 'fighter'],
@@ -102,6 +104,8 @@ const KEEP = new Set([
   'StoredShips', 'Rank', 'Progress', 'MissionCompleted', 'MissionFailed',
   'LaunchSRV', 'DockSRV', 'LaunchFighter', 'ScanOrganic', 'SellOrganicData',
   'CommunityGoal', 'CommunityGoalJoin', 'CommunityGoalReward',
+  'FactionKillBond', 'SupercruiseDestinationDrop', 'RedeemVoucher', // war nights (1.61.1)
+  'MarketBuy', 'MarketSell', 'CargoTransfer', 'ColonisationContribution', // trading and hauling on the sitting line (1.61.1)
 ]);
 const DEATH_FOLD_MS = 24 * 3600e3; // a second death the same day is noise, not a second event
 
@@ -201,6 +205,8 @@ function scoutedTotal(s) {
  * @returns {{ sittings: object[], events: object[] }}  both newest first
  */
 export function buildCommanderLog({ events, state = {}, gallery = {}, surfaceVisits = [], rocks = [], depotShots = null, options = {} } = {}) {
+  // Buying from or selling to your OWN carrier moves stock between your own holds — not trade.
+  const myCarrierMarket = (state && state.settings && state.settings.myFleetCarrierMarketId) ?? null;
   const o = { ...DEFAULTS, ...options };
   const out = [];
   const sittings = [];
@@ -325,6 +331,23 @@ export function buildCommanderLog({ events, state = {}, gallery = {}, surfaceVis
       push({ at: sitting.bountyAt || sitting.startedAt, weight: 'notable', kind: 'bounty_night', system: where,
         line: `Bounty night at ${where || 'unknown'}: ${sitting.bounties} bounties, ${fmtCr(sitting.bountyTotal)} cr, largest ${fmtCr(sitting.bountyMax)}`, refs: [{ event: 'Bounty', count: sitting.bounties }] });
     }
+    // A war night: every combat bond is a kill credited in a conflict zone, so any bond earns the line.
+    // Zones are the drops into a conflict zone that went on to score at least one kill — dropping in and
+    // leaving is not fighting there. The journal never says who won a zone, so the line never claims it.
+    if (sitting.bonds > 0) {
+      const where = [...sitting.bondSystems].slice(0, 2).join(', ');
+      const sides = [...sitting.bondSides.entries()].sort((a, b) => b[1] - a[1]);
+      const foes = [...sitting.bondFoes.entries()].sort((a, b) => b[1] - a[1]).map(([n]) => n);
+      const forWho = sides.length === 1 ? ` for ${sides[0][0]}` : sides.length ? ` for ${sides.map(([n, c]) => `${n} (${c})`).join(' and ')}` : '';
+      const against = foes.length ? ` against ${foes.slice(0, 2).join(' and ')}` : '';
+      const fought = sitting.zones.filter((z) => z.kills > 0);
+      const lv = ['low', 'medium', 'high'].map((l) => [l, fought.filter((z) => z.level === l).length]).filter(([, n]) => n);
+      const zoneBit = fought.length ? `${fought.length} conflict zone${fought.length === 1 ? '' : 's'}${lv.length ? ` (${lv.map(([l, n]) => `${n} ${l}`).join(', ')})` : ''}, ` : '';
+      const redeemed = sitting.bondsRedeemed > 0 ? ` · ${fmtCr(sitting.bondsRedeemed)} cr redeemed` : '';
+      push({ at: sitting.bondAt || sitting.startedAt, weight: 'notable', kind: 'war_night', system: where,
+        line: `War at ${where || 'unknown'}${forWho}${against}: ${zoneBit}${sitting.bonds} kill${sitting.bonds === 1 ? '' : 's'}, ${fmtCr(sitting.bondTotal)} cr in bonds${redeemed}`,
+        refs: [{ event: 'FactionKillBond', count: sitting.bonds }] });
+    }
     // Missions: 1,310 completions is not 1,310 entries. One line per sitting — what you ran and
     // what it paid — with the biggest single payout named, because that is the one you remember.
     // Donations pay nothing and cost credits: they bought rank, and the line says that instead.
@@ -333,7 +356,13 @@ export function buildCommanderLog({ events, state = {}, gallery = {}, surfaceVis
       const cr = paid.reduce((a, m) => a + m.reward, 0);
       const top = paid.reduce((a, m) => (!a || m.reward > a.reward ? m : a), null);
       const n = sitting.missions.length;
-      const where = [...sitting.systems].slice(0, 1)[0] || sitting.lastSystem || null;
+      // Where they were handed in, busiest first: each mission carries the system it was completed in. The line used
+      // to name the sitting's first jump, which put 55 missions in nine systems "at" the one that had a single
+      // hand-in (2026-10-25, 1.60.38).
+      const bySystem = new Map();
+      for (const m of sitting.missions) if (m.system) bySystem.set(m.system, (bySystem.get(m.system) || 0) + 1);
+      const ranked = [...bySystem.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+      const where = ranked.length ? ranked[0][0] : (sitting.lastSystem || null);
       const bits = [`${n} mission${n === 1 ? '' : 's'}`];
       if (cr) bits.push(`${fmtCr(cr)} cr`);
       if (sitting.donated) bits.push(`${fmtCr(sitting.donated)} cr donated`);
@@ -341,8 +370,17 @@ export function buildCommanderLog({ events, state = {}, gallery = {}, surfaceVis
       else if (top && paid.length === 1) bits.push(top.name);
       if (sitting.missionsFailed) bits.push(`${sitting.missionsFailed} failed`);
       const weight = cr >= o.missionMajorCr || (top && top.reward >= o.missionBig) ? 'major' : cr >= 1e6 || sitting.donated >= 1e6 ? 'notable' : 'routine';
+      let line = `Missions${where ? ` at ${where}` : ''}: ${bits.join(', ')}`;
+      let detail;
+      if (ranked.length > 1) {
+        const short = (s) => String(s).replace(/^.+ Sector /i, '');
+        const shown = ranked.slice(0, 3).map(([s, c]) => `${short(s)} ${c}`).join(', ');
+        const rest = bits.slice(1);
+        line = `Missions: ${n} in ${ranked.length} systems, ${shown}${ranked.length > 3 ? ` and ${ranked.length - 3} more` : ''}${rest.length ? `: ${rest.join(', ')}` : ''}`;
+        detail = ranked.map(([s, c]) => `${s}: ${c}`).join('\n');
+      }
       push({ at: sitting.missions[0].at, weight, kind: 'missions', system: where,
-        line: `Missions${where ? ` at ${where}` : ''}: ${bits.join(', ')}`, cr, count: n,
+        line, detail, cr, count: n,
         refs: [{ event: 'MissionCompleted', count: n, from: sitting.missions[0].at, to: sitting.missions[n - 1].at }] });
     }
     // Exobiology. Most landings are not sightseeing — they are a sampling run, and the promotions
@@ -408,6 +446,11 @@ export function buildCommanderLog({ events, state = {}, gallery = {}, surfaceVis
       landedHere: new Set(),   // one landing entry per body per sitting; the rest is manoeuvring
       wing: new Set(), wingAt: null, wingSystem: null,
       bounties: 0, bountyTotal: 0, bountyMax: 0, bountyAt: null, bountySystems: new Set(),
+      // War: conflict-zone kills pay combat BONDS, not bounties — counted apart or a war night reads "quiet".
+      bonds: 0, bondTotal: 0, bondAt: null, bondSides: new Map(), bondFoes: new Map(), bondSystems: new Set(),
+      zones: [], bondsRedeemed: 0,
+      // Trading and hauling, folded into the sitting's line — the work of most evenings.
+      bought: 0, sold: 0, profit: 0, delivered: 0, toCarrier: 0,
       missions: [], missionsFailed: 0, donated: 0,
       organic: [],   // completed specimens this sitting — the reason most landings happen
       codex: [], carrier: [],
@@ -611,6 +654,54 @@ export function buildCommanderLog({ events, state = {}, gallery = {}, surfaceVis
         sitting.bounties += 1; sitting.bountyTotal += total; sitting.bountyMax = Math.max(sitting.bountyMax, total);
         if (!sitting.bountyAt) sitting.bountyAt = at;
         if (cur.system) sitting.bountySystems.add(cur.system);
+        break;
+      }
+      case 'FactionKillBond': {
+        if (!sitting) break;
+        sitting.bonds += 1;
+        sitting.bondTotal += e.Reward || 0;
+        if (!sitting.bondAt) sitting.bondAt = at;
+        if (e.AwardingFaction) sitting.bondSides.set(e.AwardingFaction, (sitting.bondSides.get(e.AwardingFaction) || 0) + 1);
+        if (e.VictimFaction) sitting.bondFoes.set(e.VictimFaction, (sitting.bondFoes.get(e.VictimFaction) || 0) + 1);
+        if (cur.system) sitting.bondSystems.add(cur.system);
+        const zone = sitting.zones[sitting.zones.length - 1]; // bonds are only paid inside a conflict zone
+        if (zone) zone.kills += 1;
+        break;
+      }
+      case 'SupercruiseDestinationDrop': {
+        if (!sitting) break;
+        const t = `${e.Type || ''} ${e.Type_Localised || ''}`;
+        if (/warzone|conflict zone/i.test(t)) {
+          const level = /_high|high intensity/i.test(t) ? 'high' : /_med|medium intensity/i.test(t) ? 'medium' : /_low|low intensity/i.test(t) ? 'low' : null;
+          sitting.zones.push({ level, kills: 0, at });
+        }
+        break;
+      }
+      case 'RedeemVoucher': {
+        if (!sitting) break;
+        if (e.Type === 'CombatBond') sitting.bondsRedeemed += e.Amount || 0;
+        break;
+      }
+      case 'MarketBuy': {
+        if (!sitting || (myCarrierMarket != null && e.MarketID === myCarrierMarket)) break;
+        sitting.bought += e.Count || 0;
+        break;
+      }
+      case 'MarketSell': {
+        if (!sitting || (myCarrierMarket != null && e.MarketID === myCarrierMarket)) break;
+        const n = e.Count || 0;
+        sitting.sold += n;
+        sitting.profit += (e.TotalSale || 0) - (e.AvgPricePaid || 0) * n; // mined goods cost nothing, so they count in full
+        break;
+      }
+      case 'CargoTransfer': {
+        if (!sitting) break;
+        for (const t of Array.isArray(e.Transfers) ? e.Transfers : []) if (t && t.Direction === 'tocarrier') sitting.toCarrier += t.Count || 0;
+        break;
+      }
+      case 'ColonisationContribution': {
+        if (!sitting) break;
+        for (const c of Array.isArray(e.Contributions) ? e.Contributions : []) sitting.delivered += (c && c.Amount) || 0;
         break;
       }
       case 'MissionCompleted': {
@@ -916,6 +1007,8 @@ export function buildCommanderLog({ events, state = {}, gallery = {}, surfaceVis
     s.lyFromHome = there ? Math.round(dist(home, there)) : null;
     s.systems = s.systems.size; s.bodiesScanned = s.scanned.size; s.firstDiscoveries = s.firstScanned.size;
     s.wing = [...s.wing]; s.bountySystems = [...s.bountySystems];
+    s.bondSystems = [...s.bondSystems]; s.bondSides = Object.fromEntries(s.bondSides); s.bondFoes = Object.fromEntries(s.bondFoes);
+    s.zonesFought = s.zones.filter((z) => z.kills > 0).length; delete s.zones;
     delete s.scanned; delete s.firstScanned; delete s.disc; delete s.codex; delete s.carrier; delete s.landedHere;
   }
   // The fleet as it stands: every stored hull plus the one you are flying, each with the day it
@@ -1018,5 +1111,10 @@ export function sittingSummary(s) {
   if (s.bodiesScanned) bits.push(`${s.bodiesScanned} bodies scanned${s.firstDiscoveries ? ` (${s.firstDiscoveries} first)` : ''}`);
   if (s.tonnesMined) bits.push(`${s.tonnesMined} t mined`);
   if (s.bounties && !(s.events || []).some((e) => e.kind === 'bounty_night')) bits.push(`${s.bounties} bounties`);
+  if (s.bonds) bits.push(`${s.bonds} conflict-zone kill${s.bonds === 1 ? '' : 's'}`); // always — a night of kills is never "quiet"
+  if (s.delivered) bits.push(`${s.delivered.toLocaleString()} t delivered to builds`);
+  if (s.toCarrier) bits.push(`${s.toCarrier.toLocaleString()} t to the carrier`);
+  if (s.bought) bits.push(`${s.bought.toLocaleString()} t bought`);
+  if (s.sold) bits.push(`${s.sold.toLocaleString()} t sold${s.profit ? `, ${s.profit > 0 ? '+' : '−'}${fmtCr(Math.abs(s.profit))} cr` : ''}`);
   return bits.join(' · ') || 'quiet';
 }

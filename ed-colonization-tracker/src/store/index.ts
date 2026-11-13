@@ -148,6 +148,26 @@ type MergeStrategy =
   | { kind: 'numberSet' }
   | { kind: 'replace' };
 
+// Dated maps (mirrors FRESHNESS_STAMPS in server/journal/statePatch.js): a record in this tab that is OLDER
+// than the baseline's copy is stale local state, not a change — it is left out of the diff and reported to
+// the exe terminal. On 2026-10-25 a tab pushed 23 Sep / 9 Oct market snapshots over the 23 Oct ones.
+const FRESHNESS_STAMPS: Record<string, string> = {
+  marketSnapshots: 'updatedAt',
+  knownSystems: 'lastSeen',
+  systemFactions: 'updatedAt',
+};
+let lastDiffStaleSkips: string[] = [];
+function recordStamp(rec: unknown, field: string): number | null {
+  const v = rec && typeof rec === 'object' ? (rec as Record<string, unknown>)[field] : null;
+  if (typeof v !== 'string' || !v) return null;
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? t : null;
+}
+function isOlderRecord(current: unknown, base: unknown, field: string): boolean {
+  const a = recordStamp(current, field), b = recordStamp(base, field);
+  return a != null && b != null && a < b;
+}
+
 const MERGE_STRATEGIES: Record<string, MergeStrategy> = {
   // Record<id, entity>
   knownSystems: { kind: 'map' },
@@ -164,6 +184,10 @@ const MERGE_STRATEGIES: Record<string, MergeStrategy> = {
   fleetCarrierSpaceUsage: { kind: 'map' },
   scoutedConflicts: { kind: 'map' },
   stationBodyOverrides: { kind: 'map' },
+  factionPriorities: { kind: 'map' },
+  shipInventory: { kind: 'map' },
+  shipCraft: { kind: 'map' },
+  storedShips: { kind: 'replace' },
   // Array with id field
   projects: { kind: 'arrayById', idKey: 'id' },
   sessions: { kind: 'arrayById', idKey: 'id' },
@@ -201,6 +225,10 @@ const MERGE_STRATEGIES: Record<string, MergeStrategy> = {
   // User-authored override maps — sparse merge so cross-tab races can't wipe them
   populationOverrides: { kind: 'map' },
   stationDistOverrides: { kind: 'map' },
+  // The System Factions panel per system — server-written from the journal, sparse merge (1.60.24)
+  systemFactions: { kind: 'map' },
+  // "A facility's population never goes down" — server-written floors, only ever rise (1.60.26)
+  facilityPopulationFloor: { kind: 'map' },
   // Scalar timestamp — explicit entry so the partialize↔strategies symmetry
   // check (tests/store-symmetry.test.mjs) stays exhaustive.
   lastSessionSummaryShown: { kind: 'replace' },
@@ -233,8 +261,11 @@ function computeKeyDiff(key: string, current: unknown, base: unknown): unknown {
     const baseMap = (base ?? {}) as Record<string, unknown>;
     const upsert: Record<string, unknown> = {};
     const remove: string[] = [];
+    const stampField = FRESHNESS_STAMPS[key];
     for (const [k, v] of Object.entries(curMap)) {
-      if (!deepEqual(v, baseMap[k])) upsert[k] = v;
+      if (deepEqual(v, baseMap[k])) continue;
+      if (stampField && isOlderRecord(v, baseMap[k], stampField)) { lastDiffStaleSkips.push(`${key}/${k}`); continue; }
+      upsert[k] = v;
     }
     for (const k of Object.keys(baseMap)) {
       if (!(k in curMap)) remove.push(k);
@@ -282,6 +313,7 @@ function computeKeyDiff(key: string, current: unknown, base: unknown): unknown {
 }
 
 function computeStateDiff(current: Record<string, unknown>): Record<string, unknown> | null {
+  lastDiffStaleSkips = [];
   const patch: Record<string, unknown> = {};
   const keys = new Set([...Object.keys(current), ...Object.keys(stateBaseline)]);
   for (const key of keys) {
@@ -335,6 +367,18 @@ const serverStorage: StateStorage = {
         const parsed = JSON.parse(value);
         const current = parsed.state as Record<string, unknown>;
         const patch = computeStateDiff(current);
+        if (lastDiffStaleSkips.length > 0) {
+          const skipped = lastDiffStaleSkips.slice(0, 6).join(', ') + (lastDiffStaleSkips.length > 6 ? '...' : '');
+          console.warn(`[Store] left ${lastDiffStaleSkips.length} stale record(s) out of the PATCH: ${skipped}`);
+          try {
+            const tk = (() => { try { return sessionStorage.getItem('colony-token'); } catch { return null; } })();
+            const route = (() => { try { return window.location.pathname + window.location.hash; } catch { return '?'; } })();
+            fetch(tk ? `/api/log?token=${tk}` : '/api/log', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ tag: 'StaleUpsert', message: `route=${route} skipped ${lastDiffStaleSkips.length} stale record(s): ${skipped}` }),
+            }).catch(() => {});
+          } catch { /* ignore */ }
+        }
         if (!patch) return; // nothing changed
 
         // Diagnostic: log any __remove operations before sending. The append-only
@@ -454,13 +498,33 @@ function markOwnPatch() {
   lastOwnPatchTime = Date.now();
 }
 
+// zustand 5 numbers every hydration and throws away the result of any that a newer rehydrate() overtook
+// (hydrationVersion in persist). With the 1.60.36 handlers calling rehydrate() the moment a push or a reconnect
+// arrived, every 30 MB fetch was overtaken by the next one and the store never filled — "a fresh environment two
+// minutes after a restart". One hydration runs at a time; a request made during one runs once more after it, and
+// the store's own first hydration is left to finish rather than cancelled (1.60.37).
+let rehydrateRun: Promise<void> | null = null;
+let rehydrateAgain = false;
+function rehydrateOnce(): Promise<void> {
+  if (rehydrateRun) { rehydrateAgain = true; return rehydrateRun; }
+  rehydrateRun = (async () => {
+    if (!useAppStore.persist.hasHydrated()) {
+      await new Promise<void>((resolve) => {
+        const unsub = useAppStore.persist.onFinishHydration(() => { unsub(); resolve(); });
+        setTimeout(() => { unsub(); resolve(); }, 120_000);
+      });
+    }
+    do {
+      rehydrateAgain = false;
+      try { await useAppStore.persist.rehydrate(); } catch { /* ignore */ }
+    } while (rehydrateAgain);
+  })().finally(() => { rehydrateRun = null; });
+  return rehydrateRun;
+}
+
 async function forceStateRehydrate(reason: string): Promise<void> {
   try {
-    const res = await fetch(apiUrl('/api/state'));
-    if (!res.ok) return;
-    const data = await res.json();
-    if (!data || Object.keys(data).length === 0) return;
-    await useAppStore.persist.rehydrate();
+    await rehydrateOnce();
     console.log(`[Store] Forced rehydrate (${reason})`);
     // Surface to server terminal so we can see when this fires on iPad
     try {
@@ -504,13 +568,8 @@ function startStateSyncListener() {
       if (Date.now() - lastOwnPatchTime < PATCH_IGNORE_WINDOW) return;
       if (Date.now() - lastExplorationUpdate < 5000) return;
     }
-    try {
-      const res = await fetch(apiUrl('/api/state'));
-      if (!res.ok) return;
-      const data = await res.json();
-      if (!data || Object.keys(data).length === 0) return;
-      await useAppStore.persist.rehydrate();
-    } catch { /* ignore */ }
+    // rehydrate() fetches the state itself (getItem); fetching it here first downloaded every change twice (1.60.36).
+    await rehydrateOnce();
   });
 
   // On (re)connect, force a catch-up rehydrate. Browser EventSource fires
@@ -638,6 +697,13 @@ interface AppState {
   updateStationType: (marketId: number, stationType: string, fallback?: { stationName: string; systemName: string; systemAddress: number }) => void;
   // Body overrides for stations without marketId (keyed by "systemName|stationName" lowercase)
   stationBodyOverrides: Record<string, string>;
+  /** Starred factions per system (lower-cased name) — project sourcing there prefers their stations (1.60.32) */
+  factionPriorities: Record<string, { factions: string[]; updatedAt: string }>;
+  setFactionPriorities: (systemName: string, factions: string[]) => void;
+  /** Ship stable (1.60.33): one record per ship from its Loadout, the last fleet list, the last craft launched per ship — server-written */
+  shipInventory: Record<string, import('@/lib/shipStats').ShipRecord>;
+  storedShips: import('@/lib/shipStats').StoredShips | null;
+  shipCraft: Record<string, import('@/lib/shipStats').ShipCraft>;
   setStationBodyOverride: (systemName: string, stationName: string, body: string) => void;
 
   // System Address mapping
@@ -788,6 +854,12 @@ interface AppState {
   // Manual population overrides (keyed by lowercase system name)
   populationOverrides: Record<string, { population: number; updatedAt: string }>;
   setPopulationOverride: (systemName: string, population: number) => void;
+
+  // The System Factions panel as the journal last reported it, keyed by lowercase system name (server-written)
+  systemFactions: Record<string, import('./types').SystemFactionsEntry>;
+
+  // Highest population figure each facility has shown, keyed "<system lower>|<facility key>" (server-written)
+  facilityPopulationFloor: Record<string, { population: number; at: string }>;
 
   // Manual distance overrides for stations (keyed by "systemName|stationName" lowercase)
   stationDistOverrides: Record<string, number>;
@@ -1008,12 +1080,11 @@ export const useAppStore = create<AppState>()(
               secondEconomyLocalised: system.secondEconomyLocalised ?? existing?.secondEconomyLocalised,
               lastSeen: isNewer ? system.lastSeen : existing!.lastSeen,
             };
-            // Auto-update manual population override if journal has newer data
-            if (system.population && system.population > 0) {
+            // A manual population is only a figure the commander typed that is newer than the game's
+            // reading: a fresher journal reading deletes it (mirrors the server, 1.60.25).
+            if (system.population && system.population > 0 && system.lastSeen) {
               const override = updatedPopOverrides[key];
-              if (override && system.lastSeen > override.updatedAt) {
-                updatedPopOverrides[key] = { population: system.population, updatedAt: system.lastSeen };
-              }
+              if (override && (!override.updatedAt || system.lastSeen >= override.updatedAt)) delete updatedPopOverrides[key];
             }
           }
           return { knownSystems: updated, populationOverrides: updatedPopOverrides };
@@ -1129,8 +1200,11 @@ export const useAppStore = create<AppState>()(
         const factionChanged = !!(prevFaction && payload.faction && prevFaction !== payload.faction);
 
         const prevState = existing?.factionState ?? null;
-        const currentState = payload.factionState ?? prevState;
-        const stateChanged = !!(prevState && payload.factionState && prevState !== payload.factionState);
+        // Mirror of server/journal/util.js resolveDockFactionState: the game omits FactionState when the
+        // faction is in no state, so a named faction with no state means the state cleared (1.60.23).
+        const stateNamedByEvent = payload.faction != null;
+        const currentState: string | null = stateNamedByEvent ? (payload.factionState ?? null) : (payload.factionState ?? prevState);
+        const stateChanged = !!(prevState && (stateNamedByEvent || payload.factionState != null) && currentState !== prevState);
 
         // Influence delta: compare against last influence snapshot (NOT all-time)
         const influenceHistory = existing?.influenceHistory ?? [];
@@ -1148,8 +1222,8 @@ export const useAppStore = create<AppState>()(
           if (newFactionHistory.length > 5) newFactionHistory.shift();
         }
         const newStateHistory = [...(existing?.stateHistory ?? [])];
-        if (stateChanged && payload.factionState) {
-          newStateHistory.push({ state: payload.factionState, changedAt: now });
+        if (stateChanged) {
+          newStateHistory.push({ state: currentState ?? 'None', changedAt: now });
           if (newStateHistory.length > DOCK_HISTORY_CAP) newStateHistory.shift();
         }
         const newInfluenceHistory = [...influenceHistory];
@@ -1187,7 +1261,7 @@ export const useAppStore = create<AppState>()(
           const updated: KnownStation = {
             ...base,
             faction: currentFaction ?? base.faction,
-            factionState: currentState ?? base.factionState,
+            factionState: stateNamedByEvent ? (currentState ?? undefined) : (currentState ?? base.factionState),
             firstDocked: existing?.firstDocked ?? now,
             lastDocked: now,
             dockedCount: newDockedCount,
@@ -1345,6 +1419,20 @@ export const useAppStore = create<AppState>()(
         set((state) => {
           const key = `${systemName.toLowerCase()}|${stationName.toLowerCase()}`;
           return { stationBodyOverrides: { ...state.stationBodyOverrides, [key]: body } };
+        }),
+
+      shipInventory: {},
+      storedShips: null,
+      shipCraft: {},
+
+      factionPriorities: {},
+      setFactionPriorities: (systemName, factions) =>
+        set((state) => {
+          const key = systemName.toLowerCase();
+          const next = { ...state.factionPriorities };
+          if (factions.length === 0) delete next[key];
+          else next[key] = { factions: [...factions], updatedAt: new Date().toISOString() };
+          return { factionPriorities: next };
         }),
 
       // System Address mapping
@@ -1611,6 +1699,10 @@ export const useAppStore = create<AppState>()(
 
       // Manual population overrides
       populationOverrides: {},
+      // System factions (server-written)
+      systemFactions: {},
+      // Facility population floors (server-written)
+      facilityPopulationFloor: {},
       setPopulationOverride: (systemName, population) =>
         set((state) => ({
           populationOverrides: { ...state.populationOverrides, [systemName.toLowerCase()]: { population, updatedAt: new Date().toISOString() } },
@@ -1766,9 +1858,15 @@ export const useAppStore = create<AppState>()(
         bodyNotes: state.bodyNotes,
         bodyFlags: state.bodyFlags,
         populationOverrides: state.populationOverrides,
+        systemFactions: state.systemFactions,
+        facilityPopulationFloor: state.facilityPopulationFloor,
         stationDistOverrides: state.stationDistOverrides,
         lastSessionSummaryShown: state.lastSessionSummaryShown,
         stationBodyOverrides: state.stationBodyOverrides,
+        factionPriorities: state.factionPriorities,
+        shipInventory: state.shipInventory,
+        storedShips: state.storedShips,
+        shipCraft: state.shipCraft,
         materialInventory: state.materialInventory,
         engineers: state.engineers,
         journalStats: state.journalStats,

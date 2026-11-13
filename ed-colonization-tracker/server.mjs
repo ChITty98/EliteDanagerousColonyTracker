@@ -24,8 +24,14 @@ import {
 } from './server/journal/paths.js';
 import { createCaptureStore } from './server/ai/copilotCapture.js';
 import { initCopilotMemory, recordAnswer, recordQuiz, getQuizHistory } from './server/ai/copilotMemory.js';
+import { initCopilotApi, apiStatus } from './server/ai/copilotApi.js';
+import { spanshNearestTraders, knownNearestTraders } from './server/journal/materialTraders.js';
+import { colonyMaterialBodies } from './server/journal/colonyMaterials.js';
+import { initCopilotOpinions, backfillDockDenials, onOpinionRated } from './server/ai/copilotOpinions.js';
 import { startTickPoll, getTickInfo, getGalaxyTick } from './server/journal/tick.js';
-import { runOnDemand, runNews } from './server/ai/copilot.js';
+import { runOnDemand, runNews, copilotCanSpeak, noteExternalLine } from './server/ai/copilot.js';
+import { readScreenshot, shotReadingOn, noteShotTaken, isDepositShot } from './server/ai/copilotShots.js';
+import { mergeGalleryMeta, removeGalleryEntry } from './server/journal/galleryMerge.js';
 import { startNewsRefresh } from './server/ai/copilotNews.js';
 import { buildTriviaRound } from './server/ai/copilotTrivia.js';
 import { registerLine, lookupLine, synthesize, voiceAvailable, PROFILES, DEFAULT_PERSONA } from './server/ai/copilotVoice.js';
@@ -48,7 +54,7 @@ import { friendlyShip, padSizeFor } from './server/journal/extractor.js';
 import { initMarketMeans, bestSellFromSnapshots } from './server/journal/marketMeans.js';
 import { initCommunityGoals } from './server/journal/communityGoals.js';
 import { initMarketHistory, backfillSales, sampleKeys, needsSample, recordArdentSample, historyStats } from './server/journal/marketHistory.js';
-import { buildSellPlan, buildSellAt, sellPlanKey, MAX_REACH_LY } from './server/journal/sellPlan.js';
+import { buildSellPlan, buildSellAt, sellPlanKey, MAX_REACH_LY, SELL_FRESH_DAYS } from './server/journal/sellPlan.js';
 import { initPopulatedStore, getPopulatedSystems, flushPopulatedStore } from './server/radar/populatedStore.js';
 import { readJournalEvents, buildCommanderLog, buildJourney, searchCommanderLog } from './server/journal/commanderLog.js';
 import { initCarrierLedger, ensureCarrierLedger, reconcileCarrierMarket, carrierCargoRecord, setCarrierBaseline, setCarrierBaselines } from './server/journal/carrierLedger.js';
@@ -57,14 +63,18 @@ import {
   findCommodityByDisplayName,
   commoditySymbol,
 } from './server/journal/commodities.js';
-import { isEphemeralStation } from './server/journal/util.js';
+import { isEphemeralStation, healDepotProject } from './server/journal/util.js';
 import { extractMaterialInventory, applyMaterialDeltaEvent } from './server/journal/materials.js';
 import {
   startServerWatcher,
   stopServerWatcher,
   getServerWatcherStatus,
 } from './server/journal/watcher.js';
+import zlib from 'node:zlib';
 import { pollCompanionFiles } from './server/journal/processors.js';
+import { extractMinedSales, surfaceYieldsFor } from './server/journal/factionGuide.js';
+import { extractShipInventory, extractShipLifetime } from './server/journal/ships.js';
+import { readSurfaceRecords, flushNow as flushSurfaceLog } from './server/journal/surfaceMining.js';
 import {
   initMiningLog, readRocks, getRateHistory, measuredRateFor, flushNow as flushMiningLog,
   backfillFromJournals, getLocationTotals, getCatchStats, markHotspot, getAnnotations,
@@ -79,8 +89,8 @@ import {
 import {
   initSurfaceMining, getSurfaceSummary, backfillFromJournals as backfillSurfaceMining, markDeposit,
   recordSighting, finalizeSurfaceMining, getSurfaceSnapshot, setCurrentSite, recordSiteCount, bodyNameFromLedger,
-  isRecordedScreenshot, retractSighting, recordRating, setHullSize, hullSizeFor, setNavTarget, clearNavTarget,
-  addPin, removePin, depotShotFiles as surfaceDepotShotFiles,
+  isRecordedScreenshotFile, retractSighting, recordRating, setHullSize, hullSizeFor, setNavTarget, clearNavTarget,
+  addPin, removePin, depotShotFiles as surfaceDepotShotFiles, isInSrvNow,
 } from './server/journal/surfaceMining.js';
 import { initApproach, getApproachTargets, getApproachRuns, getLiveApproach } from './server/journal/approach.js';
 // The nav lock names a body by BodyID only; this turns "Body": 14 into "1 a" for the hero band.
@@ -97,6 +107,9 @@ import { assessThreats } from './server/chains/threatWatch.js';
 import { buildDomainTasks } from './server/journal/domainTasks.js';
 import { refreshLookback } from './server/radar/lookback.js';
 import { searchRingsBySignals } from './server/journal/spansh.js';
+import { extractSystemFactions } from './server/journal/factions.js';
+import { raiseColonyFloors } from './server/journal/populationFloors.js';
+import { APPEND_ONLY_KEYS, mergeStatePatch } from './server/journal/statePatch.js';
 import { initUpdater, getUpdateStatus, checkForUpdate } from './server/update/updater.js';
 import { checklistSnapshot, checklistSetSkipped } from './server/journal/checklist.js';
 
@@ -172,6 +185,10 @@ const captureStore = createCaptureStore(CAPTURE_FILE);
 // server-owned file, kept OUT of the synced client state. See copilotMemory.js.
 const MEMORY_FILE = path.join(APP_DIR, 'copilot-memory.json');
 initCopilotMemory(MEMORY_FILE);
+// Anthropic API backend (optional — the commander's own credits): the key is ONE LINE in anthropic-key.txt
+// beside the exe, read server-side only; every call is priced into copilot-spend.json against the monthly cap.
+initCopilotApi({ keyFile: path.join(APP_DIR, 'anthropic-key.txt'), spendFile: path.join(APP_DIR, 'copilot-spend.json') });
+initCopilotOpinions({ captureFile: CAPTURE_FILE }); // station opinions read the persona's rated lines as voice examples
 startNewsRefresh(); // keep the GalNet cache warm for TARS's news beat (real feed; best-effort)
 
 // --- Automatic backup on startup ---
@@ -479,6 +496,102 @@ function recordGameScreenshot(ev) {
   console.log(`[Sightings] F10 shot ${basename} → ${key}${match ? ' (attached to sighting)' : ''}`);
   broadcastEvent({ type: 'screenshot_saved', system: ev.System, body: ev.Body || null, url, attached: !!match, timestamp: ev.timestamp });
   if (ext === 'bmp') convertGalleryEntryById(id).catch((e) => console.warn('[Gallery] on-arrival convert:', e && e.message));
+  scheduleShotRead({ ev, src, basename, imageId: id });
+}
+
+// --- The co-pilot looks at the shot (1.62.0, Anthropic API only) ---
+// A few seconds after the F10, so the journal tick that carried it has finished with the gallery. Only fresh
+// shots: the boot-time adoption of old surface shots goes through recordGameScreenshot too, and must
+// never spend a call. The original in Pictures is only ever READ — a scaled copy (longest edge 1,568 px,
+// the size the API reads at) goes to a temp file.
+const SHOT_READ_DELAY_MS = 4000;
+
+function visionResizeArgs(src, dst, maxEdge) {
+  const psq = (v) => `'${String(v).replace(/'/g, "''")}'`;
+  const script = [
+    'Add-Type -AssemblyName System.Drawing;',
+    `$img=[System.Drawing.Image]::FromFile(${psq(src)});`,
+    `$s=[Math]::Min(1.0, ${Number(maxEdge)} / [Math]::Max($img.Width, $img.Height));`,
+    '$w=[int][Math]::Round($img.Width*$s); $h=[int][Math]::Round($img.Height*$s);',
+    '$bmp=New-Object System.Drawing.Bitmap($w,$h); $g=[System.Drawing.Graphics]::FromImage($bmp);',
+    '$g.InterpolationMode=[System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic;',
+    '$g.DrawImage($img,0,0,$w,$h); $g.Dispose(); $img.Dispose();',
+    "$enc=[System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' };",
+    '$p=New-Object System.Drawing.Imaging.EncoderParameters(1);',
+    '$p.Param[0]=New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality,[long]85);',
+    `$bmp.Save(${psq(dst)},$enc,$p); $bmp.Dispose();`,
+  ].join(' ');
+  return ['-NoProfile', '-NonInteractive', '-Command', script];
+}
+
+function downscaleForVision(src) {
+  return new Promise((resolve) => {
+    const dst = path.join(os.tmpdir(), `edca-shot-${process.pid}-${Date.now()}.jpg`);
+    execFile('powershell.exe', visionResizeArgs(src, dst, 1568), { timeout: 30000, windowsHide: true }, (err) => {
+      if (err) { console.warn('[CopilotShots] resize failed:', err.message); resolve(null); return; }
+      let buf = null;
+      try { buf = fs.readFileSync(dst); } catch { buf = null; }
+      try { fs.unlinkSync(dst); } catch { /* temp file */ }
+      resolve(buf);
+    });
+  });
+}
+
+/** Merge fields into one gallery entry by id. */
+function updateGalleryEntry(imageId, fields) {
+  const meta = readGalleryMeta();
+  let hit = false;
+  for (const arr of Object.values(meta)) {
+    for (const e of Array.isArray(arr) ? arr : []) {
+      if (e && e.id === imageId) { Object.assign(e, fields); hit = true; }
+    }
+  }
+  if (hit) writeGalleryMeta(meta);
+  return hit;
+}
+
+// The state as applyStatePatch will merge into it — a patch still waiting to be flushed included.
+// Reading the disk alone could hand back a station record older than the one about to be written.
+const liveState = () => (pendingState ?? readStateFile()) || {};
+
+function scheduleShotRead({ ev, src, basename, imageId }) {
+  const settings = liveState().settings || {};
+  if (!shotReadingOn(settings)) return;
+  const at = Date.parse(ev && ev.timestamp);
+  if (!Number.isFinite(at) || Date.now() - at > 120000) return; // an old shot being adopted — never read
+  // A deposit shot — on the ground while surface mining is under way — is a HUD record, not the place.
+  // Decided from this shot's own event and the live mining state; never by file name (1.62.1).
+  let mining = false;
+  try { mining = !!getSurfaceSnapshot().active; } catch { mining = false; }
+  if (isDepositShot(ev, mining)) { console.log(`[CopilotShots] ${basename}: taken while surface mining — a deposit record, not read`); return; }
+  const seq = noteShotTaken();
+  setTimeout(() => {
+    downscaleForVision(src).then((buf) => {
+      if (!buf) return null;
+      const st = liveState();
+      const dock = st.currentDock || null;
+      return readScreenshot({
+        ev, image: { mediaType: 'image/jpeg', data: buf.toString('base64') }, state: st, settings: st.settings || {}, seq, inSrv: isInSrvNow(),
+        deps: { broadcastEvent, captureLine: captureStore.capture, canSpeak: copilotCanSpeak, noteLine: noteExternalLine },
+      }).then((r) => {
+        if (!r) return;
+        const now = new Date().toISOString();
+        updateGalleryEntry(imageId, {
+          vision: { kind: r.kind, description: r.description, tags: r.tags, at: now, model: r.model, ...(r.silent ? { silent: r.silent } : {}), ...(r.fixes && r.fixes.length ? { fixed: r.fixes } : {}) },
+          ...(r.line ? { copilotLine: { line: r.line, persona: r.persona, at: now } } : {}),
+        });
+        // The representative goes on the station's own record in the app, shown on the station.
+        if (r.station && dock && dock.marketId != null) {
+          const key = String(dock.marketId);
+          // Read and written in the same tick, from the same state applyStatePatch merges into: every
+          // other field of the station record is carried over exactly as it stands.
+          const current = (liveState().knownStations || {})[key];
+          if (current) applyStatePatch({ knownStations: { __upsert: { [key]: { ...current, representative: r.station } } } });
+        }
+        broadcastEvent({ type: 'gallery_updated', imageId, timestamp: now, quiet: true });
+      });
+    }).catch((e) => console.error('[CopilotShots] failed:', e && e.message));
+  }, SHOT_READ_DELAY_MS);
 }
 
 let stateWriteTimer = null;
@@ -522,7 +635,7 @@ function broadcastEvent(event) {
     }
   }
   // Skip noisy heartbeats; log everything else so we can prove broadcasts are firing.
-  if (event && event.type !== 'heartbeat' && !event.quiet) {
+  if (event && event.type !== 'heartbeat' && event.type !== 'approach_sample' && !event.quiet) {
     const src = event.source ? ` source=${event.source}` : '';
     console.log(`[SSE] broadcast ${event.type}${src} → ${delivered} client(s)${dropped ? ` (dropped ${dropped} dead)` : ''}`);
   }
@@ -577,40 +690,6 @@ function readStateFile() {
   return {};
 }
 
-// Append-only state keys: sparse PATCHes from clients can ONLY upsert/add,
-// never remove. Protects hard-won data (market captures requiring a flight to
-// the station, dock dossier built up over months, scouted system info, etc.)
-// from being silently wiped by stale-baseline diffs sent by misbehaving tabs.
-//
-// Removes here only happen via dedicated server-side endpoints if at all.
-const APPEND_ONLY_KEYS = new Set([
-  'marketSnapshots',          // require player flight + dock to capture
-  'knownStations',            // dock dossier accumulating over time
-  'knownSystems',             // system info from FSS/Spansh
-  'systemAddressMap',         // name ↔ address mapping
-  'bodyVisits',               // landings — exploration history
-  'organicScans',             // exobiology catalogued per body — journal-derived
-  'sightings',                // player-recorded "worth remembering" spots (postcard ledger)
-  'bodyNotes',                // player-authored notes
-  'fleetCarriers',            // FC dossier
-  'fleetCarrierSpaceUsage',   // FC space tracking
-  'visitedMarkets',           // journal extraction (expensive scan)
-  'journalExplorationCache',  // exploration data per system
-  'scoutedSystems',           // scouted system summaries
-  'stationTravelTimes',       // travel-time matrix (per-ship-per-station)
-  'scoutedConflicts',         // War & Peace scout reports — refresh by re-scout, not delete
-  'stationBodyOverrides',     // user-set body for stations without marketId
-  'materialInventory',        // ship engineering mats — derived from journals, hard to re-acquire
-  'journalScan',              // squadron name/rank + ship usage (expensive journal scan)
-  'dismissedTasks',           // "I am never doing that" — permanent by design, no un-dismiss path
-  // Same shape: nothing in the UI un-hides an installation, so a __remove here is never intent —
-  // it is a stale tab diffing an empty store against a baseline that had entries. The client's
-  // mass-wipe guard skips keys with fewer than 6 entries as noise, so small hide lists were being
-  // silently emptied on every race; every backup since 5 Aug had this at zero.
-  'hiddenInstallations',
-  'populationOverrides',      // user-edited system populations
-  'stationDistOverrides',     // user-edited station distances
-]);
 
 /**
  * Rebuild every station's former-name list from the journals, at boot, without being asked.
@@ -658,81 +737,19 @@ function mergeNameHistory(prior, fresh) {
   return out.sort((a, b) => String(a.changedAt || '').localeCompare(String(b.changedAt || ''))).slice(-10);
 }
 
-// Sparse per-key merge. Incoming values can be marker objects with:
-//   { __upsert: {...}, __remove: [...], __idKey?: string } — map / array-by-id
-//   { __add: [...], __remove: [...] }                       — primitive set
-// Any other value is treated as a wholesale replace.
-function mergeStatePatch(existing, incoming) {
-  const out = { ...existing };
-  for (const key of Object.keys(incoming)) {
-    const val = incoming[key];
-    if (val && typeof val === 'object' && !Array.isArray(val) && ('__upsert' in val || '__remove' in val || '__add' in val)) {
-      const hasUpsert = val.__upsert && typeof val.__upsert === 'object';
-      const hasIdKey = typeof val.__idKey === 'string';
-      let removeList = Array.isArray(val.__remove) ? val.__remove : [];
-      const addList = Array.isArray(val.__add) ? val.__add : [];
-      // Block client-initiated removes for append-only keys. Logs the attempt
-      // so we can see when a misbehaving tab tried to wipe data.
-      if (removeList.length > 0 && APPEND_ONLY_KEYS.has(key)) {
-        console.warn(`[State] BLOCKED ${removeList.length} __remove op(s) on append-only key '${key}': ${removeList.slice(0, 5).join(', ')}${removeList.length > 5 ? '...' : ''}`);
-        removeList = [];
-      }
-      if (hasIdKey) {
-        // Array-by-id — convert existing to map, apply ops, convert back
-        const idKey = val.__idKey;
-        const curArr = Array.isArray(existing[key]) ? existing[key] : [];
-        const map = {};
-        for (const item of curArr) {
-          if (item && item[idKey] != null) map[String(item[idKey])] = item;
-        }
-        if (hasUpsert) {
-          for (const id of Object.keys(val.__upsert)) map[id] = val.__upsert[id];
-        }
-        for (const id of removeList) delete map[String(id)];
-        out[key] = Object.values(map);
-      } else if (addList.length > 0 || (removeList.length > 0 && !hasUpsert)) {
-        // Primitive set
-        const curArr = Array.isArray(existing[key]) ? existing[key] : [];
-        const removeSet = new Set(removeList);
-        const next = curArr.filter((x) => !removeSet.has(x));
-        for (const x of addList) if (!next.includes(x)) next.push(x);
-        out[key] = next;
-      } else {
-        // Map (Record<id, value>)
-        const cur = (existing[key] && typeof existing[key] === 'object' && !Array.isArray(existing[key])) ? existing[key] : {};
-        const merged = { ...cur };
-        if (hasUpsert) for (const k of Object.keys(val.__upsert)) merged[k] = val.__upsert[k];
-        for (const k of removeList) delete merged[k];
-        out[key] = merged;
-      }
-    } else if (key === 'settings' && val && typeof val === 'object' && !Array.isArray(val)) {
-      // settings is an ACCUMULATING flat object — a partial or stale client sync must NEVER drop
-      // keys the server already holds. A wholesale replace here wiped copilotPersonality on a
-      // build (the fresh client came up without it and a Sound-toggle sync replaced the lot).
-      // Shallow-merge: existing keys survive, incoming keys overlay.
-      const curS = (existing.settings && typeof existing.settings === 'object' && !Array.isArray(existing.settings)) ? existing.settings : {};
-      out[key] = { ...curS, ...val };
-    } else {
-      // Wholesale replace (scalar, object, or legacy-format full value)
-      out[key] = val;
-    }
-  }
-  return out;
-}
-
 /**
  * Apply a sparse state patch: read existing, merge, write debounced, broadcast SSE.
  * Used by the live watcher + processors so state updates flow through one path.
  * The state_updated broadcast triggers persist rehydrate on every connected client.
  */
-function applyStatePatch(patch) {
+function applyStatePatch(patch, opts = {}) {
   if (!patch || typeof patch !== 'object' || Object.keys(patch).length === 0) return;
   // Critical: read pendingState first, fall back to disk. Otherwise patches
   // landing within the 500ms debounce window stomp each other — the second
   // patch reads stale disk data and overwrites the first patch's pendingState.
   // Same fix as GET /api/state. This was the Cavallo Nero "lost market" bug.
   const existing = pendingState ?? readStateFile();
-  const merged = mergeStatePatch(existing, patch);
+  const merged = mergeStatePatch(existing, patch, opts);
   writeStateDebounced(merged);
   broadcastEvent({
     type: 'state_updated',
@@ -997,6 +1014,7 @@ function connectOverlay() {
   overlayConnected = false;
   const sock = net.createConnection({ host: '127.0.0.1', port: 5010 }, () => {
     overlayConnected = true;
+    overlayDropNoticed = false;
     console.log('[Overlay] Connected to EDMCModernOverlay');
   });
   sock.on('error', (err) => {
@@ -1013,9 +1031,11 @@ function connectOverlay() {
   overlaySocket = sock;
 }
 
+let overlayDropNoticed = false;
 function sendOverlayMessage(msg) {
   if (!overlayConnected || !overlaySocket) {
-    console.log('[Overlay] Not connected, dropping message:', msg.id || '(no id)');
+    // One line per outage, not one per dropped banner line (1.60.36).
+    if (!overlayDropNoticed) { console.log('[Overlay] Not connected — overlay lines are dropped until it reconnects (retry every 60s); first dropped:', msg.id || '(no id)'); overlayDropNoticed = true; }
     return;
   }
   try {
@@ -1130,7 +1150,7 @@ const server = http.createServer((req, res) => {
   const isCopilotAction = pathname === '/copilot-ask' || pathname === '/copilot-news'
     || pathname === '/copilot-rate' || pathname === '/copilot-answer'
     || pathname === '/copilot-trivia' || pathname === '/copilot-trivia-result'
-    || pathname === '/copilot-voice';
+    || pathname === '/copilot-voice' || pathname === '/copilot-api-status';
   const needsToken = pathname.startsWith('/api/') || pathname.startsWith('/overlay') || isCopilotAction;
   if (needsToken && !validateToken(req)) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -1143,8 +1163,19 @@ const server = http.createServer((req, res) => {
   // SSE broadcast don't race against the 500ms debounced disk write.
   if (pathname === '/api/state' && req.method === 'GET') {
     const data = pendingState ?? readStateFile();
+    const body = JSON.stringify(data);
+    // 30 MB of JSON per fetch, on every change, to every device: gzip it when the browser accepts it (1.60.36).
+    // Async so the compression runs off the event loop; a failure falls back to the plain body.
+    if (/\bgzip\b/i.test(String(req.headers['accept-encoding'] || ''))) {
+      zlib.gzip(body, (err, gz) => {
+        if (err) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(body); return; }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip', 'Vary': 'Accept-Encoding' });
+        res.end(gz);
+      });
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(data));
+    res.end(body);
     return;
   }
 
@@ -1301,10 +1332,10 @@ const server = http.createServer((req, res) => {
         // the 500ms write debounce would otherwise merge onto stale DISK state and then replace
         // pendingState wholesale — discarding whatever the watcher wrote in that window. Same
         // class as the "lost market" bug the watcher path was already fixed for.
-        const merged = mergeStatePatch(pendingState ?? readStateFile(), incoming);
+        const sourceIp = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString();
+        const merged = mergeStatePatch(pendingState ?? readStateFile(), incoming, { source: sourceIp });
         writeStateDebounced(merged);
         // Broadcast state_updated to all other devices so they re-fetch
-        const sourceIp = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString();
         broadcastEvent({ type: 'state_updated', source: sourceIp, timestamp: new Date().toISOString() });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
@@ -1356,6 +1387,7 @@ const server = http.createServer((req, res) => {
           const latestPosition = fetchLatestPositionFromJournal(journalDir);
           const materialInventory = extractMaterialInventory(journalDir);
           const journalScan = extractSquadronAndShips(journalDir); // squadron name/rank + ship usage
+          const systemFactions = extractSystemFactions(journalDir); // the System Factions panel per system, with history (1.60.24)
           const ms = Date.now() - t0;
           const matCounts = materialInventory
             ? `R${Object.keys(materialInventory.raw).length}/M${Object.keys(materialInventory.manufactured).length}/E${Object.keys(materialInventory.encoded).length}`
@@ -1438,6 +1470,7 @@ const server = http.createServer((req, res) => {
             organicScans: { __upsert: Object.fromEntries((kb.organicScans || []).map((o) => [`${o.systemAddress}|${o.bodyId}`, o])) },
             stationTravelTimes: { __upsert: travelStats },
             journalExplorationCache: { __upsert: Object.fromEntries(Array.from(exploration.entries()).map(([addr, sys]) => [String(addr), sys])) },
+            systemFactions: { __upsert: systemFactions },
             visitedMarkets: {
               __idKey: 'marketId',
               __upsert: Object.fromEntries(visitedMarkets.map((m) => [String(m.marketId), m])),
@@ -1451,23 +1484,33 @@ const server = http.createServer((req, res) => {
           // this, the override stays stale forever and the Dashboard shows old
           // population (since populationOverrides takes priority over
           // knownSystems.population in the UI).
-          const existingPopOverrides = existing.populationOverrides || {};
-          const popOverrideUpserts = {};
+          // "A facility's population never goes down" (1.60.26): Sync All raises every colony's floors from
+          // the journal's readings (floors only rise, so the lower of journal and a newer manual figure is harmless).
+          const floorUpserts = {};
           for (const s of kb.systems) {
-            if (!s.population || s.population <= 0) continue;
+            if (!(s.population > 0)) continue;
+            try { const up = raiseColonyFloors(existing, s.systemName, s.population); if (up) Object.assign(floorUpserts, up.__upsert); } catch (e) { console.error('[SyncAll] population floor error:', e && e.message); }
+          }
+          if (Object.keys(floorUpserts).length) {
+            patch.facilityPopulationFloor = { __upsert: floorUpserts };
+            console.log(`[SyncAll] Raised ${Object.keys(floorUpserts).length} facility population floor(s)`);
+          }
+
+          // Manual populations (1.60.25): an override is a figure the commander typed that is NEWER than
+          // anything the journal has reported. Any override at or behind the journal's reading is
+          // deleted here — including the 549 copies an earlier Sync All manufactured from the journal
+          // itself — and none is ever created. The watcher does the same live on every jump.
+          const existingPopOverrides = existing.populationOverrides || {};
+          const staleOverrides = [];
+          for (const s of kb.systems) {
+            if (!s.population || s.population <= 0 || !s.lastSeen) continue;
             const key = s.systemName.toLowerCase();
             const ov = existingPopOverrides[key];
-            // Update if no override exists OR override is older than journal lastSeen.
-            // Note: we update regardless of whether the new population is higher
-            // or lower — Frontier's BGS tick can move populations either way and
-            // the journal is authoritative.
-            if (!ov || (s.lastSeen && (!ov.updatedAt || s.lastSeen > ov.updatedAt))) {
-              popOverrideUpserts[key] = { population: s.population, updatedAt: s.lastSeen || new Date().toISOString() };
-            }
+            if (ov && (!ov.updatedAt || s.lastSeen >= ov.updatedAt)) staleOverrides.push(key);
           }
-          if (Object.keys(popOverrideUpserts).length > 0) {
-            patch.populationOverrides = { __upsert: popOverrideUpserts };
-            console.log(`[SyncAll] Auto-updated populationOverrides for ${Object.keys(popOverrideUpserts).length} system(s) from fresher journal data`);
+          if (staleOverrides.length > 0) {
+            patch.populationOverrides = { __remove: staleOverrides };
+            console.log(`[SyncAll] Cleared ${staleOverrides.length} manual population(s) overtaken by the journal`);
           }
 
           // Material inventory (replace strategy — server is sole writer, every
@@ -1524,6 +1567,14 @@ const server = http.createServer((req, res) => {
             }
           }
           if (latestShip) patch.currentShip = latestShip;
+          // Ship stable (1.60.33): the latest Loadout per ship, the latest fleet list, the last craft per ship.
+          try {
+            const stable = extractShipInventory(journalDir);
+            if (Object.keys(stable.inventory).length > 0) patch.shipInventory = { __upsert: stable.inventory };
+            if (stable.storedShips) patch.storedShips = stable.storedShips;
+            if (Object.keys(stable.craft).length > 0) patch.shipCraft = { __upsert: stable.craft };
+            console.log(`[SyncAll] Ship stable: ${Object.keys(stable.inventory).length} ship record(s), fleet list ${stable.storedShips ? stable.storedShips.at : 'none'}, craft for ${Object.keys(stable.craft).length} ship(s)`);
+          } catch (e) { console.error('[SyncAll] ship stable:', e && e.message); }
           if (latestCargo && !settings.cargoCapacityManual) {
             // Write into settings; preserve other settings keys via patch.settings = {...existing, ...}
             const mergedSettings = Object.assign({}, settings, { cargoCapacity: latestCargo.cargoCapacity });
@@ -1556,7 +1607,7 @@ const server = http.createServer((req, res) => {
           //
           // We have to first merge the SyncAll patch (kb / visitedMarkets / etc.) so that
           // pollCompanionFiles can read a consistent state when it computes its own diff.
-          const merged = mergeStatePatch(existing, patch);
+          const merged = mergeStatePatch(existing, patch, { trusted: true });
           writeStateDebounced(merged);
 
           // SERVER-SIDE depot auto-create — project creation must never depend on a browser
@@ -1577,17 +1628,9 @@ const server = http.createServer((req, res) => {
                 // Heal an existing project created without its identity (the watcher skips history on
                 // boot): the journal scan knows the station now, so fill the blanks field-level.
                 const p = byMarket.get(depot.marketId);
-                if (p && (!p.systemName || !p.stationName) && (depot.systemName || depot.stationName)) {
-                  const healed = {
-                    ...p,
-                    systemName: p.systemName || depot.systemName || '',
-                    stationName: p.stationName || depot.stationName || '',
-                    systemAddress: p.systemAddress ?? depot.systemAddress ?? null,
-                    stationType: p.stationType || depot.stationType || '',
-                  };
-                  if (!p.systemName || /^Depot \d+$/.test(p.name || '')) healed.name = healed.systemName ? `${healed.systemName}${healed.stationName ? ` - ${healed.stationName}` : ''}` : p.name;
-                  freshProjects[p.id] = healed;
-                }
+                // Fill blanks and rebuild a placeholder name (1.60.30) — the same rule as the live depot tick.
+                const heal = p ? healDepotProject(p, { systemName: depot.systemName, stationName: depot.stationName, systemAddress: depot.systemAddress, stationType: depot.stationType }, depot.marketId) : null;
+                if (heal) freshProjects[p.id] = { ...p, ...heal };
                 continue;
               }
               const id = crypto.randomUUID();
@@ -2050,6 +2093,38 @@ const server = http.createServer((req, res) => {
   // Windowed: the page asks for a span (the whole history is ~1.2 MB, too much for an iPad on
   // every load), and always gets the all-time milestones, which are small. The journey adds jump
   // positions and pins for the map. Rebuilt only when a journal file changes.
+  // Material exposure across the colony bodies (1.63.0): which bodies in the colony systems carry a raw material and how
+  // much of the surface mix it is. The commander's own scans from the surface ledger; Spansh's cached figure only where
+  // there is no scan. Read-only, and no lookup is made.
+  if (pathname === '/api/materials/colony-bodies' && req.method === 'GET') {
+    try {
+      const st = readStateFile() || {};
+      flushSurfaceLog(); // a scan from the last few seconds is still waiting to be written
+      const out = colonyMaterialBodies(st, readSurfaceRecords(), colonySystemsOf(st));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(out));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (e && e.message) || 'colony bodies could not be read' }));
+    }
+    return;
+  }
+
+  // Where to trade engineering materials (1.61.2): the nearest stations with each kind of material trader
+  // from where you are — Spansh (cached six hours), plus the stations you have docked at as the offline answer.
+  if (pathname === '/api/material-traders' && req.method === 'GET') {
+    const st = readStateFile() || {};
+    const pos = st.commanderPosition || {};
+    const ref = url.searchParams.get('system') || pos.systemName || pos.name || null;
+    const out = { reference: ref, known: knownNearestTraders(st, pos.coordinates || null), traders: null, fetchedAt: null, cached: false, error: null };
+    const send = () => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(out)); };
+    if (!ref) { send(); return; }
+    spanshNearestTraders(ref)
+      .then((r) => { Object.assign(out, r); send(); })
+      .catch((e) => { out.error = (e && e.message) || 'lookup failed'; send(); });
+    return;
+  }
+
   if ((pathname === '/api/commander-log' || pathname === '/api/commander-log/journey') && req.method === 'GET') {
     try {
       const existing = readStateFile();
@@ -2126,6 +2201,7 @@ const server = http.createServer((req, res) => {
         const params = new URL(req.url, 'http://localhost').searchParams;
         const range = Math.min(500, Math.max(5, Number(params.get('range')) || 50));
         const fast = params.get('fast') === '1';
+        const refresh = params.get('refresh') === '1'; // the Refresh button: no cached plan, no cached Ardent answer
         let searched = [];
         try { searched = JSON.parse(params.get('searched') || '[]'); } catch { searched = []; }
         try { backfillSales(journalDir); } catch { /* best-effort */ }
@@ -2133,7 +2209,7 @@ const server = http.createServer((req, res) => {
           state: existing, journalDir, rangeLy: range,
           searched: Array.isArray(searched) ? searched.slice(0, 20) : [],
         };
-        const plan = await buildSellPlan({ ...opts, fast });
+        const plan = await buildSellPlan({ ...opts, fast: fast && !refresh, fresh: refresh });
         // A partial fast plan: finish it in the background, once per distinct request, and tell every
         // page when the complete one is cached so it can refetch (the fast path then returns it whole).
         if (fast && plan.partial) {
@@ -2174,6 +2250,55 @@ const server = http.createServer((req, res) => {
   if (pathname === '/api/approach/live' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(getLiveApproach()));
+    return;
+  }
+
+  // Faction guide (1.60.32): the journal-side feeds for one system — mined-goods sales with the faction
+  // that held the station at the time, and the surface ledger's per-body yields. Everything else the
+  // guide shows is already in the state the client holds.
+  // Ship Stable lifetime (1.60.38): every journal per ship, cached per file — read on demand, never stored in the state.
+  if (pathname === '/api/ship-lifetime' && req.method === 'GET') {
+    (async () => {
+      try {
+        const settings = ((pendingState ?? readStateFile()).settings) || {};
+        const journalDir = resolveJournalDir(settings.journalDirOverride);
+        if (!journalDirExists(journalDir)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Journal directory not found' }));
+          return;
+        }
+        const t0 = Date.now();
+        const out = await extractShipLifetime(journalDir);
+        if (out.reread > 1) console.log(`[Ships] Lifetime: read ${out.reread} of ${out.files} journal file(s) in ${Date.now() - t0} ms`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ...out, generatedAt: new Date().toISOString() }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e && e.message }));
+      }
+    })();
+    return;
+  }
+
+  if (pathname === '/api/faction-guide' && req.method === 'GET') {
+    try {
+      const system = (url.searchParams.get('system') || '').trim();
+      if (!system) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'system required' }));
+        return;
+      }
+      const existing = readStateFile();
+      const journalDir = resolveJournalDir((existing.settings || {}).journalDirOverride);
+      const minedSales = journalDirExists(journalDir) ? extractMinedSales(journalDir, { systemName: system }) : [];
+      let yields = [];
+      try { yields = surfaceYieldsFor(readSurfaceRecords(), system); } catch (e) { console.error('[FactionGuide] yields:', e && e.message); }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ system, minedSales, yields, generatedAt: new Date().toISOString() }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e && e.message }));
+    }
     return;
   }
 
@@ -2400,8 +2525,13 @@ const server = http.createServer((req, res) => {
           if (file) { try { fs.unlinkSync(path.join(GALLERY_DIR, file)); removed.gallery = true; } catch { /* already gone */ } }
           if (input.original) {
             const base = entry.caption ? path.basename(String(entry.caption).replace(/\\/g, '/')) : '';
-            if (base && isRecordedScreenshot(base)) {
-              try { fs.unlinkSync(path.join(ED_PICTURES_DIR, base)); removed.original = true; } catch { /* already gone */ }
+            // Only the very shot this photo came from: the game reuses names, so the Screenshot_0041.bmp in
+            // Pictures can be a newer, different picture than the 3 Sep deposit photo of the same name.
+            // Deleted only when a marker names the file at this photo's time and the file dates from that
+            // marker; anything else is left alone (1.62.1).
+            const original = path.join(ED_PICTURES_DIR, base);
+            if (base && isRecordedScreenshotFile(original, entry.addedAt)) {
+              try { fs.unlinkSync(original); removed.original = true; } catch { /* already gone */ }
             }
           }
         }
@@ -3190,8 +3320,11 @@ const server = http.createServer((req, res) => {
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
       try {
+        // MERGED, never replaced (1.62.3): the browser saves its whole copy on every edit, and that copy is
+        // older than whatever the server added since the tab loaded — F10 shots, converted urls, the
+        // co-pilot's reads. A save keeps all of that; removing a photo is the DELETE route's job.
         const incoming = JSON.parse(body);
-        writeGalleryMeta(incoming);
+        writeGalleryMeta(mergeGalleryMeta(readGalleryMeta(), incoming));
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
       } catch (e) {
@@ -3230,9 +3363,14 @@ const server = http.createServer((req, res) => {
 
   // Gallery API: DELETE /api/gallery/:filename — delete image file
   if (pathname.startsWith('/api/gallery/') && req.method === 'DELETE') {
-    const filename = pathname.slice('/api/gallery/'.length);
-    const filePath = path.join(GALLERY_DIR, path.basename(filename));
+    const filename = path.basename(pathname.slice('/api/gallery/'.length));
+    const filePath = path.join(GALLERY_DIR, filename);
     try { fs.unlinkSync(filePath); } catch {}
+    // The explicit delete (1.62.3): a browser save can no longer remove a photo, so this is the one way
+    // an entry goes — along with the JPEG a converted BMP left behind. The id is the filename sans extension.
+    if (/\.bmp$/i.test(filename)) { try { fs.unlinkSync(path.join(GALLERY_DIR, filename.replace(/\.bmp$/i, '.jpg'))); } catch {} }
+    const meta = readGalleryMeta();
+    if (removeGalleryEntry(meta, filename.replace(/\.\w+$/, ''))) writeGalleryMeta(meta);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true }));
     return;
@@ -3312,10 +3450,24 @@ const server = http.createServer((req, res) => {
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
       let ok = false;
-      try { const { id, rating, reason, comment } = JSON.parse(body || '{}'); ok = captureStore.rate(id, rating, reason, comment); } catch { /* bad body */ }
+      try {
+        const { id, rating, reason, comment } = JSON.parse(body || '{}');
+        ok = captureStore.rate(id, rating, reason, comment);
+        if (ok) { try { onOpinionRated(id, rating); } catch { /* best-effort: a 👎 on a station opinion drops it */ } }
+      } catch { /* bad body */ }
       res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok }));
     });
+    return;
+  }
+
+  // Anthropic API status for Settings — whether the key file exists, the model, this month's spend
+  // against the cap. Never the key itself.
+  if (pathname === '/copilot-api-status' && req.method === 'GET') {
+    let st = null;
+    try { st = apiStatus((readStateFile() || {}).settings || {}); } catch (e) { console.error('[CopilotAPI] status:', e && e.message); }
+    res.writeHead(st ? 200 : 500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(st || { error: 'status unavailable' }));
     return;
   }
 
@@ -3499,6 +3651,8 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   startTickPoll(broadcastEvent); // galaxy BGS tick awareness (optional; fail-silent)
+  // One background pass over the journals for past docking turn-aways (station opinions) — runs once, ever.
+  try { backfillDockDenials(resolveJournalDir(((readStateFile() || {}).settings || {}).journalDirOverride)).catch(() => {}); } catch { /* best-effort */ }
   const hostname = os.hostname().toLowerCase();
   const localUrl = `http://localhost:${PORT}`;
   const networkUrl = `http://${hostname}:${PORT}`;
@@ -3588,7 +3742,7 @@ async function sampleMarketHistory() {
   for (const k of sampleKeys()) {
     if (!needsSample(k)) continue;
     // Ardent knows a commodity by the game's symbol: heliostaticfurnaces answers, microbialfurnaces is "not found".
-    const rows = await ardentJson(`/commodity/name/${encodeURIComponent(commoditySymbol(k))}/imports?fleetCarriers=false`, 6 * 3600e3);
+    const rows = await ardentJson(`/commodity/name/${encodeURIComponent(commoditySymbol(k))}/imports?fleetCarriers=false&maxDaysAgo=${SELL_FRESH_DAYS}`, 6 * 3600e3);
     if (Array.isArray(rows)) recordArdentSample(k, rows, Date.now(), reach);
   }
   const s = historyStats();
@@ -3666,11 +3820,13 @@ setInterval(() => { sampleMarketHistory().catch(() => {}); }, 6 * 3600e3).unref(
   try {
     startServerWatcher({
       readState: readStateFile,
-      applyStatePatch,
+      applyStatePatch: (p) => applyStatePatch(p, { trusted: true }),
       broadcastEvent,
       sendOverlay: sendOverlayMessage,
       captureLine: captureStore.capture,
       recordGameScreenshot,
+      // Where the reader stopped, so the next boot carries on from there instead of skipping the gap (1.62.4).
+      positionFile: path.join(APP_DIR, 'journal-position.json'),
     });
   } catch (e) {
     console.error('[Watcher] Failed to start:', e && e.message);

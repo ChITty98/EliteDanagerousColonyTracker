@@ -159,7 +159,7 @@ function OfferCell({ o, best, tonnes, note }: { o: Offer | null; best: boolean; 
         {place}
         {o.distance != null ? <> · {ly(o.distance)}</> : null}
         {pad ? <> · {pad} pad</> : null}
-        {o.at ? <> · {when(o.at)}</> : null}
+        {o.at ? <span className={Date.now() - Date.parse(o.at) > 3 * 86400000 ? 'text-amber-300' : ''} title={Date.now() - Date.parse(o.at) > 3 * 86400000 ? 'More than three days old — prices move' : undefined}> · {when(o.at)}</span> : null}
         {o.cg ? <span className="ml-1 text-amber-300" title="Demand of 999,999 is how a Community Goal market reads: real, generous, and gone when the goal ends">community goal · limited time</span> : o.demand != null && o.demand > 0 ? <> · demand {cr(o.demand)}</> : null}
         {o.onlyYours ? <span className="ml-1 text-sky-300">only in your records</span> : null}
       </div>
@@ -184,11 +184,12 @@ export function SellPage() {
 
   // Fast first paint: the server answers from your own snapshots and whatever Ardent already told
   // it, marks the plan partial, and fills the rest in behind; sell_plan_updated says when to refetch.
-  const load = useCallback(async (r: number, s: Searched[]) => {
+  const load = useCallback(async (r: number, s: Searched[], refresh = false) => {
     const seq = ++reqSeq.current;
     setLoading(true); setError(null);
     try {
-      const res = await fetch(q(`/api/sell/plan?range=${r}&searched=${encodeURIComponent(JSON.stringify(s))}&fast=1`));
+      // Refresh means a fresh pull: no cached plan on the server, no cached Ardent answer behind it.
+      const res = await fetch(q(`/api/sell/plan?range=${r}&searched=${encodeURIComponent(JSON.stringify(s))}&${refresh ? 'refresh=1' : 'fast=1'}`));
       const d = (await res.json()) as Plan;
       if (seq !== reqSeq.current) return;
       if (d && !d.error) setPlan(d); else setError(d?.error || `HTTP ${res.status}`);
@@ -332,7 +333,7 @@ export function SellPage() {
           <button key={n} type="button" onClick={() => setRange(n)} className={`rounded border px-2 py-0.5 ${range === n ? 'border-amber-500/50 text-amber-300' : 'border-border text-muted-foreground hover:text-foreground'}`}>{n} ly</button>
         ))}
         <span className="mx-2 h-4 w-px bg-border" />
-        <button type="button" onClick={() => void load(range, searched)} disabled={loading} className="rounded border border-sky-500/40 bg-muted/20 px-3 py-1 text-xs text-sky-300 hover:bg-muted/50 disabled:opacity-40">Refresh</button>
+        <button type="button" onClick={() => void load(range, searched, true)} disabled={loading} title="Pull Ardent fresh — no cached plan, no cached answers" className="rounded border border-sky-500/40 bg-muted/20 px-3 py-1 text-xs text-sky-300 hover:bg-muted/50 disabled:opacity-40">Refresh</button>
         {searched.length > 0 && <button type="button" onClick={() => setSearched([])} className="px-1 text-slate-400 hover:text-foreground">clear searched</button>}
       </div>
 

@@ -282,6 +282,31 @@ describe("commander's log extractor", () => {
     fs.rmSync(d5, { recursive: true, force: true });
   });
 
+  it("names where a sitting's missions were handed in, busiest first, not the first jump (1.60.38)", () => {
+    const l = (o) => JSON.stringify(o) + '\n';
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'edca-clog-mis2-'));
+    const done = (t, reward, extra = {}) => ({ timestamp: t, event: 'MissionCompleted', Name: 'Mission_Courier_name', LocalisedName: 'Deliver a package', Reward: reward, Faction: 'F', ...extra });
+    fs.writeFileSync(path.join(d, 'Journal.2026-10-25T160741.01.log'), [
+      { timestamp: '2026-10-25T21:00:00Z', event: 'LoadGame', Ship: 'mediumtransport01', Ship_Localised: 'Lynx Highliner' },
+      { timestamp: '2026-10-25T21:01:00Z', event: 'Location', StarSystem: 'Col 173 Sector AX-J d9-52' },
+      { timestamp: '2026-10-25T21:05:00Z', event: 'FSDJump', StarSystem: 'HD 79624', JumpDist: 20 },
+      { timestamp: '2026-10-25T21:06:00Z', ...done('2026-10-25T21:06:00Z', 0, { Name: 'Mission_AltruismCredits_name', LocalisedName: 'Donate 2,000,000 Cr to the cause', Donated: 2000000 }) },
+      { timestamp: '2026-10-25T21:10:00Z', event: 'FSDJump', StarSystem: 'Col 173 Sector AX-J d9-34', JumpDist: 20 },
+      done('2026-10-25T21:11:00Z', 100000), done('2026-10-25T21:12:00Z', 100000), done('2026-10-25T21:13:00Z', 100000),
+      { timestamp: '2026-10-25T21:20:00Z', event: 'FSDJump', StarSystem: 'Col 173 Sector VW-Q b35-0', JumpDist: 20 },
+      done('2026-10-25T21:21:00Z', 700000),
+      { timestamp: '2026-10-25T21:30:00Z', event: 'FSDJump', StarSystem: 'Col 173 Sector AX-J d9-52', JumpDist: 20 },
+      done('2026-10-25T21:31:00Z', 200000), done('2026-10-25T21:32:00Z', 300000),
+      { timestamp: '2026-10-25T22:00:00Z', event: 'Shutdown' },
+    ].map(l).join(''));
+    const m = buildCommanderLog({ events: readJournalEvents(d) }).events.filter((e) => e.kind === 'missions');
+    expect(m).toHaveLength(1);
+    expect(m[0].line).toBe('Missions: 7 in 4 systems, AX-J d9-34 3, AX-J d9-52 2, VW-Q b35-0 1 and 1 more: 1.5M cr, 2.0M cr donated');
+    expect(m[0].system).toBe('Col 173 Sector AX-J d9-34');
+    expect(m[0].detail.split('\n')).toEqual(['Col 173 Sector AX-J d9-34: 3', 'Col 173 Sector AX-J d9-52: 2', 'Col 173 Sector VW-Q b35-0: 1', 'HD 79624: 1']);
+    fs.rmSync(d, { recursive: true, force: true });
+  });
+
   it('logs the first time each surface vehicle is taken out, resolving an untyped launch to the Scarab', () => {
     const l = (o) => JSON.stringify(o) + String.fromCharCode(10);
     const d7 = fs.mkdtempSync(path.join(os.tmpdir(), 'edca-clog-srv-'));

@@ -9,6 +9,11 @@ import { INSTALLATION_TYPE_OPTIONS } from '@/data/installationTypes';
 import { isFleetCarrier, isColonisationShip, isConstructionStationName, isEphemeralStation, getJournalFolderHandle, extractExplorationData, journalBodiesToSpanshFormat } from '@/services/journalReader';
 import { fetchSystemDump } from '@/services/spanshApi';
 import { getSystemTier, getTierProgress, formatPopulation } from '@/features/dashboard/tierUtils';
+import { estimateFacilityPopulations, formatEstimatedPopulation, effectiveSystemPopulation, applyPopulationFloors } from '@/lib/populationEstimate';
+import type { PopulationEstimateResult } from '@/lib/populationEstimate';
+import { influenceTrend, formatInfluence, factionStatesLabel, reputationBand } from '@/lib/factions';
+
+const NO_STARS: string[] = [];
 import { SystemBodiesTab } from './SystemBodiesTab';
 import { NearbyExpansionTab } from './NearbyExpansionTab';
 import { CommodityRecommendationModal } from './CommodityRecommendationModal';
@@ -377,6 +382,16 @@ export function SystemDetailPage() {
   // Journal bodies come from station.body fields; Spansh adds any the journal doesn't know
 
   const system = knownSystems[systemName.toLowerCase()];
+  // The journal's reading unless the commander's override is newer than it (shared rule, 1.60.21).
+  const populationOverride = useAppStore((st) => st.populationOverrides[systemName.toLowerCase()]);
+  const effectivePopulation = effectiveSystemPopulation(system, populationOverride);
+  const systemFactionsEntry = useAppStore((st) => st.systemFactions[systemName.toLowerCase()]);
+  // Select the stored entry (a stable reference or undefined), never a fresh [] — a selector that returns a new
+  // array on every call re-renders the page without end (1.60.33 "can't click into systems").
+  const starredEntry = useAppStore((st) => st.factionPriorities[systemName.toLowerCase()]);
+  const starredFactions = starredEntry?.factions ?? NO_STARS;
+  const setFactionPriorities = useAppStore((st) => st.setFactionPriorities);
+  const facilityPopulationFloor = useAppStore((st) => st.facilityPopulationFloor);
 
   // Find projects in this system
   const systemProjects = useMemo(
@@ -405,6 +420,7 @@ export function SystemDetailPage() {
   // Build body names from journal-known stations first, then supplement from Spansh
   const [stationBodyMap, setStationBodyMap] = useState<Record<string, string>>({});
   const [spanshBodyNames, setSpanshBodyNames] = useState<string[]>([]);
+  const [spanshStations, setSpanshStations] = useState<{ name: string; type: string }[]>([]);
   const [journalScannedBodyNames, setJournalScannedBodyNames] = useState<string[]>([]);
 
   // Phase 1: Extract body→station mapping from journal data (knownStations already has body field)
@@ -421,6 +437,7 @@ export function SystemDetailPage() {
   // Phase 2: Fetch body names — journal scans first, Spansh supplements
   useEffect(() => {
     let cancelled = false;
+    setSpanshStations([]);
 
     async function fetchBodyData() {
 
@@ -468,6 +485,11 @@ export function SystemDetailPage() {
               .sort((a, b) => a.distanceToArrival - b.distanceToArrival)
               .map((b) => b.name);
             setSpanshBodyNames(names);
+            // Station list for the population split (1.60.20): orbital under the system, surface under bodies.
+            const stationList: { name: string; type: string }[] = [];
+            for (const st of dump.stations ?? []) if (st?.name) stationList.push({ name: st.name, type: st.type ?? '' });
+            for (const body of dump.bodies) for (const st of body.stations ?? []) if (st?.name) stationList.push({ name: st.name, type: st.type ?? '' });
+            setSpanshStations(stationList);
 
             // Build station→body mapping from Spansh (only fills gaps — doesn't overwrite journal)
             const mapping: Record<string, string> = {};
@@ -674,6 +696,33 @@ export function SystemDetailPage() {
       return (a.distFromStarLS ?? 999999) - (b.distFromStarLS ?? 999999);
     });
   }, [knownStations, visitedMarkets, systemName, completedProjects, systemManualInstallations, systemSignals, hiddenInstallations]);
+
+  // Proportional population split (1.60.20): every facility the page knows plus Spansh's station
+  // list sets the shares; only the rows on the table show a figure. Shed names dedupe renames.
+  const populationEstimate = useMemo(() => {
+    const seen = new Set<string>();
+    const facilities: { key: string; stationType: string; openedAt: string | null }[] = [];
+    for (const s of systemStations) {
+      const key = s.stationName.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      for (const h of s.nameHistory ?? []) if (h?.name) seen.add(h.name.toLowerCase());
+      // the project's completion date ramps a new facility's weight in over its first days (1.60.29)
+      const opened = completedProjects.find((p) => (p.marketId != null && p.marketId === s.marketId) || (p.completedStationName ?? '').toLowerCase() === key)?.completedAt ?? null;
+      facilities.push({ key, stationType: s.stationType, openedAt: opened });
+    }
+    let fromSpansh = 0;
+    for (const st of spanshStations) {
+      const key = st.name.toLowerCase();
+      if (seen.has(key) || isConstructionStationName(st.name)) continue;
+      seen.add(key);
+      facilities.push({ key, stationType: st.type, openedAt: null });
+      fromSpansh++;
+    }
+    // "A facility's population never goes down" (1.60.26): the remembered floor carries a figure the split has fallen below.
+    const { result } = applyPopulationFloors(estimateFacilityPopulations(effectivePopulation, facilities), systemName, facilityPopulationFloor);
+    return { result, fromSpansh };
+  }, [systemStations, spanshStations, effectivePopulation, systemName, facilityPopulationFloor, completedProjects]);
 
   const totalInstalled = useMemo(
     () => systemStations.filter((s) => !isFleetCarrier(s.stationType, s.marketId)).length,
@@ -1109,6 +1158,7 @@ export function SystemDetailPage() {
           stationBodyMap={stationBodyMap}
           journalBodyMap={journalBodyMap}
           stationBodyOverrides={stationBodyOverrides}
+          populationEstimate={populationEstimate}
         />
       ) : (
         <SystemBodiesTab
@@ -1117,6 +1167,62 @@ export function SystemDetailPage() {
           systemAddress={systemAddress}
         />
       )}
+
+      {/* Factions — below the installations (1.60.35); the guide is its own page */}
+      {systemFactionsEntry && systemFactionsEntry.factions.length > 0 && (
+        <div className="mb-3 bg-card border border-border rounded-lg px-4 py-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 mb-2">
+            <div className="text-sm font-semibold text-foreground">
+              Factions
+              <Link to={`/factions?system=${encodeURIComponent(systemName)}`} className="ml-2 text-xs font-normal text-primary hover:underline" title="Sell here, buy here, loops, mining and mined-sale evidence per faction">faction guide {'\u2192'}</Link>
+              {systemFactionsEntry.controlling && (
+                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                  {systemFactionsEntry.controlling.name} controls the system{systemFactionsEntry.controlling.state ? ` \u00b7 ${systemFactionsEntry.controlling.state}` : ''}
+                </span>
+              )}
+            </div>
+            <div className="text-xs text-muted-foreground/70">
+              as of {systemFactionsEntry.updatedAt.slice(0, 10)}{systemFactionsEntry.security ? ` \u00b7 ${systemFactionsEntry.security}` : ''}
+            </div>
+          </div>
+          <table className="w-full text-sm">
+            <tbody>
+              {systemFactionsEntry.factions.map((fx) => {
+                const trend = influenceTrend(systemFactionsEntry, fx.name);
+                const band = reputationBand(fx.reputation);
+                const stateLabel = factionStatesLabel(fx);
+                const pending = fx.pending.length ? `pending ${fx.pending.join(', ')}` : '';
+                const recovering = fx.recovering.length ? `recovering ${fx.recovering.join(', ')}` : '';
+                return (
+                  <tr key={fx.name} className="border-t border-border/40">
+                    <td className="py-1.5 pr-3">
+                      <button
+                        type="button"
+                        onClick={() => setFactionPriorities(systemName, starredFactions.includes(fx.name) ? starredFactions.filter((n) => n !== fx.name) : [...starredFactions, fx.name])}
+                        className={`mr-1.5 text-base leading-none ${starredFactions.includes(fx.name) ? 'text-amber-400' : 'text-muted-foreground/50 hover:text-amber-300'}`}
+                        title={starredFactions.includes(fx.name) ? 'Starred — project sourcing in this system prefers its stations. Click to unstar.' : 'Star — project sourcing in this system will prefer its stations'}
+                      >{starredFactions.includes(fx.name) ? '\u2605' : '\u2606'}</button>
+                      <span className="text-foreground">{fx.name}</span>
+                      {fx.squadron && <span className="ml-1.5 text-[10px] uppercase tracking-wide bg-primary/20 text-primary px-1 py-0.5 rounded">squadron</span>}
+                      <div className="text-xs text-muted-foreground/70">{[fx.government, fx.allegiance].filter(Boolean).join(' \u00b7 ')}</div>
+                    </td>
+                    <td
+                      className="py-1.5 pr-3 text-right tabular-nums whitespace-nowrap"
+                      title={trend && trend.previous != null ? `${formatInfluence(trend.previous)} on ${(trend.previousAt ?? '').slice(0, 10)}` : 'No earlier reading to compare with'}
+                    >
+                      {formatInfluence(fx.influence)}
+                      {trend && trend.arrow && <span className={`ml-1 ${trend.arrow === '\u25B2' ? 'text-emerald-400' : 'text-red-400'}`}>{trend.arrow}</span>}
+                    </td>
+                    <td className="py-1.5 pr-3 text-xs text-muted-foreground">{[stateLabel, pending, recovering].filter(Boolean).join(' \u00b7 ') || '\u2014'}</td>
+                    <td className="py-1.5 text-right text-xs text-muted-foreground whitespace-nowrap">{band ?? ''}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
 
       {showRecommender && (
         <CommodityRecommendationModal
@@ -1173,9 +1279,10 @@ interface InstallationsTabProps {
   stationBodyMap: Record<string, string>;
   journalBodyMap: Record<string, string>;
   stationBodyOverrides: Record<string, string>;
+  populationEstimate: { result: PopulationEstimateResult; fromSpansh: number };
 }
 
-type SortKey = 'name' | 'type' | 'body' | 'dist' | 'pads' | 'economy' | 'visits' | 'lastSeen';
+type SortKey = 'name' | 'type' | 'body' | 'dist' | 'pop' | 'pads' | 'economy' | 'visits' | 'lastSeen';
 type SortDir = 'asc' | 'desc';
 
 function InstallationsTab({
@@ -1210,6 +1317,7 @@ function InstallationsTab({
   stationBodyMap,
   journalBodyMap,
   stationBodyOverrides,
+  populationEstimate,
 }: InstallationsTabProps) {
   const [editingBody, setEditingBody] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('name');
@@ -1242,6 +1350,11 @@ function InstallationsTab({
           const bDist = b.distFromStarLS ?? 9999999;
           return dir * (aDist - bDist);
         }
+        case 'pop': {
+          const aP = populationEstimate.result.byKey[a.stationName.toLowerCase()]?.estimate ?? -1;
+          const bP = populationEstimate.result.byKey[b.stationName.toLowerCase()]?.estimate ?? -1;
+          return dir * (aP - bP);
+        }
         case 'pads': {
           const aL = a.landingPads?.large ?? 0;
           const bL = b.landingPads?.large ?? 0;
@@ -1258,7 +1371,7 @@ function InstallationsTab({
       }
     });
     return arr;
-  }, [visibleStations, sortKey, sortDir, systemName, journalBodyMap, stationBodyMap, stationBodyOverrides]);
+  }, [visibleStations, sortKey, sortDir, systemName, journalBodyMap, stationBodyMap, stationBodyOverrides, populationEstimate]);
 
   const SortHeader = ({ label, sortId, align = 'left' }: { label: string; sortId: SortKey; align?: 'left' | 'right' | 'center' }) => (
     <th
@@ -1310,6 +1423,7 @@ function InstallationsTab({
                   <SortHeader label="Type" sortId="type" />
                   <SortHeader label="Body" sortId="body" />
                   <SortHeader label="Dist (Ls)" sortId="dist" align="right" />
+                  <SortHeader label="Est. pop" sortId="pop" align="right" />
                   <SortHeader label="Pad" sortId="pads" align="center" />
                   <SortHeader label="Economy" sortId="economy" />
                   <SortHeader label="Visits" sortId="visits" align="center" />
@@ -1426,6 +1540,17 @@ function InstallationsTab({
                               : Math.round(station.distFromStarLS).toLocaleString()
                             : <span className="text-muted-foreground">-</span>}
                         </td>
+                        <td className="px-4 py-3 text-sm text-right tabular-nums">
+                          {(() => {
+                            // Proportional estimate (1.60.20) — the facility mix applied to the system total; never a game figure.
+                            const est = populationEstimate.result.byKey[station.stationName.toLowerCase()];
+                            if (!est || est.estimate == null) return <span className="text-muted-foreground/40">{'\u2014'}</span>;
+                            const r = populationEstimate.result;
+                            const heldNote = est.held ? ` Held at its highest figure${est.held.at ? ` (${new Date(est.held.at).toLocaleDateString()})` : ''}; the current share would give ${formatEstimatedPopulation(est.split)}.` : '';
+                            const title = `Share of the system's ${formatEstimatedPopulation(r.population)}: ${est.basis}. ${r.counted} ${r.counted === 1 ? 'facility' : 'facilities'} counted${populationEstimate.fromSpansh ? ` (${populationEstimate.fromSpansh} from Spansh)` : ''}.${heldNote} Proportional estimate from the facility mix, not a game figure; a figure never goes down.`;
+                            return <span title={title}>{formatEstimatedPopulation(est.estimate)}</span>;
+                          })()}
+                        </td>
                         <td className="px-4 py-3 text-sm text-center">
                           {station.landingPads ? (() => {
                             // Largest pad is the answer to the only question usually being asked —
@@ -1515,7 +1640,7 @@ function InstallationsTab({
                       {/* Expanded detail row */}
                       {isExpanded && (
                         <tr className="bg-muted/10 border-t-0" onClick={(e) => e.stopPropagation()}>
-                          <td colSpan={9} className="px-0 py-0">
+                          <td colSpan={10} className="px-0 py-0">
                             <div className="border-t border-primary/20 mx-4" />
                             <div className="px-6 py-5">
                               {/* Station header + location bar */}
@@ -1525,6 +1650,13 @@ function InstallationsTab({
                                   <div>
                                     <h4 className="text-base font-bold text-foreground">{station.stationName}</h4>
                                     {station.faction && <div className="text-xs text-muted-foreground">{station.faction}</div>}
+                                    {station.representative?.name && (
+                                      <div className="text-xs text-muted-foreground mt-0.5">
+                                        Representative: <span className="text-foreground">{[station.representative.title, station.representative.name].filter(Boolean).join(' ')}</span>
+                                        {station.representative.greeting && <span className="italic"> — “{station.representative.greeting}”</span>}
+                                        <span className="text-muted-foreground/60"> · from your screenshot, {new Date(station.representative.seenAt).toLocaleDateString()}</span>
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
 

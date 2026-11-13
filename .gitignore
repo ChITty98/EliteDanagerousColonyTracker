@@ -1,2 +1,5 @@
 # Claude Code worktrees / session data
 .claude/
+
+# stray live-data file written when the server is started from the repo root — never committed
+/colony-data.json

@@ -15,7 +15,7 @@ interface Sample { t: number; at: string; lat: number; lon: number; alt: number 
 interface Mark { kind: string; t: number; at: string; dist: number | null; alt: number | null; speed: number | null; rangeM?: number | null; countdownS?: number | null; pad?: number | null; broken?: boolean }
 interface Ship { type: string; name: string; ident?: string | null }
 interface Run {
-  id: string; startedAt: string; endedAt?: string; endKind?: string; body: string | null; target: Target | null; ship?: Ship | null; totalS: number; runS?: number; runupS?: number; gateT?: number | null; clean: boolean;
+  id: string; startedAt: string; endedAt?: string; endKind?: string; body: string | null; target: Target | null; ship?: Ship | null; totalS: number; runS?: number; runupS?: number; gateT?: number | null; clean: boolean; entry?: { verdict: string | null; targetRangeM: number | null; targetCountdownS: number | null; targetFrom: string | null } | null;
   oc: { startDistM: number | null; startAltM: number | null; durationS: number | null };
   glide: { startT: number; startDistM: number | null; startAltM: number | null; endT: number | null; endDistM: number | null; endAltM: number | null; broken: boolean; slopeDeg: number | null; secondsToTargetAtStart: number | null } | null;
   docking: { requestedT: number | null; grantedT: number | null; pad: number | null; handoffT: number | null; handoffDistM: number | null; handoffAltM: number | null; handoffSpeedMps: number | null; computerS: number | null; clearanceToPadS: number | null; retakes: number } | null;
@@ -26,6 +26,8 @@ interface Run {
 type Sectors = { s1: number | null; s2: number | null; s3: number | null; s4: number | null };
 interface Summary {
   runs: number; cleanRuns: number; shortest: Run | null; sameShip?: boolean; shipType?: string | null; envelope: { dist: number; min: number; max: number }[]; corridor: [number, number]; sectorBest?: Sectors | null;
+  glideEnd?: { usualAltM: number; brokenAboveM: number; fromRuns: number; nominal: boolean } | null;
+  entryTarget?: { rangeM: number | null; countdownS: number; from: 'site' | 'body' | null; crossings: number; landed: number; thrownOut: number; bodyLanded: number | null } | null;
   recommendation: { cruise?: { entryDistM: number | null; entryAltM: number | null; entryHudRangeM: number | null; entryCountdownS: number | null; checkpointAltM: number | null; fromRuns: number } | null; glideStart: { distM: number; altM: number; windowM: number; secondsToTarget: number | null; slopeDeg: number | null; fromRuns: number } | null; handoff: { distM: number | null; altM: number | null; speedMps: number | null; computerS: number | null; clearanceToPadS: number | null; fromRuns: number; retakes: { withS: number | null; withoutS: number | null; runsWith: number; runsWithout: number } } | null; corridor: [number, number]; nominalCorridor: boolean } | null;
 }
 interface Figures { phase: string; brief?: string; refShip?: { type: string; name: string; same: boolean } | null; t: number; gateT?: number | null; runT?: number | null; lineAltM?: number | null; lineDeg?: number | null; dist: number | null; alt: number | null; speed: number | null; slope: number | null; glide: boolean; computer: boolean; secondsToTarget: number | null; vsShortestS: number | null; vsShortestAltM: number | null; coach: string; rangeM?: number | null; countdownS?: number | null; refCountdownS?: number | null; word?: string | null; needDeg?: number | null; lat?: number; lon?: number; hdg?: number | null; radius?: number | null; at: string }
@@ -209,7 +211,7 @@ export function ApproachPage() {
         </>
       ) : null}
 
-      <p className="text-xs text-muted-foreground max-w-3xl">Signals: a run opens at the first position fix in supercruise toward a target on file, or on ApproachBody; ApproachSettlement names the port and its coordinates; Glide Mode (Status flag) brackets the glide; DockingRequested and DockingGranted, then the music track "DockingComputer" for the hand-off and any retake; Docked or Touchdown closes it. Position once a second from Status.json, distances on the body's radius. A glide that ends above {alt(5000)} counts as broken and stays out of the reference.</p>
+      <p className="text-xs text-muted-foreground max-w-3xl">Signals: a run opens at the first position fix in supercruise toward a target on file, or on ApproachBody; ApproachSettlement names the port and its coordinates; Glide Mode (Status flag) brackets the glide; DockingRequested and DockingGranted, then the music track "DockingComputer" for the hand-off and any retake; Docked or Touchdown closes it. Position once a second from Status.json, distances on the body's radius. A glide whose flag clears more than {alt(5000)} above where glides usually end at the site counts as broken and stays out of the reference{summary?.glideEnd ? ` (here they usually end ${alt(summary.glideEnd.usualAltM)} up${summary.glideEnd.nominal ? ', the nominal figure until the site has three glides on file' : ''}, so above ${alt(summary.glideEnd.brokenAboveM)})` : ''}.</p>
     </div>
   );
 }
@@ -431,7 +433,7 @@ function TopMap({ runs, live, target, selectedId, focusId, onFocus, shortestId, 
         </svg>
         <div className="space-y-2 overflow-x-auto">
           <table className="w-full text-xs">
-            <thead><tr className="text-muted-foreground uppercase tracking-wide text-[10px]"><th className="text-left py-1 pr-2">Run</th><th className="text-left py-1 pr-2">ship</th><th className="text-left py-1 pr-2">from</th><th className="text-left py-1 pr-2">glide began</th><th className="text-left py-1 pr-2">glide ended</th><th className="text-left py-1 pr-2">hand-off</th><th className="text-left py-1 pr-2">cleared → pad</th><th className="text-left py-1 pr-2">run-up</th><th className="text-left py-1 pr-2">sectors</th><th className="text-left py-1">from 100 km</th></tr></thead>
+            <thead><tr className="text-muted-foreground uppercase tracking-wide text-[10px]"><th className="text-left py-1 pr-2">Run</th><th className="text-left py-1 pr-2">ship</th><th className="text-left py-1 pr-2">from</th><th className="text-left py-1 pr-2">crossed the line</th><th className="text-left py-1 pr-2">glide began</th><th className="text-left py-1 pr-2">glide ended</th><th className="text-left py-1 pr-2">hand-off</th><th className="text-left py-1 pr-2">cleared → pad</th><th className="text-left py-1 pr-2">run-up</th><th className="text-left py-1 pr-2">sectors</th><th className="text-left py-1">from 100 km</th></tr></thead>
             <tbody>
               {[...runs].reverse().map((r) => {
                 const i = runs.indexOf(r); const b = bearingFrom(r);
@@ -440,6 +442,14 @@ function TopMap({ runs, live, target, selectedId, focusId, onFocus, shortestId, 
                     <td className="py-1.5 pr-2 whitespace-nowrap font-medium"><span className="inline-block w-[1.1em] mr-1 font-bold">{r.id === shortestId ? <span className="text-[#ff9900]">S</span> : r.id === referenceId ? <span className="text-foreground">R</span> : null}</span><i className="inline-block w-2.5 h-2.5 rounded-sm mr-2 align-[-1px]" style={{ background: color(r, i) }}></i>{when(r.startedAt)}{!r.clean ? <span className="ml-1.5 text-amber-300">{r.endKind === 'dropped' ? 'dropped — too fast' : r.glide ? (r.glide.broken ? 'broken glide' : 'no glide end') : 'no glide'}</span> : null}</td>
                     <td className="py-1.5 pr-2 whitespace-nowrap text-muted-foreground">{r.ship ? r.ship.name : '—'}</td>
                     <td className="py-1.5 pr-2 font-mono whitespace-nowrap">{b != null ? `${dir(b)} ${Math.round(b)}°` : '—'}</td>
+                    <td className="py-1.5 pr-2 font-mono whitespace-nowrap">{(() => {
+                      // where the line was crossed, as the HUD showed it, against the target as it stood on that run
+                      const c = r.cruise;
+                      if (!c || c.entryHudRangeM == null) return '—';
+                      const verdict = r.entry?.verdict ?? (c.entryCountdownS != null && c.entryCountdownS <= 6 ? 'ENTRY HOT' : null);
+                      const off = !!verdict && verdict !== 'ON TRACK';
+                      return <span className={off ? 'text-amber-300' : ''}>{Mm(c.entryHudRangeM)}{c.entryCountdownS != null ? ` · ${fmtT(c.entryCountdownS)}` : ''}{r.entry?.targetRangeM != null ? <span className="text-muted-foreground"> / {Mm(r.entry.targetRangeM)} · {fmtT(r.entry.targetCountdownS)}</span> : null}{off ? <span className="ml-1 font-sans text-[10px] uppercase">{verdict.replace('ENTRY ', '')}</span> : null}</span>;
+                    })()}</td>
                     <td className="py-1.5 pr-2 font-mono whitespace-nowrap">{r.glide ? `${km(r.glide.startDistM)} out` : '—'}</td>
                     <td className={`py-1.5 pr-2 font-mono whitespace-nowrap ${r.glide?.broken ? 'text-amber-300' : ''}`}>{r.glide && r.glide.endT != null ? `${km(r.glide.endDistM)} out · ${alt(r.glide.endAltM)} up` : '—'}</td>
                     <td className="py-1.5 pr-2 font-mono whitespace-nowrap">{r.docking?.handoffT != null ? `${km(r.docking.handoffDistM)} out${r.docking.retakes ? ` · ${r.docking.retakes} retake${r.docking.retakes > 1 ? 's' : ''}` : ''}` : '—'}</td>
@@ -452,7 +462,7 @@ function TopMap({ runs, live, target, selectedId, focusId, onFocus, shortestId, 
               })}
             </tbody>
           </table>
-          <p className="text-xs text-muted-foreground max-w-prose">Click a run to pick it out on the map and load it into the slope above; click again to show all. Broken glides stay on the map and out of the reference.</p>
+          <p className="text-xs text-muted-foreground max-w-prose">Click a run to pick it out on the map and load it into the slope above; click again to show all. Broken glides stay on the map and out of the reference. <i>Crossed the line</i> is the HUD range and countdown at the crossing, then the target as it stood on that run; amber when the entry was hot, sharp or early.</p>
         </div>
       </div>
     </div>
@@ -550,14 +560,25 @@ function Boundaries({ run, reference }: { run: Run | null; reference: Run | null
 // ---- recommendation ------------------------------------------------------------------------------
 function Recommendation({ summary, target }: { summary: Summary | null; target: Target | null }) {
   const c = summary?.recommendation?.cruise || null;
+  const tg = summary?.entryTarget || null;
   if (!summary || !target) return null;
+  // The fastest run's own crossing, as a fact: it is often a hot one, so it is not the recommendation.
+  const fastest = c && c.entryHudRangeM != null ? <>Your fastest run crossed at <span className="font-mono">{Mm(c.entryHudRangeM)}</span>{c.entryCountdownS != null ? <> showing <span className="font-mono">{fmtT(c.entryCountdownS)}</span></> : null}{c.checkpointAltM != null ? <> · at 1.0 Mm, <span className="font-mono">{alt(c.checkpointAltM)}</span> up</> : null}.</> : null;
   return (
     <div className="bg-card border border-border rounded-lg p-4 space-y-1">
       <h2 className="font-semibold">Recommended approach at {target.name}</h2>
-      {!c || c.entryHudRangeM == null ? (
-        <p className="text-sm text-muted-foreground">No clean run on file yet. The first clean run sets the entry.</p>
+      {tg && tg.rangeM != null ? (
+        <>
+          <p className="text-sm">Cross the line at <b className="font-mono">{Mm(tg.rangeM)}</b> showing <b className="font-mono">{fmtT(tg.countdownS)}</b>.</p>
+          <p className="text-xs text-muted-foreground">{tg.from === 'body'
+            ? <>The middle of {tg.bodyLanded} crossings on this body that were on track by the angle and at {fmtT(tg.countdownS)} or over at the line, and landed; {tg.landed} of them here. This site takes over with three of its own.</>
+            : <>The middle of {tg.landed} crossing{tg.landed === 1 ? '' : 's'} here that were on track by the angle and at {fmtT(tg.countdownS)} or over at the line, and landed. Of the {tg.crossings} that crossed like that, {tg.thrownOut} thrown out.</>} The overlay shows this target until the line, then how the crossing went. {fastest}</p>
+        </>
       ) : (
-        <p className="text-sm">Enter orbital cruise at about <b className="font-mono">{Mm(c.entryHudRangeM)}</b>{c.entryCountdownS != null ? <> showing <b className="font-mono">{fmtT(c.entryCountdownS)}</b></> : null}{c.checkpointAltM != null ? <> · at 1.0 Mm, <b className="font-mono">{alt(c.checkpointAltM)}</b> up</> : null}.</p>
+        <>
+          {fastest ? <p className="text-sm">{fastest}</p> : <p className="text-sm text-muted-foreground">No clean run on file here yet.</p>}
+          <p className="text-xs text-muted-foreground">No target yet. It takes three landed crossings on this body that were on track by the angle and at {fmtT(tg ? tg.countdownS : 7)} or over at the line; {tg ? (tg.bodyLanded ?? tg.landed) : 0} so far.</p>
+        </>
       )}
     </div>
   );

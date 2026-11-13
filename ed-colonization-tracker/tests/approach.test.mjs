@@ -245,7 +245,7 @@ describe('approach recorder', () => {
     // projection firms inside five seconds; the early word never stands for the descent
     const well = events.filter((e) => e.type === 'approach_sample' && e.phase === 'Gravity well' && e.word);
     expect(well.length).toBeGreaterThan(0);
-    expect(well.every((e) => /^(ON TRACK|ENTRY SHARP|ENTRY TOO SHARP|ENTRY TOO EARLY)( \(early\))?$/.test(e.word))).toBe(true);
+    expect(well.every((e) => /^(ON TRACK|ENTRY HOT|ENTRY SHARP|ENTRY TOO SHARP|ENTRY TOO EARLY)( \(early\))?$/.test(e.word))).toBe(true);
     expect(well.some((e) => /\(early\)$/.test(e.word))).toBe(true);
     // the run is coached against the line: high/low and the angle
     const last = events.filter((e) => e.type === 'approach_sample').pop();
@@ -324,18 +324,19 @@ describe('approach recorder', () => {
     expect(ab.rangeM).toBeGreaterThan(100000);
   });
 
-  it('a sharp entry is coached: the geometry curl above 200 km, then the countdown curl below 150 km; an on-track entry never hears a speed word', () => {
+  it('a hot, red-zone entry: ENTRY HOT at the line, then DECREASE SPEED below 150 km; nothing advises a curl any more', () => {
     events.length = 0;
     // a sharp, fast entry: 150 km out at 400 km up, closed to the glide point in three seconds — the pitch needed is about 70°, the countdown 0:02 — abandoned before the glide
     drive(profile({ anchors: [{ t: 0, dist: 150000, alt: 400000 }, { t: 3, dist: 41000, alt: 24000 }, { t: 6, dist: 8900, alt: 2100 }, { t: 20, dist: 0, alt: 0 }] }), [[3, { event: 'LeaveBody', Body: 'Col 173 Sector AX-J d9-52 1 c', BodyID: 16 }]]);
     const oc = events.filter((e) => e.type === 'approach_sample' && e.phase === 'Orbital cruise' && e.countdownS != null);
     expect(oc.length).toBe(2);
     expect(oc[0].countdownS).toBeLessThan(5.5);
-    expect(oc[0].word).toBe('CURL ROUTE ADVISED');            // above 200 km: the geometry, 70° to the glide point
+    expect(oc[0].word).toBe('ENTRY HOT');                     // at the line the countdown reads 0:02; the angle, about 70°, is on the page line
     expect(oc[0].coach).toMatch(/too sharp|sharp entry/);
     expect(oc[1].alt).toBeLessThan(150000);
-    expect(oc[1].word).toBe('CURL ROUTE ADVISED');            // below 150 km: two seconds at 0:05 or under after a sharp entry
-    expect(oc[1].brief).toBe('CURL ROUTE ADVISED');
+    expect(oc[1].word).toBe('DECREASE SPEED');                // below 150 km at 0:05 or under after a hot, sharp entry
+    expect(oc[1].brief).toBe('DECREASE SPEED');
+    expect(events.filter((e) => e.type === 'approach_sample').every((e) => !/CURL/.test(`${e.word} ${e.brief} ${e.coach}`))).toBe(true);
     expect(oc.every((e) => !/km\/s/.test(e.coach) && !/steepen|level off|maintain/.test(e.coach) && !/°/.test(e.brief))).toBe(true);
     expect(getLiveApproach().live).toBeNull();
   });

@@ -4,7 +4,7 @@ A comprehensive companion app for **Elite Dangerous** colonization gameplay. Tra
 
 Built with React, TypeScript, and Node.js. Runs as a standalone Windows `.exe` — no install required.
 
-**Current release: 1.60.18** — see [CHANGELOG.md](CHANGELOG.md) for what changed and when. The app follows a journal-first rule: everything below works from the game's own journal files; external services only add to it.
+**Current release: 1.60.40** — see [CHANGELOG.md](CHANGELOG.md) for what changed and when. The app follows a journal-first rule: everything below works from the game's own journal files; external services only add to it.
 
 ---
 
@@ -21,6 +21,9 @@ A showcase of everything remarkable across your territory. Highlights rare stars
 
 ### Expansion Scouting
 Find your next colony. Search nearby systems by radius, score them for colonization potential, and compare candidates side-by-side. Scoring evaluates landable body count, atmosphere diversity, star rarity, ring presence, agricultural potential, and more. Supports both Spansh API data and your own journal scans — whichever has better data wins.
+
+### Installations
+Every site across your colonies in one sortable table: estimated population and its share of the system, the market's economies as the journal last recorded them, Raven Colonial's tech / wealth / development effects, opening and dock dates; a site inside its first days is marked growing. Filter by system, kind or economy; pick an economy to rank sites by its strength.
 
 ### War & Peace (BGS conflicts)
 Find systems near you with active conflicts — War, Civil War, or Election. Filter by distance, conflict state, system allegiance, and combatant allegiance. Combat zones spawn during War and Civil War; Election is mission-only. Click any result to expand and hit **🔍 Scout system** for a deeper Spansh + EDSM pull: live conflict pairs (X vs Y with allegiance tags), combat anchors (war-faction installations sorted by distance from arrival), and full-service stations (refuel + repair + rearm) for hopping between fights. Cached server-side per BGS tick (Thursday 07:00 UTC) so repeat searches are free.
@@ -74,6 +77,8 @@ Scan your full journal history for exploration data, visit counts, and system kn
 ### System Detail Pages
 Deep-dive into any system with three tabs:
 - **Installations** — all stations, their types, landing pads, economies, services
+- **Ship Stable** — every ship from its journal Loadout: where it is and the transfer cost, pad size, jump unladen/laden, cargo, speed and boost, shields, SRV and vessel bays and the last craft launched, rebuy; engineering chips per module; a lifetime panel with jumps, distance flown and carried, systems visited, farthest from Sol, tonnes bought, delivered and refined, bodies scanned and first discovered, credits earned, ship kills and the engineering history
+- **Factions** — a page per system: star a faction and project sourcing there buys from its stations first; per faction, what its markets pay for, what it can supply to your projects, in-system loops ending at its stations, what your rigs mined here that it buys, and your mined-goods sales with the influence reading before and after
 - **Bodies** — full body tree with star/planet hierarchy, atmosphere classification, gravity, rings, volcanism. Supports journal scans and Spansh data. "Prime" indicators for high-value colonization targets.
 - **Nearby Candidates** — expansion scouting from this system
 
@@ -81,7 +86,7 @@ Deep-dive into any system with three tabs:
 A mining assist for ring mining, built only from measured data. Every prospected rock gets an expected credit total, not just a material list: proportion → tonnes through a per-material yield table calibrated from your own log, tonnes → credits at the best live non-carrier buyer within 500 ly (Ardent) or your own visited-market average. "Worth it" is the median rock of the ring you are in, from your own history, never a fixed number. Target hits fire regardless of value, stalls are reported as facts (silence, limpets, last collector launch) rather than guessed causes, and hold warnings use effective ore space. Hotspots are attributed from the nav lock, rings are indexed from your DSS scans, and trophies and streaks accumulate per session.
 
 ### Commander's Log
-A deterministic timeline of everything the journals hold, weighted so a Dodec build or a first discovery outranks a jump: builds with station photos and a searchable *builds* tag (large ports and Dodecs weighted by your Domain Highlights), loop hauls, missions, exobiology and bio sales, community goals joined and delivered, vehicle firsts, surface presence on relog, and a searchable station list with the fleet log. Station renames resolve by market id, so a station that changed its name is one entry, not three. No generated prose: every line is an event.
+A deterministic timeline of everything the journals hold, weighted so a Dodec build or a first discovery outranks a jump: builds with station photos and a searchable *builds* tag (large ports and Dodecs weighted by your Domain Highlights), loop hauls, war nights (conflict zones fought in, kills, bonds earned and redeemed, who for and against), each sitting's hauling and trade (tonnes delivered, loaded to the carrier, bought, sold and the profit), missions, exobiology and bio sales, community goals joined and delivered, vehicle firsts, surface presence on relog, and a searchable station list with the fleet log. Station renames resolve by market id, so a station that changed its name is one entry, not three. No generated prose: every line is an event.
 
 ### Surface Mining
 The Rhino's page: bodies → signals → deposits, in the order you navigate. Nav-lock a "Planetary Mining Location Signal (N)" before you drop and the visit is filed under it; a login on the surface starts a new visit. Live hero with this visit's tonnes, value and pace; a compass to any deposit, the ship or a recall spot; a signal map from the breadcrumb track (SRV and on-foot samples only — never the ship) with a **Covered** layer shading the 2 km the Rhino's scanner sweeps either side of the drive, this visit brighter than earlier evenings, so unshaded ground inside the rings is a real gap; a **Route** button that orders the rig points over the ground you actually drove, time-costed from your own pace; rigs per deposit with the 4-rig / 3-per-commodity cap shared with the Domain; F10 screenshots as deposit markers, tags from orbit, landing and driving ratings in your own words; queued refinery output after a transfer credited to the rig it came from. Under **My systems**, a row of colony chips narrows the page to one system. The map hoists itself to a *Working now* panel while you are on a signal.
@@ -93,7 +98,9 @@ Your ship's hold and your carrier's cargo, priced three ways with a place for ea
 Carrier cargo is tracked transactionally: every transfer while docked at your carrier, your own buys and sells against its market, and tritium to the tank, replayed from the journals since the carrier was bought. That is exact for ore and anything without a trade order; sell orders are reconciled from the carrier's market read, the game's CarrierStats total is the check, and the remainder is shown as "not itemised". A baseline typed from the carrier's inventory screen anchors what the journal cannot count.
 
 ### Co-pilot
-A voiced co-pilot with three personas — Wren, Tycho and K2 — that react to what you are doing: jumps, docks, scans, hauling, mining, threats, GalNet news. Lines come from a curated canned corpus or, when the local Claude command line is available, live generation with a breaker that falls back to canned. On the surface it has its own canned beats — arrival by driving band, the hold filling (near or far, never promising to move the ship), the ship going up on its own, a nudge for the most valuable commodity logged at the signal, a **recall** line off the one tell the game leaks (the SAASignalsFound burst when her AI takes over), and stepping out on foot keyed by the body's scanned temperature — and it is silent while combat music plays. Humour and honesty are dials in Settings; the voice runs through the app's own speech path.
+A voiced co-pilot with three personas — Wren, Tycho and K2 — that react to what you are doing: jumps, docks, scans, hauling, mining, threats, GalNet news. Lines come from a curated canned corpus or, when the local Claude command line is available, live generation with a breaker that falls back to canned. On the surface it has its own canned beats — arrival by driving band, the hold filling (near or far, never promising to move the ship), the ship going up on its own, a nudge for the most valuable commodity logged at the signal, a **recall** line off the one tell the game leaks (the SAASignalsFound burst when the ship's AI takes over), and stepping out on foot keyed by the body's scanned temperature — and it is silent while combat music plays. Humour and honesty are dials in Settings; the voice runs through the app's own speech path.
+
+Live lines can also run on your own **Anthropic API** credits (Settings → *Live lines written by*): put your key on one line in `anthropic-key.txt` beside the exe; the server alone reads it, prices every call into `copilot-spend.json` and stops at the monthly cap you set. On the API the co-pilot forms **station opinions** when docking is granted — its own take on the place from what the app knows about it (pads, economy mix, owner and wars, the world under it, your history there, who else is docking right now), checked against those facts before it is said and remembered for the next visit. It also reads your **F10 screenshots** (Settings → *Co-pilot looks at your screenshots*): each is described and Sights-tagged on the photo, a station services screen's representative is kept on that station, and it may remark on a shot — never your name, credits or other players. And it never pays twice for the same news: a moment whose facts it already spoke about in the last three hours stays quiet or takes a free canned line.
 
 ### Proximity Radar, Chain Watch and Threats
 The radar listens to the EDDN firehose and shows what tool-running commanders are doing within 200 ly: builds, atmospheric leads, scans, conflicts. Chain Watch turns colonisation events and Spansh records into named chains near your regions. Threats watches a 50 ly sphere around systems you have flagged as yours to lose. The same feed keeps the Map's Populated layer current. All of it is off with one switch in Settings, because the EDDN feed is about 1.8 GB a day inbound.
@@ -149,6 +156,7 @@ iPad, iPhone, Surface, any Firefox or Safari browser gets full functionality —
 | BGS tick service | Tick awareness | Every 15 min | Tick features dormant |
 | GitHub Releases | Update banner | On boot and every 6 h | No update banner |
 | Local `claude` command | Co-pilot live lines | One at a time, 20 s timeout, breaker | Canned lines |
+| Anthropic API (optional, your key) | Co-pilot live lines, station opinions and screenshot reading, when picked in Settings | One at a time; monthly spend cap | Canned lines |
 
 Browser-side calls are proxied through the server (`/spansh-api/*`, `/edsm-api/*`, `/ardent-api/*`) to avoid CORS. Nothing the journals feed needs the network; every external call fails quiet with a fallback.
 
@@ -280,7 +288,9 @@ Toggleable chips for each category:
 | `carrier-ledger.jsonl` | The carrier cargo transaction ledger |
 | `journal-stats.json` | Lifetime statistics from the journal |
 | `chain-watch.json` | The chain-watch frontier ledger |
-| `copilot-memory.json`, `copilot-captures.jsonl`, `copilot-characters/` | Co-pilot memory, captured lines and ratings, persona portraits |
+| `copilot-memory.json`, `copilot-captures.jsonl`, `copilot-characters/` | Co-pilot memory (incl. station opinions), captured lines and ratings, persona portraits |
+| `anthropic-key.txt`, `copilot-spend.json` | Your Anthropic API key (optional; you create it) and the monthly API spend ledger |
+| `journal-position.json` | Where the journal reader stopped, so the next start carries on from there (events written while the exe was closed are no longer skipped) |
 
 All files are created automatically, live next to the executable, and are ignored by git. Back up `colony-data.json` and the `.jsonl` ledgers to preserve your data.
 

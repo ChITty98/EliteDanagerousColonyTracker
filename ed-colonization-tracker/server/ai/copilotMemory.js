@@ -7,7 +7,7 @@
 // of the client sync/merge (partialize / MERGE_STRATEGIES) layer entirely. Server-
 // owned, single instance, debounced writes.
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, copyFileSync } from 'node:fs';
 
 function defaults() {
   return {
@@ -23,6 +23,12 @@ function defaults() {
     ships: {},      // { [type]: { name, firstSeenAt } } — named ships for callback on return
     milestones: {}, // { [key]: { firstAt, count, lastAt, lastSystem } } — notable firsts
     colonyWatch: {},// { [colonySystem]: { snapshotAt, coords, colonyName, systems } } — area snapshot for the session diff
+    opinions: {},     // { [persona]: { [marketId]: { line, stance, used, factValues, at, … } } } — station opinions (1.61.0)
+    opinionAngles: {},// { [persona]: [angle, …] } — what each persona led with lately, so takes rotate
+    opinionLines: {}, // { [persona]: [line, …] } — recent opinion lines, for the anti-repeat check
+    opinionForm: {},  // { [persona]: n } — rotates the form of a take
+    dockDenials: {},  // { [marketId]: { count, reasons, lastTs, stationName } } — times a station turned the commander away
+    dockDenialsBackfilled: null, // set once the journals have been scanned for past turn-aways
   };
 }
 
@@ -34,12 +40,17 @@ let dirty = false;
 /** Bind to the memory file and load any prior state. Call once at startup. */
 export function initCopilotMemory(filePath) {
   file = filePath;
+  // One-time safety copy before the first build that writes station opinions into this file (1.61.0).
+  try {
+    const bak = String(filePath).replace(/\.json$/i, '.before-opinions.json');
+    if (bak !== filePath && existsSync(filePath) && !existsSync(bak)) copyFileSync(filePath, bak);
+  } catch { /* best-effort — never block startup */ }
   try {
     const loaded = JSON.parse(readFileSync(file, 'utf8'));
     if (loaded && typeof loaded === 'object') {
       mem = Object.assign(defaults(), loaded);
       mem.sessions = Object.assign(defaults().sessions, loaded.sessions || {});
-      for (const k of ['crew', 'crewRank', 'grudges', 'systems', 'ships', 'milestones', 'colonyWatch']) {
+      for (const k of ['crew', 'crewRank', 'grudges', 'systems', 'ships', 'milestones', 'colonyWatch', 'opinions', 'opinionAngles', 'opinionLines', 'opinionForm', 'dockDenials']) {
         if (!mem[k] || typeof mem[k] !== 'object') mem[k] = {};
       }
       if (!mem.qa || typeof mem.qa !== 'object') mem.qa = { durable: {}, session: {}, goal: {} };

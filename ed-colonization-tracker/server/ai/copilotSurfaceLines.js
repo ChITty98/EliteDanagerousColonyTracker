@@ -7,12 +7,12 @@
 // THE RULE (the commander's, 2026-09-04): a line may reference ONLY what the data carries —
 //   • the driving band, as a quality of the ground the co-pilot can see right now
 //   • the signal number ({site}) and body ({body}), sparingly
-//   • hold-near when the app knows where she is (deploy point / unmanned touchdown / where a recall
-//     brought her) and the SRV is within reach; hold-far otherwise. A far line prompts a recall or
-//     a drive back and never says where she is or that she will move on her own.
+//   • hold-near when the app knows where the ship is (deploy point / unmanned touchdown / where a recall
+//     brought it) and the SRV is within reach; hold-far otherwise. A far line prompts a recall or
+//     a drive back and never says where it is or that it will move on its own.
 //   • surface-recall ONLY on the recall tell (an SAASignalsFound burst seen from the SRV or on foot
-//     with no unmanned Liftoff after it): she IS coming, so "on my way" is true — but never "land",
-//     "set down" or "hover": which one she does depends on where the commander is standing.
+//     with no unmanned Liftoff after it): the ship IS coming, so "on my way" is true — but never "land",
+//     "set down" or "hover": which one it does depends on where the commander is standing.
 //   • surface-foot-* keyed by the body's surface temperature ON FILE; the unknown pool claims nothing.
 // Nothing else exists. No compass directions, no "last time", no "you rated", no terrain feature
 // the app never recorded, and never a number read back. Present tense, radio from overhead.
@@ -45,7 +45,7 @@ export default {
     'surface-arrive-valleys': [
       'Good luck out there. I mean that.',
       'Valleys. Big ones. Radio if you go quiet.',
-      "That's the hard one. I'll keep her close.",
+      "That's the hard one. I'll keep the ship close.",
       "Deep ground down there. Don't do anything I'd do.",
     ],
     'surface-arrive-brutal': [
@@ -61,10 +61,10 @@ export default {
       'Blank card down there. Go easy till you know it.',
     ],
     'surface-hold-near': [
-      "Filling up — I'll hold her steady for the transfer.",
+      "Filling up — I'll hold the ship steady for the transfer.",
       "Getting heavy down there. I'm right here, door's open.",
       "Nearly full. I'm parked, come on back.",
-      "Telemetry says you're loaded. She's not going anywhere.",
+      "Telemetry says you're loaded. The ship's not going anywhere.",
     ],
     'surface-hold-far': [
       "Telemetry says you're filling up. Bring it in when you're ready — recall me if I'm not with you.",
@@ -80,9 +80,9 @@ export default {
     ],
     'surface-ship-away': [
       "I'll be hanging out in orbit. Shout when you want me.",
-      "Taking her up. I'm right overhead if you need me.",
+      "Heading up. I'm right overhead if you need me.",
       'Lifting off — not going far. Wave.',
-      "She's up. I'll circle till you're done.",
+      "Ship's up. I'll circle till you're done.",
     ],
     'surface-recall': [
       'Heard. On my way.',
@@ -171,9 +171,9 @@ export default {
       'This site is on file for {commodity}. Keep looking.',
     ],
     'surface-ship-away': [
-      "Taking her up. I'll hold orbit directly over you.",
+      "Taking the ship up. I'll hold orbit directly over you.",
       "Lifting off — I'm not leaving, just hovering.",
-      "She's airborne. Say the word and I'm on my way back.",
+      "Ship's airborne. Say the word and I'm on my way back.",
       'Up we go. Eyes on you the whole time.',
     ],
     'surface-recall': [
@@ -264,8 +264,8 @@ export default {
     ],
     'surface-ship-away': [
       "Lifting off. I'll be in orbit, judging.",
-      'Taking her up. Try not to need me.',
-      "She's up. I'm overhead. Don't get comfortable.",
+      'Taking the ship up. Try not to need me.',
+      "Ship's up. I'm overhead. Don't get comfortable.",
       "Airborne. I'll come back. Probably.",
     ],
     'surface-recall': [

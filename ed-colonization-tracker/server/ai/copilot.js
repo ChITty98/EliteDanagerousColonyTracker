@@ -7,11 +7,15 @@
 // timing live here in process memory (not the persisted store).
 
 import { copilotComplete } from './copilotProvider.js';
+import { apiComplete, apiReady } from './copilotApi.js';
+import { detectOpinion, runOpinion, noteOwnStationEvents } from './copilotOpinions.js';
 import { COPILOT_RULES, buildPersonalityPreamble, matchBeat, IDLE_INTENTS } from './copilotRules.js';
 import { awayProcess, awayContextFact, awayState, isSrvType } from './copilotAway.js';
 import { friendlyShip } from '../journal/extractor.js';
 import { buildSnapshot, eventDetail, decorateScan, detectCompletion, detectBuildComplete, detectInferredDamage, detectAutopilot, detectDockComplete, detectDockInfo, detectNpcThreat, detectAtmo, detectCrew, detectPilotBanter, detectSessionStart, detectGrudge, detectSystemChange, detectQuestion, detectDockFlavor, detectArrival, detectCargoBayGripe, detectSrvReturn, detectDamageSeverity, detectPaceNudge, detectCarrierFuel, getCrewNames, ingestWorld , isHaulSessionActive } from './copilotContext.js';
-import { isCannedScenario, pickCanned } from './copilotCanned.js';
+import { isCannedScenario, pickCanned, cannedAvailable, percentWords } from './copilotCanned.js';
+import { getNavDestination } from './copilotContext.js';
+import { rememberLine, linesFor, factsSaid, nearCopyOf } from './copilotRepeats.js';
 import { detectTarsLore } from './copilotTars.js';
 import { detectMiningBeat } from './copilotMining.js';
 import { detectSurfaceBeat, setSurfaceKick } from './copilotSurface.js';
@@ -69,9 +73,20 @@ export function setInGame(v, why) {
   }
 }
 
+/** May the co-pilot speak right now? In the game and not fighting — the gates every line obeys. */
+export function copilotCanSpeak() { return inGame && !inCombat; }
+
+/** A line spoken outside the tick (a screenshot remark) joins the anti-repeat memory and the spacing. */
+export function noteExternalLine(line) {
+  if (!line) return;
+  lastSpokeAt = Date.now();
+  recentLines.push(line);
+  while (recentLines.length > RECENT_MAX) recentLines.shift();
+}
+
 // Timer-born surface beats (a recall confirmed once the departure window closes, the target
 // nudge) arrive between journal writes, and nothing ticks the co-pilot then — on foot, the next
-// event can be the ship LANDING half a minute later, and "on my way" delivered as she lands is a
+// event can be the ship LANDING half a minute later, and "on my way" delivered as the ship lands is a
 // bug. So the bridge asks for one synthetic tick: a batch with a single CopilotKick event, run
 // through the real parser (every typed array exists), recent by construction, and flagged so it
 // can never produce idle filler — it exists to drain the surface queue and nothing else.
@@ -104,6 +119,7 @@ export async function runCopilot(parsed, state, deps) {
   // of those windows and world.hull sat at 63% for a quarter hour after the commander repaired.
   // Only SPEAKING waits on inFlight; awareness never does.
   ingestWorld(parsed); // keep world awareness (security / body / atmosphere / hull) current
+  try { noteOwnStationEvents(parsed); } catch (e) { console.error('[Copilot] station events:', e && e.message); } // turn-away counts + own fingerprints for nearby-now
   // Away-team state: is the commander out in the Nomad / on foot? The big ship (with
   // the co-pilot aboard) follows the deployed vehicle, so every line while away must
   // read as 'I'm up here watching you down there'. See copilotAway.js.
@@ -145,6 +161,10 @@ export async function runCopilot(parsed, state, deps) {
   const persona = settings.copilotPersonality || 'wash';
   const hauling = isHaulSessionActive(state); // declared run (Start Session) → mute station flavour, focus the job
   const candidates = [];
+  // Station opinion (1.61.0, Anthropic API only): the persona's own take on the station just cleared to dock at.
+  let opinion = null;
+  try { opinion = detectOpinion(parsed, state, persona, { hauling, now }); } catch (e) { console.error('[Copilot] opinion check:', e && e.message); }
+  if (opinion) candidates.push({ beat: opinion, ev: null, synthetic: true, place: placeFor(state, null) });
   const completion = detectCompletion(parsed, state);
   if (completion) candidates.push({ beat: completion, ev: null, synthetic: true, place: placeFor(state, null) });
   const buildDone = detectBuildComplete(parsed, state);
@@ -208,12 +228,25 @@ export async function runCopilot(parsed, state, deps) {
   for (const ev of events) {
     if (!ev || !isRecent(ev.timestamp)) continue;
     if (ev.event === 'Scan') decorateScan(ev);
-    const beat = matchBeat(ev);
+    const matched = matchBeat(ev);
+    // Supercruise assist: the leg's destination is the one new fact each engagement has (1.62.0).
+    const beat = matched && matched.key === 'sca' ? scaBeat(matched, state) : matched;
     if (beat) candidates.push({ beat, ev, place: placeFor(state, ev) });
     // Persona affinity (economy / superpower / body / services / ship) — LIVE,
     // arbiter-gated so it's rare, never every dock.
     const aff = detectAffinityBeat(ev, persona, hauling, state);
     if (aff) candidates.push({ beat: aff, ev, place: placeFor(state, ev) });
+  }
+  // 1.62.0 — a moment whose facts were already said in the last three hours is not news. It drops out
+  // before the arbiter, so it never buys a paid line that only rewords the last one (13 of 32 paid lines
+  // from 29 Oct did). A free canned line can still stand in where the persona has one.
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    const b = candidates[i].beat;
+    if (!b || !b.fp || !factsSaid(b.fp, now)) continue;
+    const cannedCtx = Object.assign(buildCannedContext(state, candidates[i].ev), b.inputs || {});
+    if (cannedAvailable(persona, b.key, cannedCtx)) { candidates[i] = { ...candidates[i], beat: { ...b, cannedOnly: true } }; continue; }
+    console.log(`[Copilot] ${b.key}: nothing new since it last spoke — skipped, no call`);
+    candidates.splice(i, 1);
   }
   const hasRealBeat = candidates.length > 0;
 
@@ -255,6 +288,26 @@ export async function runCopilot(parsed, state, deps) {
   // via /copilot-answer. Not a normal line, so it short-circuits the canned/live path.
   if (beat.question) { idleStreak = 0; _idleQuietLogged = false; emitQuestion(settings, deps, beat); return; }
 
+  // A station opinion — generated, checked and remembered by copilotOpinions; silence when it fails its checks.
+  if (beat.opinion) {
+    idleStreak = 0;
+    _idleQuietLogged = false;
+    inFlight = true;
+    try {
+      const said = await runOpinion(beat, state, settings, deps, { recentLines: recentLines.slice() });
+      if (said) {
+        lastSpokeAt = Date.now();
+        recentLines.push(said);
+        while (recentLines.length > RECENT_MAX) recentLines.shift();
+      }
+    } catch (e) {
+      console.error('[Copilot] opinion failed:', e && e.message);
+    } finally {
+      inFlight = false;
+    }
+    return;
+  }
+
   if (beat._idle) {
     idleStreak++;
     lastIdleKey = beat.key;
@@ -280,11 +333,14 @@ export async function runCopilot(parsed, state, deps) {
   // A beat carrying a ready-made literal line (e.g. Colony Watch's "all quiet" lines) — broadcast it
   // as-is, instant and free. No canned pool, no live generation.
   if (beat.line) { emitLiteral(settings, deps, beat); return; }
+  // Nothing new for its facts — the free canned line, never a paid one (1.62.0).
+  if (beat.cannedOnly) { emitCanned(settings, deps, beat, Object.assign(buildCannedContext(state, winner.ev), beat.inputs || {})); return; }
   if (isCannedScenario(beat.key)) {
     emitCanned(settings, deps, beat, Object.assign(buildCannedContext(state, winner.ev), beat.inputs || {}));
   } else {
     const awayFact = awayContextFact(motherShipLabel(state));
-    const detail = [winner.synthetic ? beat.detail : eventDetail(winner.ev), awayFact].filter(Boolean).join(' ');
+    // An event beat may carry its own detail too (supercruise assist's destination, 1.62.0).
+    const detail = [winner.synthetic ? beat.detail : [beat.detail, eventDetail(winner.ev)].filter(Boolean).join(' '), awayFact].filter(Boolean).join(' ');
     const inputs = winner.synthetic ? (beat.inputs || null) : captureInputsForEvent(winner.ev);
     // Flywheel: try a PROMOTED template (free) before paying for live generation. The
     // promoted pool is grown offline by tools/promote-copilot-captures.mjs from high-
@@ -292,7 +348,7 @@ export async function runCopilot(parsed, state, deps) {
     const promotedCtx = { ...buildCannedContext(state, winner.ev), ...(inputs || {}) };
     if (emitCanned(settings, deps, beat, promotedCtx, 'promoted')) return;
     await speak(state, settings, deps, {
-      key: beat.key, intent: beat.intent, model: beat.model, mood: beat.mood, detail, inputs,
+      key: beat.key, intent: beat.intent, model: beat.model, mood: beat.mood, detail, inputs, fp: beat.fp,
       fallback: () => emitCanned(settings, deps, beat, promotedCtx, 'canned'),
     });
   }
@@ -311,7 +367,7 @@ export async function runOnDemand(state, deps) {
   const intent = "The commander just asked what's on your mind. React to the CURRENT moment — where you are, what you're doing, the build progress, the view, whatever is most worth saying right now. If it's genuinely quiet, a short honest 'all quiet' in character is fine.";
   _lastTrigger = 'on-demand';
   await speak(state, settings, deps, {
-    key: 'whats-on-your-mind', intent, model: 'sonnet', mood: 'calm', detail: '', inputs: null,
+    key: 'whats-on-your-mind', intent, model: 'sonnet', mood: 'calm', detail: '', inputs: null, onDemand: true,
   });
 }
 
@@ -333,7 +389,7 @@ export async function runNews(state, deps) {
     return;
   }
   _lastTrigger = 'news-button';
-  await speak(state, settings, deps, { key: 'news', intent: newsIntent(article), model: 'sonnet', mood: 'calm', detail: `Snippet: ${article.snippet}`, inputs: null });
+  await speak(state, settings, deps, { key: 'news', intent: newsIntent(article), model: 'sonnet', mood: 'calm', detail: `Snippet: ${article.snippet}`, inputs: null, onDemand: true });
 }
 
 // Organic news beat — occasionally (rare, on a quiet cruise) surface the cached latest item.
@@ -358,6 +414,25 @@ function peekIdle() {
   // wins the tick, so the don't-repeat guard reflects what was really said.
   const pool = IDLE_INTENTS.filter((i) => i.key !== lastIdleKey);
   return pool[Math.floor(Math.random() * pool.length)] || IDLE_INTENTS[0];
+}
+
+// Supercruise assist (1.62.0). Every leg of a haul engaged it with the same facts — home system, high
+// security — and all nine paid lines came out as "I've got the ship, sit back". The destination is the
+// one thing that changes, so it goes into the line's context and into its fingerprint: the same leg to
+// the same place within three hours buys nothing.
+function scaBeat(beat, state) {
+  const s = state || {};
+  const fc = s.settings || {};
+  const dest = getNavDestination();
+  let name = dest ? String(dest.nameLocalised || dest.name || '') : '';
+  // The commander's own carrier by its NAME, never the callsign (the commander's rule).
+  if (name && fc.myFleetCarrier && name.includes(fc.myFleetCarrier)) {
+    const u = (s.fleetCarrierSpaceUsage || {})[fc.myFleetCarrier];
+    name = u && u.name ? `${u.name}, the commander's own fleet carrier` : "the commander's own fleet carrier";
+  }
+  const pos = s.commanderPosition || {};
+  const sys = String(pos.systemName || pos.name || pos.system || '').toLowerCase();
+  return { ...beat, fp: `sca|${sys}|${name.toLowerCase()}`, detail: name ? `This leg is heading for: ${name}.` : '' };
 }
 
 // A stable label for "where we are" so the arbiter can penalise repeat comments
@@ -399,6 +474,7 @@ function emitCanned(settings, deps, beat, ctx, source = 'canned') {
   lastSpokeAt = Date.now();
   recentLines.push(line);
   while (recentLines.length > RECENT_MAX) recentLines.shift();
+  rememberLine(beat.key, line, beat.fp);
   console.log(`[Copilot] ${source}: ${beat.key} → "${line}"`);
   // Canned/promoted lines are logged too — so a 👎 can prune a weak one from rotation.
   const id = deps.captureLine
@@ -419,6 +495,7 @@ function emitLiteral(settings, deps, beat) {
   lastSpokeAt = Date.now();
   recentLines.push(beat.line);
   while (recentLines.length > RECENT_MAX) recentLines.shift();
+  rememberLine(beat.key, beat.line, beat.fp);
   console.log(`[Copilot] ${beat.source || 'literal'}: ${beat.key} → "${beat.line}"`);
   const id = deps.captureLine
     ? deps.captureLine({ source: beat.source || 'literal', persona: personality, beat: beat.key, mood: beat.mood, prose: beat.line, inputs: null, trigger: _lastTrigger || null })
@@ -481,8 +558,18 @@ function buildCannedContext(state, ev) {
     const u = (s.fleetCarrierSpaceUsage || {})[fc.myFleetCarrier];
     ctx.station = (u && u.name) || 'the carrier';
   }
+  // A surface pad never gets the orbital lines. The type comes from the event, else from the station record.
+  const dockType = (ev && ev.StationType) || (() => {
+    const md = s.currentDock && s.currentDock.marketId;
+    const rec = md != null ? Object.values(s.knownStations || {}).find((x) => x && x.marketId === md) : null;
+    return rec ? rec.stationType : null;
+  })();
+  ctx.surface = !!(dockType && /craterport|crateroutpost|onfootsettlement|planetaryconstructiondepot|surfacestation|planetary/i.test(String(dockType)));
   const crewNames = getCrewNames();
   if (crewNames.length) ctx.crew = String(crewNames[Math.floor(Math.random() * crewNames.length)]).split(' ')[0];
+  // Tycho's humour dial in words, for the canned line that quotes it — the real setting, never a number
+  // baked into the text ("forty percent" with the dial at 90, 1.62.0).
+  ctx.humor = percentWords((s.settings && s.settings.copilotTarsHumor) ?? 60);
   return ctx;
 }
 
@@ -502,7 +589,7 @@ function captureInputsForEvent(ev) {
   return null;
 }
 
-async function speak(state, settings, deps, { key, intent, model, mood, detail, inputs, fallback }) {
+async function speak(state, settings, deps, { key, intent, model, mood, detail, inputs, fallback, fp, onDemand = false }) {
   // Live generation switched off in Settings — take the canned pool instead of the CLI. This is
   // the same route a CLI failure takes below, minus the 60s wait: when the `claude` credential
   // read blocks, it hangs silently rather than erroring, so every beat stalls out its timeout and
@@ -517,27 +604,49 @@ async function speak(state, settings, deps, { key, intent, model, mood, detail, 
   // Default sonnet for voice quality — haiku reads flat for character work. settings.copilotModel
   // still overrides (per-beat `model` is intentionally bypassed: the commander wants sonnet everywhere).
   const chosenModel = settings.copilotModel || 'sonnet';
-  console.log(`[Copilot] reacting: ${key} (${chosenModel}) — generating...`);
+  const viaApi = settings.copilotBackend === 'api';
+  console.log(`[Copilot] reacting: ${key} (${viaApi ? `API ${settings.copilotApiModel || 'claude-opus-5-5'}` : chosenModel}) — generating...`);
   try {
     const dial = { humor: settings.copilotTarsHumor ?? 60, honesty: settings.copilotTarsHonesty ?? 80 };
     const system = `${COPILOT_RULES}\n\n${buildPersonalityPreamble(settings.copilotPersonality, dial)}`;
-    const recent = recentLines.length
-      ? `Your recent lines — HISTORY, not facts. Do NOT echo their wording or theme, and do NOT treat anything in them as true right now: the station, body, ship and numbers they mention are where the commander WAS, not where they are. Only the Situation block above is current:\n${recentLines.map((l) => `- ${l}`).join('\n')}`
+    // This moment's OWN last lines (1.62.0): the 8-line recent list holds every beat, and on a haul loop
+    // the previous supercruise line had usually scrolled out of it by the next leg (12 of 13 copies).
+    const mine = linesFor(key);
+    const others = recentLines.filter((l) => !mine.includes(l));
+    const recent = others.length
+      ? `Your recent lines — HISTORY, not facts. Do NOT echo their wording or theme, and do NOT treat anything in them as true right now: the station, body, ship and numbers they mention are where the commander WAS, not where they are. Only the Situation block above is current:\n${others.map((l) => `- ${l}`).join('\n')}`
+      : '';
+    const sameMoment = mine.length
+      ? `The last ${mine.length === 1 ? 'time' : `${mine.length} times`} this same moment came up, you said (history — its places and numbers are where the commander was then):\n${mine.map((l) => `- ${l}`).join('\n')}\nSay something NEW this time: a different opening, a different angle, a different joke. Reusing their wording, their structure or their joke is a failure.`
       : '';
     // The situation lives in the USER message; the persona is the (stable, cacheable) system prompt.
     // The guard is REQUIRED: moving the persona to --system-prompt drops Claude Code's default
     // "answer directly" framing, so without it sonnet roleplays (emits "Tycho:" labels + meta +
     // markdown). As the LAST line, this keeps the output to one clean spoken line (verified).
     const OUTPUT_GUARD = 'Output ONLY the spoken dialogue itself (your 1–3 short sentences) — no speaker name or label, no asterisks or markdown, no surrounding quotation marks, no notes or meta-commentary. Just the words said aloud. Speak as YOURSELF, in the first person: "I", never your own name and never he/she/they about yourself.';
-    const userMessage = [`This moment: ${intent}`, buildSnapshot(state), detail, recent, OUTPUT_GUARD].filter(Boolean).join('\n\n');
+    const userMessage = [`This moment: ${intent}`, buildSnapshot(state), detail, recent, sameMoment, OUTPUT_GUARD].filter(Boolean).join('\n\n');
 
-    const result = await copilotComplete({ model: chosenModel, system, userMessage });
+    // Anthropic API (the commander's credits) when picked in Settings; otherwise the `claude` CLI. An API
+    // that is picked but unusable (no key file, cap reached) throws → the canned fallback below speaks.
+    let result;
+    if (viaApi) {
+      if (!apiReady(settings)) throw new Error('Anthropic API selected but not usable — no anthropic-key.txt beside the exe, or this month\'s cap is reached');
+      result = await apiComplete({ system, userMessage, settings, effort: 'low', maxTokens: 1500, timeoutMs: 20_000, purpose: 'line' });
+    } else {
+      result = await copilotComplete({ model: chosenModel, system, userMessage });
+    }
     const line = (result.text || '').trim();
     if (!line) { console.log('[Copilot] empty response from claude'); return; }
+    // A paid line is SPOKEN (the commander's rule, 1.62.3: "if I'm spending agent credits I want the line").
+    // The 1.62.0 backstop dropped a near-copy here; now it only notes one in the exe window, so the
+    // per-moment memory in the prompt can be judged by whether this note ever appears.
+    const copy = onDemand ? null : nearCopyOf(line, mine);
+    if (copy) console.log(`[Copilot] ${key}: close to what it said last time (${Math.round(copy.overlap * 100)}% shared words${copy.sameOpening ? ', same opening' : ''}) — spoken anyway`);
 
     lastSpokeAt = Date.now();
     recentLines.push(line);
     while (recentLines.length > RECENT_MAX) recentLines.shift();
+    rememberLine(key, line, fp);
 
     console.log(`[Copilot] "${line}"  (${result.durationMs}ms · $${result.costUsd.toFixed(4)} · ${result.inTokens}+${result.outTokens} tok)`);
     // Capture the live line + its structured inputs for the promote/templatize flywheel.

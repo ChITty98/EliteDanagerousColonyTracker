@@ -4,7 +4,7 @@ A comprehensive companion app for **Elite Dangerous** colonization gameplay. Tra
 
 Built with React, TypeScript, and Node.js. Runs as a standalone Windows `.exe` — no install required.
 
-**Current release: 1.60.18** — see [ed-colonization-tracker/CHANGELOG.md](ed-colonization-tracker/CHANGELOG.md) for what changed and when. The app follows a journal-first rule: everything below works from the game's own journal files; external services only add to it.
+**Current release: 1.60.40** — see [ed-colonization-tracker/CHANGELOG.md](ed-colonization-tracker/CHANGELOG.md) for what changed and when. The app follows a journal-first rule: everything below works from the game's own journal files; external services only add to it.
 
 ---
 
@@ -55,6 +55,9 @@ Designed for an iPad propped up next to your monitor:
 - **Live event feed** via Server-Sent Events — see jumps, docks, scans, contributions in real-time
 - **Remote control buttons** — trigger "Show Score", "Show Needs", "Show Haul", "Show Status" on the overlay without alt-tabbing
 - Works from any device on your local network
+
+### Installations
+Every site across your colonies in one sortable table: estimated population and its share of the system, the market's economies as the journal last recorded them, Raven Colonial's tech / wealth / development effects, opening and dock dates; a site inside its first days is marked growing. Filter by system, kind or economy; pick an economy to rank sites by its strength.
 
 ### War & Peace (BGS conflicts)
 Find systems near you with active conflicts — War, Civil War, or Election — filtered by distance, state and allegiance, with a deeper Spansh + EDSM scout per system: live conflict pairs, combat anchors and full-service stations. Cached per BGS tick.

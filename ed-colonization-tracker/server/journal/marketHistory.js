@@ -130,7 +130,11 @@ export function recordArdentSample(key, rows, now = Date.now(), reach = null) {
     return Math.hypot(x.systemX - o.x, x.systemY - o.y, x.systemZ - o.z) <= reach.maxLy;
   };
   const all = (Array.isArray(rows) ? rows : [])
-    .filter((x) => x && !isNonBuyerMarket(x.stationType) && padFits(x, 3) && x.sellPrice > 0 && x.demand > 0 && within(x)) // a large-pad figure
+    // A demand of 999,999 off the journal's goal list is the 7 September 2026 placeholder, and a row older
+    // than a week is not today's top of book — neither is a day's price (the goal markets stay, for `cg`).
+    .filter((x) => x && !isNonBuyerMarket(x.stationType) && padFits(x, 3) && x.sellPrice > 0 && x.demand > 0 && within(x)
+      && !((x.demand ?? 0) >= 999999 && !isCommunityGoalMarket(x.stationName, x.systemName))
+      && !(x.updatedAt && now - Date.parse(x.updatedAt) > 7 * DAY_MS)) // a large-pad figure
     .sort((a, b) => b.sellPrice - a.sellPrice);
   // A goal market is recorded beside the day, never AS the day: the galaxy top is the best real buyer.
   const goal = all.find((x) => isCommunityGoalMarket(x.stationName, x.systemName)) || null;
@@ -213,7 +217,10 @@ export function seriesFor(keys, now = Date.now()) {
       if (r.sell > b.best) { b.best = r.sell; b.bestSt = r.st; }
     } else if (r.k === 'a') {
       const b = bucket(r.c, d);
-      if (r.top > b.galaxy) { b.galaxy = r.top; b.galaxySt = r.topSt; }
+      // A sampled top at demand 999,999 is the 7 September placeholder (goal markets were never the top —
+      // they are recorded beside it as `cg`), so it is not a day's galaxy price.
+      const ghostTop = (r.topDem ?? 0) >= 999999;
+      if (!ghostTop && r.top > b.galaxy) { b.galaxy = r.top; b.galaxySt = r.topSt; }
       if (r.med > b.med) b.med = r.med;
       if (r.mean > b.mean) b.mean = r.mean;
     } else if (r.k === 's') {

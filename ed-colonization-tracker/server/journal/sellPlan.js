@@ -50,6 +50,19 @@ const isNonBuyer = (row) => !!row && isNonBuyerMarket(row.stationType);
  * exact curve is not on file, so four times is a rule of thumb, labelled as one (2026-09-11).
  */
 export const DEMAND_COVER = 4;
+/**
+ * Freshness: an Ardent row older than this is a memory, not a price. On 7 September 2026 the game paid
+ * 1,038,104 for every surface commodity at demand 999,999 for a day; eighteen days on, Ardent's top-100
+ * for Thortveitite was still 100 of those rows, and the Sell page sent the commander 804 ly to Cormack
+ * Beacon for 44k. Asked of Ardent (maxDaysAgo — honoured on the buyer lists, not on a system's own
+ * listing) and enforced here on every row. A demand of 999,999 on a market the journal does NOT list
+ * as a community goal is that placeholder; on one it does, it is the goal's real demand (2026-09-25).
+ */
+export const SELL_FRESH_DAYS = 7;
+const SELL_FRESH_MS = SELL_FRESH_DAYS * 86400e3;
+export const isPlaceholderRow = (x) => !!x && (x.demand ?? 0) >= 999999 && !isCommunityGoalMarket(x.stationName, x.systemName);
+const isStaleRow = (x, now) => !!x && !!x.updatedAt && now - Date.parse(x.updatedAt) > SELL_FRESH_MS;
+const isGhost = (x, now) => isPlaceholderRow(x) || isStaleRow(x, now);
 const enc = encodeURIComponent;
 
 function coordsOf(state, systemName) {
@@ -144,7 +157,15 @@ export function sellPlanKey(opts) {
 }
 
 export async function buildSellPlan(opts) {
-  const { fetchJson = ardentJson, fast = false, peek = ardentPeek } = opts || {};
+  const { fetchJson = ardentJson, fast = false, peek = ardentPeek, fresh = false } = opts || {};
+  // FRESH — the Refresh button: no cached plan and no cached Ardent answer; the result is cached like any other.
+  if (fresh && fetchJson === ardentJson) {
+    const key = sellPlanKey(opts);
+    planCache.delete(key);
+    const plan = await buildSellPlanUncached({ ...opts, fetchJson: (p) => ardentJson(p, 0) });
+    planCache.set(key, { at: Date.now(), plan });
+    return plan;
+  }
   // FAST: a complete cached plan wins; otherwise build from the cache alone and say what is missing.
   if (fast) {
     const key = sellPlanKey(opts);
@@ -217,7 +238,7 @@ async function buildSellPlanUncached({ state, journalDir, rangeLy = 50, searched
   const hereListing = refSystem ? await fetchJson(`/system/name/${enc(refSystem)}/commodities`) : null;
   const hereRowsByKey = new Map();
   for (const x of Array.isArray(hereListing) ? hereListing : []) {
-    if (!x || isNonBuyer(x) || !padFits(x, padNeed) || !x.marketId || !(x.sellPrice > 0)) continue;
+    if (!x || isNonBuyer(x) || !padFits(x, padNeed) || !x.marketId || !(x.sellPrice > 0) || isGhost(x, now)) continue;
     const k = keyOf(x.commodityName);
     if (!hereRowsByKey.has(k)) hereRowsByKey.set(k, []);
     hereRowsByKey.get(k).push({ ...x, commodityName: k, distance: 0 });
@@ -232,7 +253,7 @@ async function buildSellPlanUncached({ state, journalDir, rangeLy = 50, searched
     }
     return [...m.values()];
   };
-  const withDist = (list) => (Array.isArray(list) ? list : []).map((x) => (
+  const withDist = (list) => (Array.isArray(list) ? list : []).filter((x) => x && !isGhost(x, now)).map((x) => (
     x && x.distance == null && myCoords ? { ...x, distance: dist(myCoords, { x: x.systemX, y: x.systemY, z: x.systemZ }) } : x
   ));
 
@@ -251,8 +272,8 @@ async function buildSellPlanUncached({ state, journalDir, rangeLy = 50, searched
 
     // NEARBY — one call, one carrier jump out, joined by the system you are in and by any galaxy-list
     // buyer inside the range. "Within your range" is the same rows cut at rangeLy.
-    const ardentCarrier = refSystem ? await fetchJson(`/system/name/${enc(refSystem)}/commodity/name/${enc(r.key)}/nearby/imports?maxDistance=${CARRIER_RANGE_LY}&fleetCarriers=false`) : null;
-    const ardentAll = await fetchJson(`/commodity/name/${enc(r.key)}/imports?fleetCarriers=false`);
+    const ardentCarrier = refSystem ? await fetchJson(`/system/name/${enc(refSystem)}/commodity/name/${enc(r.key)}/nearby/imports?maxDistance=${CARRIER_RANGE_LY}&fleetCarriers=false&maxDaysAgo=${SELL_FRESH_DAYS}`) : null;
+    const ardentAll = await fetchJson(`/commodity/name/${enc(r.key)}/imports?fleetCarriers=false&maxDaysAgo=${SELL_FRESH_DAYS}`);
     const allWithDist = withDist(ardentAll).filter((x) => padFits(x, padNeed));
     const nearRows = unionByMarket(withDist(ardentCarrier).filter((x) => padFits(x, padNeed)), hereRowsByKey.get(r.key) || [], allWithDist.filter((x) => x && x.distance != null && x.distance <= CARRIER_RANGE_LY));
     const nearKnown = Array.isArray(ardentCarrier) || hereRowsByKey.has(r.key) || Array.isArray(ardentAll);
@@ -343,7 +364,7 @@ export async function buildSellAt({ state, journalDir, system, fetchJson = arden
   const coords = info && Number.isFinite(info.systemX) ? { x: info.systemX, y: info.systemY, z: info.systemZ } : coordsOf(st, name);
   const distance = dist(myCoords, coords);
   const sysName = (info && info.systemName) || (Array.isArray(listing) && listing[0] && listing[0].systemName) || name;
-  const ardentRows = (Array.isArray(listing) ? listing : []).filter((x) => x && !isNonBuyer(x) && padFits(x, padNeedAt) && x.marketId).map((x) => ({ ...x, commodityName: keyOf(x.commodityName), distance }));
+  const ardentRows = (Array.isArray(listing) ? listing : []).filter((x) => x && !isNonBuyer(x) && padFits(x, padNeedAt) && x.marketId && !isGhost(x, now)).map((x) => ({ ...x, commodityName: keyOf(x.commodityName), distance }));
   const own = ownRows(st, now).filter((r) => r.systemName && r.systemName.toLowerCase() === sysName.toLowerCase());
   const stations = [...new Set([...ardentRows, ...own].map((r) => r.stationName).filter(Boolean))];
 
@@ -363,8 +384,8 @@ export async function buildSellAt({ state, journalDir, system, fetchJson = arden
     const offer = pick(best, 'sell');
     const mean = galacticAvgSell(r.name) || 0;
     // The best buyer anywhere, from the plan's cached galaxy-wide list — only when it is on hand.
-    const all = peek(`/commodity/name/${enc(r.key)}/imports?fleetCarriers=false`);
-    const elsewhereBest = all.cached && Array.isArray(all.data) ? bestSell(all.data.filter((x) => x && !isNonBuyer(x) && padFits(x, padNeedAt)).map((x) => ({ ...x, distance: myCoords ? dist(myCoords, { x: x.systemX, y: x.systemY, z: x.systemZ }) : null })), 1) : null;
+    const all = peek(`/commodity/name/${enc(r.key)}/imports?fleetCarriers=false&maxDaysAgo=${SELL_FRESH_DAYS}`);
+    const elsewhereBest = all.cached && Array.isArray(all.data) ? bestSell(all.data.filter((x) => x && !isNonBuyer(x) && padFits(x, padNeedAt) && !isGhost(x, now)).map((x) => ({ ...x, distance: myCoords ? dist(myCoords, { x: x.systemX, y: x.systemY, z: x.systemZ }) : null })), 1) : null;
     const elsewhere = elsewhereBest ? pick(elsewhereBest, 'sell') : null;
     const vsMean = offer && mean > 0 ? offer.price / mean : null;
     const bestKnown = Math.max(offer ? offer.price : 0, elsewhere ? elsewhere.price : 0);

@@ -37,6 +37,7 @@
 import { randomUUID } from 'node:crypto';
 import { notePopulatedSystem } from '../radar/populatedStore.js';
 import { noteCommunityGoalEvent } from './communityGoals.js';
+import { shipRecordFromLoadout, storedShipsFromEvent, craftFromLaunch, recordCraft } from './ships.js';
 import {
   extractKnowledgeBaseFromEvents,
   readMarketJson,
@@ -60,6 +61,11 @@ import {
   depotIdentity,
   depotProjectName,
   depotRename,
+  resolveDockFactionState,
+  healDepotProject,
+  finishedNameFromSite,
+  mergeKnownSystem,
+  lastVisitLabel,
 } from './util.js';
 import { findCommodityByJournalName, findCommodityByDisplayName, canonicaliseCommodityKeys } from './commodities.js';
 import { applyMaterialDeltaEvent } from './materials.js';
@@ -77,7 +83,13 @@ import {
   handleNavRoutePlottedOverlay,
   resetScanState,
   resetScanStateIfElsewhere,
+  renderDockPopulationLine,
+  renderDockPopulationTrendLine,
+  renderDockFactionLine,
 } from './overlay.js';
+import { effectiveSystemPopulation } from './populationEstimate.js';
+import { factionSnapshotFromEvent, mergeSystemFactions } from './factions.js';
+import { raiseColonyFloors } from './populationFloors.js';
 import { processChatCommands } from './chat.js';
 import { runCopilot } from '../ai/copilot.js';
 import { processMiningEvents } from './mining.js';
@@ -89,6 +101,11 @@ import { checklistProcess, checklistSnapshot } from './checklist.js';
 // ===== Overlay layout (must match src/services/overlayService.ts) =====
 const X_LEFT = 40;
 const Y_DOCK = 240;
+// Slot 9 of the dock stack (LINE_HEIGHT 26, see renderDockInfoBanner): the estimated population line (1.60.22).
+const Y_DOCK_POP = Y_DOCK + 9 * 26;
+const Y_DOCK_TREND = Y_DOCK + 10 * 26; // slot 10: the system's movement since the last dock here (1.60.23)
+const Y_DOCK_FACTION = Y_DOCK + 11 * 26; // slot 11: who runs this place, influence, trend, standing (1.60.24)
+const DOCK_POP_TTL = 12;
 const Y_THREAT = 280;
 
 // ===== Dock dossier constants (must match src/store/index.ts) =====
@@ -132,12 +149,15 @@ export function processNewEvents(parsed, deps) {
   const extraEvents = [];
 
   processPositionEvents(parsed, existing, patch, extraEvents);
+  processFactionEvents(parsed, existing, patch);
   processShipEvents(parsed, existing, patch);
   processKBEvents(parsed, existing, settings, patch);
   processDepotEvents(parsed, existing, patch);
   processSystemClaims(parsed, existing, patch);
   processCompanionFeedEvents(parsed, existing, settings, patch, extraEvents, deps);
   processDockEvents(parsed, existing, patch, extraEvents, deps);
+  // after the docks, so a rename seen on approach is merged into whatever this batch already wrote (1.60.39)
+  processSettlementApproaches(parsed, existing, patch);
   processNpcThreat(parsed, extraEvents, deps);
   processMaterialEvents(parsed, existing, patch, extraEvents);
   processEngineerEvents(parsed, existing, patch);
@@ -207,7 +227,8 @@ export function processNewEvents(parsed, deps) {
   // Surface (Rhino / SRV) mining — a separate ledger from the rock log. Shares MiningRefined with
   // ring mining and nothing else, so it discriminates on the live Status "in SRV" flag rather than
   // on the event. Also the only consumer of the PlanetaryMiningLocation signal (FSS and DSS).
-  try {
+  // A boot catch-up (1.62.4) leaves the surface ledger alone — its own backfill reads the gap.
+  if (!parsed.catchUp) try {
     const pos = existing.commanderPosition || {};
     const rawHeld = (existing.materialInventory || {}).raw || {};
     ingestSurfaceMining(parsed, {
@@ -449,6 +470,40 @@ function processPositionEvents(parsed, existing, patch, extraEvents) {
 
 // ===== Ship + cargo capacity =====
 
+/**
+ * ApproachSettlement names a settlement or planetary port by MarketID on the way in — the one journal line that
+ * shows an in-game rename without a dock. A known station whose name changed takes the new name, keeps the old one
+ * in its history, and its completed project follows (1.60.39). Construction-site names never replace a finished name.
+ */
+export function processSettlementApproaches(parsed, existing, patch) {
+  const events = (parsed && parsed.approachSettlementEvents) || [];
+  if (!events.length) return;
+  const isPlaceholder = (n) => /\$EXT_PANEL_ColonisationShip|Construction Site/i.test(n || '');
+  const stations = (existing && existing.knownStations) || {};
+  for (const ev of events) {
+    if (ev.MarketID == null || !ev.Name) continue;
+    const key = String(ev.MarketID);
+    const current = (patch.knownStations && patch.knownStations.__upsert && patch.knownStations.__upsert[key]) || stations[key];
+    if (!current) continue;
+    const prevName = current.stationName || null;
+    const nextName = ev.Name;
+    if (!prevName || prevName === nextName || (isPlaceholder(nextName) && !isPlaceholder(prevName))) continue;
+    const history = [...(current.nameHistory || [])];
+    if (!history.some((h) => h && h.name === prevName)) history.push({ name: prevName, changedAt: ev.timestamp || new Date().toISOString() });
+    const upsert = (patch.knownStations && patch.knownStations.__upsert) || {};
+    upsert[key] = Object.assign({}, current, { stationName: nextName, nameHistory: history.slice(-10) });
+    patch.knownStations = { __upsert: upsert };
+    const projects = Array.isArray(existing && existing.projects) ? existing.projects : [];
+    const match = projects.find((p) => p && p.status === 'completed' && p.marketId === ev.MarketID && p.completedStationName === prevName);
+    if (match && !isPlaceholder(nextName)) {
+      const projUpsert = (patch.projects && patch.projects.__upsert) || {};
+      projUpsert[match.id] = Object.assign({}, projUpsert[match.id] || match, { completedStationName: nextName, lastUpdatedAt: ev.timestamp || new Date().toISOString() });
+      patch.projects = { __idKey: 'id', __upsert: projUpsert };
+    }
+    console.log(`[Stations] Renamed on approach: ${prevName} → ${nextName} (marketId=${ev.MarketID})`);
+  }
+}
+
 function processShipEvents(parsed, existing, patch) {
   const settings = existing.settings || {};
   if (parsed.loadoutEvents.length > 0) {
@@ -474,6 +529,31 @@ function processShipEvents(parsed, existing, patch) {
       patch.currentShip = { shipId: sw.ShipID, type: sw.ShipType };
     }
   }
+
+  // Ship stable (1.60.33): every Loadout becomes the ship's record, the fleet list is kept as read, and a
+  // launch is remembered against the ship flying at the time — the only way the journal says what a bay holds.
+  const inventory = {};
+  for (const ev of parsed.loadoutEvents) { const rec = shipRecordFromLoadout(ev); if (rec) inventory[String(rec.shipId)] = rec; }
+  if (Object.keys(inventory).length > 0) patch.shipInventory = { __upsert: inventory };
+  if (Array.isArray(parsed.storedShipsEvents) && parsed.storedShipsEvents.length > 0) {
+    const s = storedShipsFromEvent(parsed.storedShipsEvents[parsed.storedShipsEvents.length - 1]);
+    if (s) patch.storedShips = s;
+  }
+  const launches = [...(parsed.launchSrvEvents || []), ...(parsed.launchFighterEvents || []), ...(parsed.launchVesselEvents || [])]
+    .sort((a, b) => String(a.timestamp || '').localeCompare(String(b.timestamp || '')));
+  if (launches.length > 0) {
+    const swaps = [...parsed.loadoutEvents, ...parsed.shipyardSwapEvents].filter((e) => e.ShipID != null).sort((a, b) => String(a.timestamp || '').localeCompare(String(b.timestamp || '')));
+    let craft = existing.shipCraft && typeof existing.shipCraft === 'object' && !Array.isArray(existing.shipCraft) ? existing.shipCraft : {};
+    const touched = new Set();
+    for (const ev of launches) {
+      let shipId = existing.currentShip ? existing.currentShip.shipId : null;
+      for (const sw of swaps) if (String(sw.timestamp || '') <= String(ev.timestamp || '')) shipId = sw.ShipID;
+      if (shipId == null) continue;
+      craft = recordCraft(craft, shipId, craftFromLaunch(ev));
+      touched.add(String(shipId));
+    }
+    if (touched.size > 0) { const up = {}; for (const k of touched) up[k] = craft[k]; patch.shipCraft = { __upsert: up }; }
+  }
 }
 
 // ===== Knowledge base =====
@@ -497,7 +577,28 @@ function processKBEvents(parsed, existing, settings, patch) {
   });
 
   if (kb.systems.length > 0) {
-    patch.knownSystems = { __upsert: Object.fromEntries(kb.systems.map((s) => [s.systemName.toLowerCase(), s])) };
+    // Merge with the stored record (1.60.30): a live batch's visit count ADDS to the total, and the fields a
+    // jump event does not carry survive — before this every jump reset HIP 47126 to visit 1 until the next Sync All.
+    patch.knownSystems = { __upsert: Object.fromEntries(kb.systems.map((s) => { const key = s.systemName.toLowerCase(); return [key, mergeKnownSystem((existing.knownSystems || {})[key], s)]; })) };
+    // A manual population is only a figure the commander typed that is newer than the game's own
+    // reading. A fresher jump/login reading deletes it (1.60.25) — d9-52 wore a September 155M through
+    // three weeks of jumping in and out. The watcher's patch path is trusted to remove.
+    const overrides = existing.populationOverrides || {};
+    const overtaken = kb.systems
+      .filter((sys) => sys.population > 0 && sys.lastSeen)
+      .map((sys) => sys.systemName.toLowerCase())
+      .filter((key) => overrides[key] && (!overrides[key].updatedAt || kb.systems.find((sys) => sys.systemName.toLowerCase() === key).lastSeen >= overrides[key].updatedAt));
+    if (overtaken.length > 0) {
+      patch.populationOverrides = { __remove: overtaken };
+      console.log(`[Population] Cleared manual population for ${overtaken.join(', ')} — the journal is newer`);
+    }
+    // "A facility's population never goes down" (1.60.26): every colony reading raises the floors.
+    const floorUpserts = {};
+    for (const sys of kb.systems) {
+      if (!(sys.population > 0)) continue;
+      try { const up = raiseColonyFloors(existing, sys.systemName, sys.population); if (up) Object.assign(floorUpserts, up.__upsert); } catch (e) { console.error('[Population] floor error:', e && e.message); }
+    }
+    if (Object.keys(floorUpserts).length) patch.facilityPopulationFloor = { __upsert: Object.assign({}, (patch.facilityPopulationFloor || {}).__upsert || {}, floorUpserts) };
   }
   if (kb.stations.length > 0) {
     // CRITICAL: the KB extractor doesn't populate dossier fields (firstDocked,
@@ -535,7 +636,11 @@ function processKBEvents(parsed, existing, settings, patch) {
           // or differ from the body the user actually wants tracked.)
           body: (priorEntry.body) || s.body,
           bodyType: (priorEntry.bodyType) || s.bodyType,
-          stationType: (priorEntry.stationType) || s.stationType,
+          // …except that a construction-depot type yields to a live non-depot type: the depot became
+          // the station (Core Boson Complex docked as CraterPort and stayed a depot, 1.60.29).
+          stationType: (priorEntry.stationType && !(/ConstructionDepot/i.test(priorEntry.stationType) && s.stationType && !/ConstructionDepot/i.test(s.stationType)))
+            ? priorEntry.stationType
+            : (s.stationType || priorEntry.stationType),
         });
       } else {
         upsert[key] = s;
@@ -585,7 +690,7 @@ function processSystemClaims(parsed, existing, patch) {
 
 // ===== Depot progression (active project commodities + auto-complete) =====
 
-function processDepotEvents(parsed, existing, patch) {
+export function processDepotEvents(parsed, existing, patch) {
   if (parsed.depotEvents.length === 0) return;
   const projects = Array.isArray(existing.projects) ? existing.projects : [];
 
@@ -632,16 +737,14 @@ function processDepotEvents(parsed, existing, patch) {
     const commodities = (depot.ResourcesRequired || []).map(resourceToCommodity);
     const next = Object.assign({}, project, { commodities, lastUpdatedAt: new Date().toISOString() });
 
-    // Heal a project created without its identity (blank names → "Depot 4389829123 ()"): take them
-    // from whatever has seen the depot since. Field-level, so nothing else on the project moves.
-    if (!project.systemName || !project.stationName) {
+    // Heal a project created without its identity ("Depot 4389829123 ()", Kewell Range 2026-09-14), or
+    // still wearing the placeholder name after another path filled the identity in ("Depot 3964283138",
+    // Plait Reach 2026-10-07): field-level, from whatever has seen the depot since.
+    {
       const ident = depotIdentity(depot.MarketID, { dockedEvents: parsed.dockedEvents, currentDock: existing.currentDock, knownStations: existing.knownStations });
-      if (ident.systemName || ident.stationName) {
-        next.systemName = project.systemName || ident.systemName;
-        next.stationName = project.stationName || ident.stationName;
-        next.systemAddress = project.systemAddress ?? ident.systemAddress;
-        next.stationType = project.stationType || ident.stationType;
-        if (!project.systemName || /^Depot \d+$/.test(project.name || '')) next.name = depotProjectName(next, depot.MarketID);
+      const heal = healDepotProject(project, ident, depot.MarketID);
+      if (heal) {
+        Object.assign(next, heal);
         console.log(`[Depot] Healed project identity: ${next.name} (marketId=${depot.MarketID})`);
       }
     }
@@ -666,6 +769,11 @@ function processDepotEvents(parsed, existing, patch) {
           && !isColonisationShip(resolved.stationName, resolved.stationType)) {
         next.completedStationName = resolved.stationName;
         next.completedStationType = resolved.stationType || project.stationType || 'Outpost';
+      } else if (!next.completedStationName) {
+        // Nothing has docked at the finished site — an installation never takes a dock — so the name is
+        // the construction site's own, prefix shed: "Orbital Construction Site: Plait Reach" → "Plait Reach" (1.60.30).
+        const fromSite = finishedNameFromSite(next.stationName || project.stationName);
+        if (fromSite) next.completedStationName = fromSite;
       }
       // Mirror of the client's manual-complete: if the project already carries a real completed
       // name (user typed it) but the knownStations record is still the construction-era identity,
@@ -1011,6 +1119,26 @@ function processCompanionFeedEvents(parsed, existing, settings, patch, extraEven
   }
 }
 
+// ===== System factions (1.60.24) — the panel every jump carries, kept with history =====
+function processFactionEvents(parsed, existing, patch) {
+  const events = [...(parsed.fsdJumpEvents || []), ...(parsed.locationEvents || []), ...(parsed.carrierJumpEvents || [])]
+    .filter((ev) => ev && Array.isArray(ev.Factions) && ev.Factions.length > 0)
+    .sort((a, b) => String(a.timestamp || '').localeCompare(String(b.timestamp || '')));
+  if (events.length === 0) return;
+  const upsert = {};
+  for (const ev of events) {
+    const snap = factionSnapshotFromEvent(ev);
+    if (!snap) continue;
+    const key = snap.systemName.toLowerCase();
+    const base = upsert[key] || (existing.systemFactions || {})[key] || null;
+    const merged = mergeSystemFactions(base, snap);
+    if (merged && merged !== base) upsert[key] = merged;
+  }
+  if (Object.keys(upsert).length === 0) return;
+  const current = (patch.systemFactions && patch.systemFactions.__upsert) || {};
+  patch.systemFactions = { __upsert: Object.assign({}, current, upsert) };
+}
+
 // ===== Dock events (Docked / DockingGranted) — dossier tracking + welcome overlay =====
 
 function processDockEvents(parsed, existing, patch, extraEvents, deps) {
@@ -1055,8 +1183,12 @@ function processDockEvents(parsed, existing, patch, extraEvents, deps) {
     // and colonisation-ship phases accumulate against the eventual station's
     // MarketID. Only skip permanent ephemerals (FCs, Trailblazer NPCs).
     if (!isPermanentlyEphemeral(ev.StationName, ev.StationType, ev.MarketID)) {
+      const dockSysKey = String(ev.StarSystem || '').toLowerCase();
+      const systemPopulationNow = effectiveSystemPopulation((existing.knownSystems || {})[dockSysKey], (existing.populationOverrides || {})[dockSysKey]);
       applyDockToStationPatch(patch, existing, ev.MarketID, {
         stationName: ev.StationName,
+        stationType: ev.StationType,
+        systemPopulation: systemPopulationNow,
         systemName: ev.StarSystem,
         systemAddress: ev.SystemAddress,
         timestamp: ev.timestamp,
@@ -1074,6 +1206,12 @@ function processDockEvents(parsed, existing, patch, extraEvents, deps) {
       // Bottom-stack overlay banner (services / economy / established-by-you)
       // fires AFTER welcome (DockingGranted) so we have ev.StationServices etc.
       try { renderDockInfoBanner(ev, existing, deps); } catch (e) { console.error('[Overlay] DockInfoBanner error:', e && e.message); }
+      // Slot 9 refreshed with the live Docked event (system and address on the event itself).
+      renderDockPopulationLine(ev, existing, deps, { y: Y_DOCK_POP, ttl: DOCK_POP_TTL })
+        .catch((e) => console.error('[Overlay] DockPopulation error:', e && e.message));
+      // Slot 10 from the record as it stood before this dock; the patch below stores today's figure for next time.
+      try { renderDockPopulationTrendLine((existing.knownStations || {})[ev.MarketID], existing, deps, { y: Y_DOCK_TREND, ttl: DOCK_POP_TTL }); } catch (e) { console.error('[Overlay] DockPopulationTrend error:', e && e.message); }
+      try { renderDockFactionLine(ev.StationFaction && ev.StationFaction.Name, ev.StarSystem, existing, deps, { y: Y_DOCK_FACTION, ttl: DOCK_POP_TTL }); } catch (e) { console.error('[Overlay] DockFaction error:', e && e.message); }
     }
   }
 }
@@ -1264,7 +1402,7 @@ function formatEstablishedLine(ev, existing) {
  * in-place to include a knownStations upsert for the dock. No summary returned
  * — DockingGranted handles the welcome overlay separately (and fires earlier).
  */
-function applyDockToStationPatch(patch, existing, marketId, payload) {
+export function applyDockToStationPatch(patch, existing, marketId, payload) {
   const knownStations = existing.knownStations || {};
   const existingSt = knownStations[marketId];
   const now = payload.timestamp;
@@ -1280,8 +1418,8 @@ function applyDockToStationPatch(patch, existing, marketId, payload) {
   const factionChanged = !!(prevFaction && payload.faction && prevFaction !== payload.faction);
 
   const prevState = (existingSt && existingSt.factionState) || null;
-  const currentState = payload.factionState != null ? payload.factionState : prevState;
-  const stateChanged = !!(prevState && payload.factionState && prevState !== payload.factionState);
+  // A named faction with no state means the state cleared — see resolveDockFactionState (1.60.23).
+  const { state: currentState, changed: stateChanged } = resolveDockFactionState(prevState, payload);
 
   const newFactionHistory = [...((existingSt && existingSt.factionHistory) || [])];
   if (factionChanged && prevFaction) {
@@ -1289,8 +1427,8 @@ function applyDockToStationPatch(patch, existing, marketId, payload) {
     if (newFactionHistory.length > 5) newFactionHistory.shift();
   }
   const newStateHistory = [...((existingSt && existingSt.stateHistory) || [])];
-  if (stateChanged && payload.factionState) {
-    newStateHistory.push({ state: payload.factionState, changedAt: now });
+  if (stateChanged) {
+    newStateHistory.push({ state: currentState || 'None', changedAt: now });
     if (newStateHistory.length > DOCK_HISTORY_CAP) newStateHistory.shift();
   }
 
@@ -1327,6 +1465,11 @@ function applyDockToStationPatch(patch, existing, marketId, payload) {
     stationName: (payload.stationName && (!isPlaceholder(payload.stationName) || !base.stationName || isPlaceholder(base.stationName)))
       ? payload.stationName
       : base.stationName,
+    // The live dock's type replaces a construction-depot type — the depot became the station (1.60.29).
+    // Any other prior type (the journal's, or one the commander set on the system page) stands.
+    stationType: (payload.stationType && (!base.stationType || /ConstructionDepot/i.test(base.stationType)))
+      ? payload.stationType
+      : base.stationType,
     systemName: payload.systemName || base.systemName,
     systemAddress: payload.systemAddress || base.systemAddress,
     firstDocked: base.firstDocked || now,
@@ -1345,6 +1488,8 @@ function applyDockToStationPatch(patch, existing, marketId, payload) {
     primaryEconomy: payload.primaryEconomy != null ? payload.primaryEconomy : (base.primaryEconomy || null),
     government: payload.government != null ? payload.government : (base.government || null),
     allegiance: payload.allegiance != null ? payload.allegiance : (base.allegiance || null),
+    // The system's population as you docked (1.60.23) — the banner's trend line compares the next visit with it.
+    lastVisitPopulation: payload.systemPopulation > 0 ? { population: payload.systemPopulation, at: now } : (base.lastVisitPopulation || null),
     lastSeen: now,
   });
 
@@ -1363,13 +1508,16 @@ function applyDockToStationPatch(patch, existing, marketId, payload) {
   const isConstructionName = /\$EXT_PANEL_ColonisationShip|Construction Site/i.test(payload.stationName || '');
   if (!isConstructionName) {
     const projects = Array.isArray(existing && existing.projects) ? existing.projects : [];
+    // …or one whose finished station has since been renamed in the game: the project still carries the old name
+    // (Ngidi Biological Enterprise → Hibberd Astrophysics Laboratory, 1.60.39). A name the commander typed that the
+    // game never used is left alone — only a project carrying the station's previous name follows it.
     const match = projects.find(
       (p) => p && p.status === 'completed'
         && p.marketId === marketId
-        && !p.completedStationName,
+        && (!p.completedStationName || (nameChanged && p.completedStationName === prevName)),
     );
     if (match) {
-      const resolvedType = updated.stationType || match.stationType || 'Outpost';
+      const resolvedType = match.completedStationType || updated.stationType || match.stationType || 'Outpost';
       const projUpsert = (patch.projects && patch.projects.__upsert) || {};
       projUpsert[match.id] = Object.assign({}, match, {
         completedStationName: payload.stationName,
@@ -1377,6 +1525,27 @@ function applyDockToStationPatch(patch, existing, marketId, payload) {
         lastUpdatedAt: now,
       });
       patch.projects = { __idKey: 'id', __upsert: projUpsert };
+    }
+  }
+
+  // A dock at an ACTIVE project's market id as a finished station completes the project (1.60.29).
+  // The journal's own ConstructionComplete flag reaches only whoever is docked at the depot as it
+  // crosses 100%: Core Boson Complex crossed it between the last depot reading (99.5%) and the next
+  // dock, at the port itself, typed CraterPort — and stayed "active".
+  if (!isConstructionName && payload.stationType && !/ConstructionDepot|ColonisationShip/i.test(payload.stationType)) {
+    const projects = Array.isArray(existing && existing.projects) ? existing.projects : [];
+    const active = projects.find((p) => p && p.status === 'active' && p.marketId === marketId);
+    if (active) {
+      const projUpsert = (patch.projects && patch.projects.__upsert) || {};
+      projUpsert[active.id] = Object.assign({}, active, {
+        status: 'completed',
+        completedAt: now,
+        completedStationName: payload.stationName,
+        completedStationType: payload.stationType,
+        lastUpdatedAt: now,
+      });
+      patch.projects = { __idKey: 'id', __upsert: projUpsert };
+      console.log(`[Depot] Completed by dock: ${payload.stationName} (${payload.stationType}, marketId=${marketId})`);
     }
   }
 }
@@ -1431,6 +1600,11 @@ function handleDockingGranted(ev, existing, extraEvents, deps) {
   } catch (e) {
     console.error('[Overlay] DockInfoBanner (DockingGranted) error:', e && e.message);
   }
+  // Slot 9: this station's estimated population — DockingGranted carries no system, the dossier does.
+  renderDockPopulationLine(ev, existing, deps, { systemName: station.systemName, systemAddress: station.systemAddress, y: Y_DOCK_POP, ttl: DOCK_POP_TTL })
+    .catch((e) => console.error('[Overlay] DockPopulation (DockingGranted) error:', e && e.message));
+  try { renderDockPopulationTrendLine(station, existing, deps, { y: Y_DOCK_TREND, ttl: DOCK_POP_TTL }); } catch (e) { console.error('[Overlay] DockPopulationTrend (DockingGranted) error:', e && e.message); }
+  try { renderDockFactionLine(station.faction, station.systemName, existing, deps, { y: Y_DOCK_FACTION, ttl: DOCK_POP_TTL }); } catch (e) { console.error('[Overlay] DockFaction (DockingGranted) error:', e && e.message); }
   extraEvents.push({
     type: 'station_dock_summary',
     marketId: summary.marketId,
@@ -1486,8 +1660,11 @@ function renderDockWelcomeOverlay(summary, station, deps) {
     });
   }
 
-  if (historyLabel && !summary.isFirstVisit) {
-    lines.push({ text: `📅 ${historyLabel}`, color: '#94a3b8' });
+  if (!summary.isFirstVisit) {
+    // When you were last docked here (1.60.30) — the dossier before this dock is counted — and how long the history runs.
+    const lastHere = station && station.lastDocked ? lastVisitLabel(station.lastDocked) : null;
+    const bits = [lastHere ? `last docked ${lastHere}` : '', historyLabel].filter(Boolean);
+    if (bits.length) lines.push({ text: `📅 ${bits.join(' · ')}`, color: '#94a3b8' });
   }
 
   if (summary.factionChanged && summary.previousFaction && summary.currentFaction) {

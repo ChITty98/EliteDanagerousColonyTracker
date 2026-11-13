@@ -33,6 +33,19 @@ export interface StationEconomy {
   proportion: number;
 }
 
+/** The station's representative, read off the station services screen in one of your F10 screenshots (1.62.0). */
+export interface StationRepresentative {
+  title: string | null;            // e.g. "Vice President"
+  name: string | null;             // e.g. "Virgil Hall"
+  greeting: string | null;         // their welcome line, word for word
+  faction: string | null;          // the owner as the screen named it
+  factionState: string | null;
+  influencePct: number | null;
+  operationalStatus: string | null;
+  architectIsYou: boolean;         // the screen's System Architect is the commander
+  seenAt: string;                  // ISO time of the screenshot
+}
+
 export interface KnownStation {
   stationName: string;
   stationType: string;       // raw journal type: "Coriolis", "CraterOutpost", etc.
@@ -61,6 +74,8 @@ export interface KnownStation {
   // the station by a dead name (an FSS signal, an old record) resolves here instead of standing up
   // as a second entity: Sassoon Vision → Rao Refinery → Kalian Port is one station, not three.
   nameHistory?: { name: string; changedAt: string }[]; // former names, oldest first (cap 10)
+  lastVisitPopulation?: { population: number; at: string } | null; // the system's population as you last docked here (dock banner trend line, 1.60.23)
+  representative?: StationRepresentative; // who greets you here — from your screenshot of the station screen (1.62.0)
 }
 
 export interface MarketItem {
@@ -187,6 +202,11 @@ export interface AppSettings {
   copilotSound?: boolean; // play a chime on each new co-pilot line
   copilotTarsHumor?: number; // TARS humour dial 0-100 (default 60) — injected into TARS live gen
   copilotTarsHonesty?: number; // TARS honesty dial 0-100 (default 80)
+  copilotBackend?: 'cli' | 'api'; // live generation: the local `claude` CLI (Max login, default) or the Anthropic API (your credits; anthropic-key.txt beside the exe)
+  copilotApiModel?: 'claude-opus-5-5' | 'claude-sonnet-5-5' | 'claude-haiku-5-5'; // API model (default Opus 5.5)
+  copilotApiCapUsd?: number; // monthly API spend cap in USD (default 100) — canned lines only once reached
+  copilotOpinions?: boolean; // station opinions on docking clearance (API only; default on)
+  copilotScreenshots?: boolean; // the co-pilot reads your F10 screenshots — describes, stores, sometimes remarks (API only; default on)
 
   // Squadron-season comparison (manual — other members' contributions aren't journaled)
   squadronMateName?: string;
@@ -469,3 +489,6 @@ export interface MaterialInventory {
   updatedAt: string;
   baselineFrom: string | null; // journal file the baseline came from
 }
+
+// The System Factions panel per system (server-written, 1.60.24) — shapes live beside the implementation.
+export type { SystemFactionsEntry, SystemFactionReading, SystemFactionsHistoryPoint } from '../lib/factions';

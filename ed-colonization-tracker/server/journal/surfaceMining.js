@@ -460,6 +460,28 @@ export function isRecordedScreenshot(basename) {
 }
 
 /**
+ * Is the file at `fullPath` the very shot a gallery photo taken at `shotAt` came from (1.62.1)? The
+ * game reuses screenshot names — Screenshot_0041.bmp was a deposit on 3 Sep and a station screen on
+ * 2 Nov — so a name alone can point at a newer, different picture, and deleting "the original" by name
+ * would delete the wrong one. True only when a marker names this file within two minutes of the photo's
+ * time AND the file on disk was written within two minutes of that marker. Anything else is left alone.
+ */
+export function isRecordedScreenshotFile(fullPath, shotAt) {
+  const base = path.basename(String(fullPath || '').replace(/\\/g, '/')).toLowerCase();
+  const at = Date.parse(shotAt);
+  if (!base || !Number.isFinite(at)) return false;
+  let mtime;
+  try { mtime = fs.statSync(fullPath).mtimeMs; } catch { return false; }
+  const WINDOW_MS = 2 * 60 * 1000;
+  return readSurfaceRecords().some((r) => {
+    if (!r || r.k !== 'mark' || !r.file) return false;
+    if (path.basename(String(r.file).replace(/\\/g, '/')).toLowerCase() !== base) return false;
+    const markAt = Date.parse(r.at);
+    return Number.isFinite(markAt) && Math.abs(markAt - at) <= WINDOW_MS && Math.abs(mtime - markAt) <= WINDOW_MS;
+  });
+}
+
+/**
  * Every screenshot filename the surface ledger claims, lowercased. A shot named by a marker is a
  * picture of a deposit's HUD panel — documentation of a rock, not a picture of the place — so the
  * places that show off a body (the gallery's hero shots, the Commander's Log) leave them out.

@@ -30,7 +30,7 @@ import { noteMiningLock, tickCompass } from './surfaceMining.js';
 import { setInGame } from '../ai/copilot.js';
 import { checkMiningStall } from './mining.js';
 import { fetchLatestPositionFromJournal } from './extractor.js';
-import { seedFcRegistryFromKnownStations } from './util.js';
+import { seedFcRegistryFromKnownStations, latestDockFromLines } from './util.js';
 
 const POLL_INTERVAL_MS = 2000;
 const COMPANION_INTERVAL_MS = 5000;
@@ -149,6 +149,103 @@ export function getServerWatcherStatus() {
 
 // ===== Initialization =====
 
+// ===== Where the reader stopped (1.62.4) =====
+//
+// The tail used to start at the END of the current journal on every boot, so anything the game
+// wrote while the exe was closed was never processed live — the 2 Nov dock at Atmo Sky Cairn Asc,
+// made in the minutes between closing one build and starting the next, left the station owned by
+// the faction that had just lost it. Only a Sync All re-read the gap. Now the reader writes where it
+// stopped after every tick (journal-position.json beside the exe), and the next boot carries on
+// from there: the rest of that file, then every newer journal, through the normal pipeline with the
+// overlay and SSE pushes muted. The co-pilot and the screenshot reader already ignore events older
+// than two minutes, docks de-duplicate by timestamp, and the surface ledger is skipped (its own boot
+// backfill reads the gap). With no saved position — the first boot after the update — the tail
+// starts at the end of the file, as before.
+
+/** The saved position, or null when there is none or it is unreadable. */
+export function readJournalPosition(file) {
+  if (!file) return null;
+  try {
+    const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return j && typeof j.file === 'string' && Number.isFinite(j.offset) && j.offset >= 0 ? { file: j.file, offset: j.offset, at: j.at || null } : null;
+  } catch { return null; }
+}
+
+/** Write the position the reader has processed up to. Best effort — a failed write only costs the next catch-up. */
+export function writeJournalPosition(file, pos) {
+  if (!file || !pos || !pos.file) return;
+  try { fs.writeFileSync(file, JSON.stringify({ file: pos.file, offset: pos.offset, at: new Date().toISOString() })); }
+  catch (e) { console.warn('[Watcher] position write failed:', e && e.message); }
+}
+
+/**
+ * What to replay for a saved position: the saved file from its offset to its end, then every later file
+ * from the start. Nothing when there is no position, the file is gone, or the offset is past the file's
+ * end (replaced or truncated — nothing safe to replay from it; later files still count).
+ * @param files  listJournalFiles() order (oldest first)
+ */
+export function planCatchUp(files, saved) {
+  if (!saved || !Array.isArray(files)) return [];
+  const idx = files.findIndex((f) => f && f.name === saved.file);
+  if (idx < 0) return [];
+  const out = [];
+  for (let i = idx; i < files.length; i++) {
+    const f = files[i];
+    const from = i === idx ? saved.offset : 0;
+    if (from > f.size) continue;
+    if (f.size > from) out.push({ file: f, from });
+  }
+  return out;
+}
+
+/** Read [from, to) of a file up to its last complete line. Returns the text and the bytes consumed (newline-aligned). */
+export function readAligned(fullPath, from, to) {
+  const len = to - from;
+  if (len <= 0) return { text: '', consumed: 0 };
+  const fd = fs.openSync(fullPath, 'r');
+  try {
+    const buf = Buffer.alloc(len);
+    const read = fs.readSync(fd, buf, 0, len, from);
+    const chunk = buf.subarray(0, read);
+    const lastNL = chunk.lastIndexOf(0x0a);
+    if (lastNL < 0) return { text: '', consumed: 0 };
+    return { text: chunk.subarray(0, lastNL + 1).toString('utf-8'), consumed: lastNL + 1 };
+  } finally {
+    try { fs.closeSync(fd); } catch { /* ignore */ }
+  }
+}
+
+/** The deps for a catch-up batch: state is written, nothing is shown — no overlay banners, no SSE pushes for old events. */
+export function quietDeps(deps) {
+  return Object.assign({}, deps, { broadcastEvent: () => {}, sendOverlay: () => {} });
+}
+
+/**
+ * Replay what was written since `saved`. Returns the number of lines replayed and, when the latest file
+ * was part of it, the offset the live tail should resume from (null otherwise).
+ * @param process  the batch processor (processNewEvents; a test passes its own)
+ */
+export function catchUp(files, saved, deps, process = processNewEvents) {
+  const plan = planCatchUp(files, saved);
+  const latest = files.length ? files[files.length - 1] : null;
+  let replayed = 0;
+  let resumeAt = null;
+  for (const step of plan) {
+    let text = ''; let consumed = 0;
+    try { ({ text, consumed } = readAligned(step.file.fullPath, step.from, step.file.size)); }
+    catch (e) { console.error('[Watcher] catch-up read failed:', step.file.name, e && e.message); continue; }
+    const lines = text.split('\n').filter((l) => l.trim());
+    if (lines.length) {
+      const parsed = parseJournalLines(lines);
+      parsed.catchUp = true;
+      try { process(parsed, quietDeps(deps)); replayed += lines.length; }
+      catch (e) { console.error('[Watcher] catch-up error:', step.file.name, e && e.message); }
+    }
+    if (latest && step.file.name === latest.name) resumeAt = step.from + consumed;
+  }
+  return { replayed, resumeAt, steps: plan.length };
+}
+
 function initWatcher() {
   const files = listJournalFiles(wstate.journalDir);
   wstate.knownFileNames = files.map((f) => f.name);
@@ -156,7 +253,16 @@ function initWatcher() {
 
   const latest = files[files.length - 1];
   wstate.activeFile = latest;
-  wstate.byteOffset = latest.size; // Skip historical events — Sync All handles those
+  // Carry on from where the last run stopped (1.62.4); without a saved position, from the end of the file.
+  wstate.byteOffset = latest.size;
+  const saved = readJournalPosition(wstate.deps.positionFile);
+  if (saved) {
+    const r = catchUp(files, saved, wstate.deps);
+    if (r.resumeAt != null) wstate.byteOffset = r.resumeAt;
+    if (r.replayed) console.log(`[Watcher] Caught up on ${r.replayed} journal line(s) written while the exe was closed (since ${saved.file} @ ${saved.offset})`);
+    else console.log(`[Watcher] Nothing written since the last run (${saved.file} @ ${saved.offset})`);
+  }
+  writeJournalPosition(wstate.deps.positionFile, { file: latest.name, offset: wstate.byteOffset });
 
   // Seed currentShip — find most recent Loadout or ShipyardSwap in the active file.
   // Also seeds co-pilot presence: the most recent of LoadGame vs Shutdown/MainMenu decides
@@ -198,6 +304,13 @@ function initWatcher() {
         shipSeeded = true;
       }
       if (shipSeeded && presenceSeeded) break;
+    }
+    // Seed currentDock from the same file (1.60.30): the tail starts at EOF, so a dock made while the
+    // exe was down is otherwise invisible, and the next depot event has no station to name its project after.
+    const dock = latestDockFromLines(lines);
+    if (dock) {
+      wstate.deps.applyStatePatch({ currentDock: dock });
+      console.log(`[Watcher] Seeded current dock: ${dock.stationName} (${dock.systemName})`);
     }
   } catch { /* best-effort */ }
 
@@ -280,6 +393,8 @@ function pollJournal() {
     wstate.lastEventAt = new Date().toISOString();
 
     processNewEvents(parsed, wstate.deps);
+    // After the batch is applied, so a crash in between loses a tick rather than replaying one (1.62.4).
+    writeJournalPosition(wstate.deps.positionFile, { file: wstate.activeFile.name, offset: wstate.byteOffset });
   } catch (e) {
     console.error('[Watcher] read error:', e && e.message);
   } finally {

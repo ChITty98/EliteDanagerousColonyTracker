@@ -32,22 +32,50 @@ const OC_LINE_DEFAULT_M = 700000; // a position-opened run that starts below the
 export const DOCK_REQUEST_M = 7500; // the game takes a docking request inside this range
 export const DOCK_AHEAD_M = 5000;   // the count-in to it while still in the glide
 const DROP_GRACE_S = 5;  // seconds after leaving supercruise for the glide flag to appear; none = thrown out, too fast
-// The words. An entry that would need this pitch or more from the line to the fastest run's glide point ended in a curl or a
-// throw-out on every run on file; under EARLY_DEG it crossed far out and low. The countdown rules are the commander's own.
-export const SHARP_DEG = 50;        // from here the entry is sharp: landable with the speed managed (22:21 landed direct from 57°), and every throw-out crossed here
-export const RED_DEG = 60;          // the ladder's red zone: a glide will not engage past it, and no run has landed direct from an entry needing this
+// The words. The entry by the angle is the pitch a crossing would need from the line to the fastest run's glide point.
+// Replayed over the file (2026-11-10, 300 Panther port approaches): sharp entries were thrown out 5 of 51, everything else
+// 5 of 249; under EARLY_DEG the ship crossed far out and low and landed 20 s over the site's usual time. The countdown
+// rules are the commander's own.
+export const SHARP_DEG = 50;        // from here the entry is sharp: landable with the speed managed (22:21 landed direct from 57°)
+export const RED_DEG = 60;          // the ladder's red zone: ENTRY TOO SHARP. Of 21 such entries on file none was thrown out, and they landed at the site's usual time
 export const EARLY_DEG = 30;
 export const EASY_DEG = 45;         // under this, INCREASE SPEED may be said
 export const VERDICT_WITHIN_S = 5;  // the straight projection to the line held on every run within this many seconds of it, and failed once at eight
 export const SLOW_MARGIN_S = 4;     // INCREASE SPEED: this many seconds of countdown above the fastest run's at the same altitude
 export const FLOOR_QUIET_M = 40000; // below this the countdown climbs on every good run; INCREASE SPEED stays quiet
-export const FLAT_LOW_M = 150000;   // two seconds at 0:05 or under below this is a curl call
-export const GEOMETRY_FLOOR_M = 200000; // below this the angle to the glide point only measures the glide point approaching; the geometry curl is judged above it
+export const FLAT_LOW_M = 150000;   // the countdown word, DECREASE SPEED, is said only below this: every throw-out collapsed there
+export const GEOMETRY_FLOOR_M = 200000; // below this the angle to the glide point only measures the glide point approaching; a run opened on the line gets its angle verdict from the first look above it
+// The entry by the countdown the commander flies by, beside the angle. Every Panther port approach on file replayed through
+// these rules (2026-11-10: 300 runs, 10 thrown out): crossed the line at 0:06 or under, 6 of 92 thrown out; at 0:07 or over,
+// 3 of 188, all three sharp by the angle. Hot or sharp, 9 of 141; neither, 1 of 159. So the two stand together.
+export const HOT_CD = 6;            // the countdown at the line, at or under which the entry is hot
+export const LINE_READ_S = 3;       // the crossing's own countdown is the first within this many seconds of the line; the verdict on the entry stays up that long
+// The entry to aim for, in the HUD's two numbers: the range to cross the line at and the countdown to show there. Crossings
+// on track by the angle and over HOT_CD at the line: 109 on file (2026-11-10, every hull, every site), none thrown out.
+export const TARGET_CD = HOT_CD + 1;        // the countdown to show at the line
+export const ENTRY_TARGET_MIN_RUNS = 3;     // landed crossings like that a site needs before it has a target of its own; short of that it borrows its body's
+export const ENTRY_TARGET_STEP_M = 50000;   // the target range is said to the nearest 0.05 Mm
+// Dropping short: the angle down to the pad (altitude over ground distance) on a descent from the line. Of 290 Panther port
+// descents on file, 120 went under SHORT_DEG between SHORT_HIGH_M and SHORT_LOW_M. The 104 still short at SHORT_LOW_M began
+// the glide a median 38 km out and landed 8 s over the site's usual line-to-pad time; the 16 that got back over
+// SHORT_CLEAR_DEG first, 5 s under it; the 170 never short, 3 s under it, gliding from a median 20 km out.
+export const SHORT_DEG = 35;
+export const SHORT_CLEAR_DEG = 38;
+export const SHORT_HIGH_M = 200000;
+export const SHORT_LOW_M = 40000;
 const MAX_SECONDS_TO_TARGET = 120; // beyond this the countdown is noise (a near-zero closing speed)
 const F2_GLIDE = 1 << 12;
 const SAMPLE_MS = 1000;
-/** A glide that ends above this is a broken glide: the flag cleared while the ship was still high. Nominal until data says otherwise. */
-export const GLIDE_BROKEN_ALT_M = 5000;
+/** Out of supercruise above this with no glide five seconds on is a throw-out; below it the ship simply left supercruise low. */
+export const DROP_MIN_ALT_M = 5000;
+/**
+ * A broken glide: the flag cleared far above where glides end at that site. Glides end 3.0–4.7 km up depending on the site
+ * (each site's own median), so one fixed height called good glides broken: of the 21 flagged at the old 5 km, 12 ended
+ * 5.2–7.4 km up; the other 9 ended 10–30 km up after 3–8 s of glide, and nothing on file ends in between.
+ */
+export const GLIDE_END_NOMINAL_M = 3000;  // the usual end height (the wiki's figure) until a site has GLIDE_END_MIN_RUNS glide ends of its own
+export const GLIDE_BROKEN_OVER_M = 5000;  // a glide that ends this far above the site's usual end height is broken
+export const GLIDE_END_MIN_RUNS = 3;
 /** Corridor drawn until three clean glides at a target set their own (degrees below horizontal). */
 export const NOMINAL_CORRIDOR = [15, 55];
 const ABANDON_AFTER_MS = 30 * 60 * 1000; // a run nobody closed (crash, alt-F4) is dropped at the next event this long after it opened
@@ -70,15 +98,18 @@ let run = null;            // the open run
 let timer = null;
 let idleTimer = null;
 let lastFigures = null;
-const liveState = { prevCd: null, prevCd2: null, entryVerdict: null }; // the overlay's memory: the countdown one and two seconds ago, and the verdict on the entry
+// The overlay's memory: the countdown a second ago; the verdict on the entry by the angle; whether it crossed hot, and
+// whether the crossing itself has been read; whether the descent is dropping short.
+const liveState = { prevCd: null, entryVerdict: null, entryHot: null, lineRead: false, short: false };
 let noFixSamples = 0;
 let idleFixes = []; // the last few idle fixes: { key, dist, alt } — a run opens only when they close on one target
+let unknownPlace = null; // heading for a place that is not on file: { alt, ship } from the last idle fix, the hull read once
 
 // ---------- file ----------
 export function initApproach(appDir, journalDir, d) {
   APP_DIR = appDir; JOURNAL_DIR = journalDir || null; FILE = path.join(appDir, 'approach-runs.jsonl');
   if (d) deps = { ...deps, ...d };
-  runs = []; targets = new Map(); run = null; lastFigures = null;
+  runs = []; targets = new Map(); run = null; lastFigures = null; forgetSummaries();
   if (timer) { clearInterval(timer); timer = null; }
   if (idleTimer) { clearInterval(idleTimer); idleTimer = null; }
   if (JOURNAL_DIR) idleTimer = setInterval(() => { try { idleTick(); } catch (e) { console.error('[Approach] idle:', e && e.message); } }, IDLE_MS);
@@ -88,8 +119,10 @@ export function initApproach(appDir, journalDir, d) {
     if (!l) continue;
     let r; try { r = JSON.parse(l); } catch { continue; }
     if (r.k === 'target' && r.key) targets.set(r.key, r);
-    if (r.k === 'run' && r.id) runs.push(withGate(remeasure(r)));
+    // A run with no fixes is not a recording (see ingestApproachEvents): it stays in the file and out of the app.
+    if (r.k === 'run' && r.id && Array.isArray(r.samples) && r.samples.length) runs.push(withGate(remeasure(r)));
   }
+  reclassify(); // broken or clean is read against each site's own glide ends, whatever the file said when the run was written
   return { runs: runs.length, targets: targets.size };
 }
 export function setApproachDeps(d) { deps = { ...deps, ...d }; }
@@ -139,7 +172,8 @@ function shipNow(ctxShip) {
   return { type, name: friendlyShip(type), ident: sh.ident || null, shipId: sh.shipId ?? null };
 }
 function openRun({ at, body, bodyId, system, systemAddress, openedBy, target, ship, openedInCruise }) {
-  liveState.prevCd = null; liveState.prevCd2 = null; liveState.entryVerdict = null;
+  liveState.prevCd = null; liveState.entryVerdict = null; liveState.entryHot = null; liveState.lineRead = false; liveState.short = false;
+  unknownPlace = null;
   if (run) abandon('new approach');
   run = {
     id: `${(at || nowIso()).replace(/[-:]/g, '').slice(0, 15)}-${Math.random().toString(36).slice(2, 6)}`,
@@ -203,9 +237,10 @@ function portFromDestination(st) {
 export function idleTick() {
   if (run) return;
   const st = readStatus();
-  if (!st || st.lat == null || st.lon == null || !(st.flags & F_HASLATLON) || !(st.flags & F_SUPERCRUISE)) return;
+  if (!st || st.lat == null || st.lon == null || !(st.flags & F_HASLATLON) || !(st.flags & F_SUPERCRUISE)) { unknownPlace = null; return; }
   const target = portFromDestination(st) || siteTargetFrom(getNavTarget(), st.body, st.destination ? st.destination.Body ?? null : null);
-  if (!target) { idleFixes = []; return; }
+  if (!target) { idleFixes = []; unknownPlaceLine(st); return; }
+  unknownPlace = null;
   // Closing, not departing: two fixes in a row nearer the target and lower. A takeoff climbs away and never qualifies.
   const dist = st.radius ? metresBetween(st.lat, st.lon, target.lat, target.lon, st.radius) : null;
   if (dist == null) { idleFixes = []; return; }
@@ -230,11 +265,33 @@ export function idleTick() {
   if (last) afterSample(last);
 }
 
+/**
+ * Heading for a place on this body that is not on file. No run can open before the line — the pad is only known from
+ * ApproachSettlement, seconds before the glide — but the body's own entry target is known, so the HUD line is that target
+ * on its own while the ship is above the body's line and coming down. The destination counts as on this body when its Body
+ * id is the one the sites on file here carry: Status.json's Destination.Body is the planet's BodyID (captured live
+ * 2026-09-03: Body 14 for a site on AX-J d9-52 1 a, the id ApproachSettlement gives the ports there).
+ */
+function unknownPlaceLine(st) {
+  const was = unknownPlace;
+  unknownPlace = { alt: st.alt, ship: was ? was.ship : shipNow(null) };
+  if (!was || st.alt == null || was.alt == null || !(st.alt < was.alt)) return; // the first fix, or not coming down
+  if (!deps.sendOverlay || !st.body || !st.destination || st.destination.Body == null || !st.destination.Name) return;
+  if (String(st.destination.Name).trim().toLowerCase() === String(st.body).trim().toLowerCase()) return; // the body itself, not a place on it
+  let onThisBody = false;
+  for (const t of targets.values()) if (t.body === st.body && t.bodyId != null && t.bodyId === st.destination.Body) { onThisBody = true; break; }
+  if (!onThisBody) return;
+  const e = bodyEntryTarget(st.body, unknownPlace.ship ? unknownPlace.ship.type : null);
+  if (!e || st.alt <= e.lineAltM) return; // no target for this body yet, or under the line already (a hop between sites)
+  try { deps.sendOverlay({ id: 'edcolony_approach', text: `🛬 Gravity well · ${fmtMm(e.rangeM)} · ${fmtCd(e.countdownS)}`, color: '#3987e5', x: 20, y: 300, ttl: 5, quiet: true }); } catch { /* overlay is optional */ }
+}
+
 function rememberTarget(t) {
   if (!t || !t.key) return;
   const prior = targets.get(t.key);
   if (prior && prior.lat === t.lat && prior.lon === t.lon && prior.name === t.name) return;
   targets.set(t.key, { ...t });
+  forgetSummaries();
   append({ k: 'target', ...t });
 }
 
@@ -335,12 +392,12 @@ function ingestStatus(st) {
 }
 /** After a sample: the drop check, the glide marks, the figures for the page and the overlay. */
 function afterSample(s) {
-  if (run.scExitT != null && !hasMark('glide_start') && !hasMark('docking_requested') && !s.glide && !s.sc && s.t - run.scExitT >= DROP_GRACE_S && (s.alt ?? 0) > GLIDE_BROKEN_ALT_M) {
+  if (run.scExitT != null && !hasMark('glide_start') && !hasMark('docking_requested') && !s.glide && !s.sc && s.t - run.scExitT >= DROP_GRACE_S && (s.alt ?? 0) > DROP_MIN_ALT_M) {
     finishRun('dropped', { timestamp: s.at });
     return null;
   }
   if (s.glide && !hasMark('glide_start')) mark('glide_start', { timestamp: s.at });
-  if (!s.glide && hasMark('glide_start') && !hasMark('glide_end')) mark('glide_end', { timestamp: s.at }, { broken: (s.alt ?? 0) > GLIDE_BROKEN_ALT_M });
+  if (!s.glide && hasMark('glide_start') && !hasMark('glide_end')) mark('glide_end', { timestamp: s.at }, { broken: (s.alt ?? 0) > usualGlideEnd(run.target ? run.target.key : null).brokenAboveM });
   const fig = liveFigures(s);
   lastFigures = fig;
   emit('approach_sample', fig);
@@ -399,6 +456,8 @@ export function altAtHudRange(samples, rangeM) {
 const fmtMm = (m) => `${(m / 1e6).toFixed(2)} Mm`;
 const fmtPitch = (deg) => (deg >= 0 ? `-${deg}°` : `+${-deg}°`);
 const fmtCd = (cd) => `0:${String(Math.round(cd)).padStart(2, '0')}`;
+/** The entry by the angle: the pitch a crossing would need to the fastest run's glide point. */
+const angleVerdict = (need) => (need >= RED_DEG ? 'ENTRY TOO SHARP' : need >= SHARP_DEG ? 'ENTRY SHARP' : need < EARLY_DEG ? 'ENTRY TOO EARLY' : 'ON TRACK');
 
 function liveFigures(s) {
   const phase = phaseAt(run, s.t);
@@ -434,13 +493,17 @@ function liveFigures(s) {
 }
 
 /**
- * The HUD line: one of six words, or nothing. Before the line, a verdict on the entry once the line is within a straight
- * projection's reach: ON TRACK, ENTRY TOO SHARP (the crossing would need SHARP_DEG or more to the fastest run's glide point —
- * every such entry on file curled or was thrown out), ENTRY TOO EARLY (under EARLY_DEG: far out and low). In orbital cruise,
- * from the countdown the commander already watches: DECREASE SPEED at 0:05, or 0:06 and falling; CURL ROUTE ADVISED when it
- * has dropped twice in a row to 0:05 or under, or sat there two seconds below FLAT_LOW_M, or the pitch to the glide point has
- * reached SHARP_DEG; INCREASE SPEED when the geometry is easy, the ship is above FLOOR_QUIET_M and the countdown runs
- * SLOW_MARGIN_S or more above the fastest run's at this altitude; ON TRACK otherwise. No speeds, no angles on the HUD.
+ * The HUD line: a target, one word, or nothing. Before the line, where the site has a target of its own, the line is that
+ * target and nothing else — the range to cross the line at and the countdown to show there (entryTarget). Without one, a
+ * verdict on the entry: ENTRY HOT while the countdown reads HOT_CD or under, else by the angle once the line is within a
+ * straight projection's reach — ON TRACK, ENTRY SHARP (the crossing would need SHARP_DEG or more to the fastest run's glide
+ * point), ENTRY TOO SHARP (RED_DEG or more), ENTRY TOO EARLY (under EARLY_DEG: far out and low). At the line the crossing's
+ * own countdown is read, and the verdict on the entry — ENTRY HOT first, else the one by the angle — stays up for
+ * LINE_READ_S. In orbital cruise, after a hot or a sharp entry and below FLAT_LOW_M, from the countdown the commander already watches:
+ * DECREASE SPEED at 0:05, or 0:06 and falling, for as long as it lasts. DROPPING SHORT
+ * between SHORT_HIGH_M and SHORT_LOW_M while the pad is under SHORT_DEG below the ship; INCREASE SPEED when the geometry is
+ * easy, the ship is above FLOOR_QUIET_M and the countdown runs SLOW_MARGIN_S or more above the fastest run's at this
+ * altitude; ON TRACK otherwise. No speeds, no angles on the HUD.
  */
 function coachLine(phase, s, ref, vsShortestS, countdownS, refCd) {
   const km = (m) => (m == null ? '—' : m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(m < 10000 ? 1 : 0)} km`);
@@ -449,13 +512,16 @@ function coachLine(phase, s, ref, vsShortestS, countdownS, refCd) {
   const shortest = ref && ref.shortest;
   const who = ref && ref.sameShip === false && ref.shortest && ref.shortest.ship ? ` (${ref.shortest.ship.name})` : '';
   const gp = shortest && shortest.glide && shortest.glide.startDistM != null && shortest.glide.startAltM != null ? { dist: shortest.glide.startDistM, alt: shortest.glide.startAltM } : null;
-  let word = null, docking = null, note = null, clock = null, need = null;
+  const tgt = ref && ref.entryTarget && ref.entryTarget.rangeM != null ? ref.entryTarget : null; // the site's own, or its body's: there with no clean run here too
+  let word = null, lead = null, docking = null, note = null, clock = null, need = null;
   const detail = [];
   const shown = countdownS == null ? null : Math.round(countdownS);
-  const prev = liveState.prevCd == null ? null : Math.round(liveState.prevCd), prev2 = liveState.prevCd2 == null ? null : Math.round(liveState.prevCd2);
+  const prev = liveState.prevCd == null ? null : Math.round(liveState.prevCd);
   const falling = shown != null && prev != null && shown < prev;
   if (countdownS != null) detail.push(`countdown ${fmtCd(countdownS)}${falling ? ' falling' : ''}`);
   if (phase === 'Gravity well') {
+    // The countdown the commander is watching, as it reads now: at or under HOT_CD the entry is hot, whatever the angle.
+    const hotNow = shown != null && shown <= HOT_CD;
     if (cr && cr.entryAltM != null && gp && s.alt != null && s.alt > cr.entryAltM && s.vrate > 0 && s.speed != null && s.dist != null && s.radius) {
       const tTo = (s.alt - cr.entryAltM) / s.vrate;
       // The straight projection to the line: firm within VERDICT_WITHIN_S (it held on every run there), an early read before
@@ -463,37 +529,54 @@ function coachLine(phase, s, ref, vsShortestS, countdownS, refCd) {
       // at two. Only the firm word stands for the descent.
       const ground = Math.max(0, s.dist - s.speed * tTo);
       need = pitchTo({ dist: ground, alt: cr.entryAltM, radius: s.radius }, gp.dist, gp.alt);
-      if (need != null) {
-        const verdict = need >= RED_DEG ? 'ENTRY TOO SHARP' : need >= SHARP_DEG ? 'ENTRY SHARP' : need < EARLY_DEG ? 'ENTRY TOO EARLY' : 'ON TRACK';
-        if (tTo <= VERDICT_WITHIN_S) {
-          word = verdict;
-          liveState.entryVerdict = word; // the last verdict before the line stands for the descent
-          detail.push(`crossing ${fmtMm(hudRange({ dist: ground, alt: cr.entryAltM, radius: s.radius }))} in ${Math.round(tTo)} s, needs ${need}° to the glide point`);
-        } else {
-          word = `${verdict} (early)`;
-          detail.push(`line in ${Math.round(tTo)} s, early read: needs ${need}° to the glide point`);
-        }
-      } else detail.push(`line in ${Math.round(tTo)} s`);
-    }
+      const firm = tTo <= VERDICT_WITHIN_S;
+      const byAngle = need == null ? null : angleVerdict(need);
+      // The last read before the line stands for the descent, until the crossing itself is read.
+      if (firm) { if (byAngle) liveState.entryVerdict = byAngle; if (shown != null) liveState.entryHot = hotNow; }
+      const verdict = hotNow ? 'ENTRY HOT' : byAngle;
+      if (verdict) word = firm ? verdict : `${verdict} (early)`;
+      if (need == null) detail.push(`line in ${Math.round(tTo)} s`);
+      else if (firm) detail.push(`crossing ${fmtMm(hudRange({ dist: ground, alt: cr.entryAltM, radius: s.radius }))} in ${Math.round(tTo)} s, needs ${need}° to the glide point`);
+      else detail.push(`line in ${Math.round(tTo)} s, early read: needs ${need}° to the glide point`);
+    } else if (hotNow) word = 'ENTRY HOT (early)'; // no line to project to: the countdown alone, as an early read
+    // A site with a target shows that and nothing else before the line: two numbers to hit. A read of the countdown there
+    // comes too late to act on — it is still falling, a median 2.4 s over the last three seconds before the line (198 of 241
+    // runs) — so the verdict waits for the crossing itself.
+    if (tgt) { lead = `cross the line at ${fmtMm(tgt.rangeM)} showing ${fmtCd(tgt.countdownS)}`; word = null; }
     if (!cr) note = 'no reference yet at this target';
   } else if (phase === 'Orbital cruise') {
     need = gp ? pitchTo(s, gp.dist, gp.alt) : null;
     if (need != null) detail.push(`pitch ${fmtPitch(need)} to the glide point`);
     if (refCd != null) detail.push(`fastest run here ${fmtCd(refCd)}`);
-    // The entry decides whether speed is coached at all: every throw-out on file crossed sharp, and no run that crossed
-    // on track has ever been thrown out, three of them holding 0:05 into the last 40 km. Without a verdict from the well
-    // (a run opened at the line), the first look above GEOMETRY_FLOOR_M stands in for it.
-    if (liveState.entryVerdict == null && need != null && s.alt != null && s.alt > GEOMETRY_FLOOR_M) liveState.entryVerdict = need >= RED_DEG ? 'ENTRY TOO SHARP' : need >= SHARP_DEG ? 'ENTRY SHARP' : need < EARLY_DEG ? 'ENTRY TOO EARLY' : 'ON TRACK';
+    // The crossing itself: the countdown on the first fix within LINE_READ_S of the line that has one. It overrules the read
+    // from the well, and it is the only read a run opened on the line gets.
+    const ab = markOf(run, 'approach_body');
+    const atLine = !!ab && s.t >= ab.t && s.t - ab.t <= LINE_READ_S;
+    if (atLine && !liveState.lineRead && shown != null) { liveState.entryHot = shown <= HOT_CD; liveState.lineRead = true; }
+    // The entry decides whether speed is coached at all — hot by the countdown at the line, or sharp by the angle: nine of
+    // the ten Panther throw-outs on file were one or the other, and one run in 159 that was neither. Without a verdict from
+    // the well (a run opened at the line), the first look above GEOMETRY_FLOOR_M stands in for the angle.
+    if (liveState.entryVerdict == null && need != null && s.alt != null && s.alt > GEOMETRY_FLOOR_M) liveState.entryVerdict = angleVerdict(need);
+    const hotEntry = liveState.entryHot === true;
     const sharpEntry = liveState.entryVerdict === 'ENTRY SHARP' || liveState.entryVerdict === 'ENTRY TOO SHARP';
-    if (liveState.entryVerdict) detail.push(liveState.entryVerdict === 'ENTRY TOO SHARP' ? 'entry too sharp' : liveState.entryVerdict === 'ENTRY SHARP' ? 'sharp entry' : liveState.entryVerdict === 'ENTRY TOO EARLY' ? 'early entry' : 'entry on track');
+    const riskyEntry = hotEntry || sharpEntry;
+    if (hotEntry) detail.push('hot entry');
+    if (liveState.entryVerdict && !(hotEntry && liveState.entryVerdict === 'ON TRACK')) detail.push(liveState.entryVerdict === 'ENTRY TOO SHARP' ? 'entry too sharp' : liveState.entryVerdict === 'ENTRY SHARP' ? 'sharp entry' : liveState.entryVerdict === 'ENTRY TOO EARLY' ? 'early entry' : 'entry on track');
     // The countdown words live below FLAT_LOW_M: every throw-out collapsed there, and a 0:05 above it has never hurt a run.
     const low = s.alt != null && s.alt < FLAT_LOW_M;
-    const slow = sharpEntry && low && shown != null && (shown <= 5 || (shown === 6 && falling));
-    const twoDrops = sharpEntry && low && shown != null && prev != null && prev2 != null && shown <= 5 && shown < prev && prev < prev2;
-    const flatLow = sharpEntry && shown != null && prev != null && shown <= 5 && prev <= 5 && s.alt != null && s.alt < FLAT_LOW_M;
-    const steepHigh = need != null && need >= RED_DEG && s.alt != null && s.alt > GEOMETRY_FLOOR_M; // the red zone, judged high up: near the glide point the angle to it climbs on every run
-    if (twoDrops || flatLow || steepHigh) word = 'CURL ROUTE ADVISED';
-    else if (slow) word = 'DECREASE SPEED';
+    const slow = riskyEntry && low && shown != null && (shown <= 5 || (shown === 6 && falling));
+    // CURL ROUTE ADVISED is retired (1.62.7). The commander never curls by design, and replayed over the file the call showed
+    // on 74 of 300 Panther port approaches, 65 of which landed, at the site's usual time. The countdown that raised it says
+    // DECREASE SPEED for as long as it lasts; the red-zone geometry is said once, as ENTRY TOO SHARP at the line.
+    // Dropping short: on a descent from the line, between SHORT_HIGH_M and SHORT_LOW_M, the pad is under SHORT_DEG below the
+    // ship — the floor will be met far out and the glide will be long. It holds until the pad is SHORT_CLEAR_DEG down again.
+    // A hop between two ports on one body never crossed a line and never hears it.
+    const padDeg = s.alt != null && s.dist != null ? Math.atan2(s.alt, Math.max(1, s.dist)) * 180 / Math.PI : null;
+    liveState.short = !!ab && padDeg != null && s.alt <= SHORT_HIGH_M && s.alt >= SHORT_LOW_M && padDeg < (liveState.short ? SHORT_CLEAR_DEG : SHORT_DEG);
+    if (liveState.short) { const rg = hudRange(s); if (rg != null) detail.push(`range ${(rg / s.alt).toFixed(1)}× the altitude`); }
+    if (slow) word = 'DECREASE SPEED';
+    else if (atLine && (hotEntry || liveState.entryVerdict)) word = hotEntry ? 'ENTRY HOT' : liveState.entryVerdict; // how the crossing went, for LINE_READ_S
+    else if (liveState.short) word = 'DROPPING SHORT';
     else if (need != null && need < EASY_DEG && s.alt != null && s.alt > FLOOR_QUIET_M && refCd != null && countdownS != null && countdownS >= refCd + SLOW_MARGIN_S) word = 'INCREASE SPEED';
     else if (need != null) word = 'ON TRACK';
     if (!cr) note = 'no reference yet at this target';
@@ -517,13 +600,13 @@ function coachLine(phase, s, ref, vsShortestS, countdownS, refCd) {
       if (ho) docking = `computer: best from here ${rec.handoff.computerS} s${who}, now ${Math.max(0, Math.round(s.t - ho.t))} s`;
     } else docking = 'docking computer has the ship';
   }
-  liveState.prevCd2 = liveState.prevCd; liveState.prevCd = countdownS;
+  liveState.prevCd = countdownS;
   const inWell = phase === 'Gravity well' || phase === 'Orbital cruise';
   if (inWell && s.dist != null && s.dist > GATE_M) note = note || 'run-up, clock starts at 100 km';
   if (vsShortestS != null && phase !== 'Docking') clock = vsShortestS === 0 ? `level with shortest${who}` : `${Math.abs(vsShortestS)} s ${vsShortestS > 0 ? 'ahead of' : 'behind'} shortest${who}`;
-  const full = [word, ...detail, docking, note, clock].filter(Boolean).join(' · ');
-  const brief = inWell ? (word || '') : docking || (phase === 'Glide' ? clock : null) || '';
-  return { coach: full, brief, word, needDeg: need };
+  const full = [word, lead, ...detail, docking, note, clock].filter(Boolean).join(' · ');
+  const brief = phase === 'Gravity well' && tgt ? `${fmtMm(tgt.rangeM)} · ${fmtCd(tgt.countdownS)}` : inWell ? (word || '') : docking || (phase === 'Glide' ? clock : null) || '';
+  return { coach: full, brief, word, needDeg: need, target: tgt ? { rangeM: tgt.rangeM, countdownS: tgt.countdownS } : null };
 }
 
 function overlay(fig) {
@@ -540,6 +623,7 @@ function emit(type, payload) { if (deps.broadcastEvent) { try { deps.broadcastEv
 // ---------- closing a run ----------
 function finishRun(kind, ev) {
   if (!run) return;
+  if (!run.samples.length) { abandon('no fixes'); return; } // nothing was measured: not a recording, so nothing is written
   // A Music line written in the same second as Docked is the pad, not a retake.
   const endT = secondsSinceStart(ev.timestamp);
   run.marks = run.marks.filter((m) => !(m.kind === 'retake' && m.t >= endT - 1));
@@ -549,8 +633,15 @@ function finishRun(kind, ev) {
   const done = summarizeRun(run, kind, ev);
   const target = run.target ? run.target.key : null;
   const before = target ? summarizeTarget(target, null, done.ship ? done.ship.type : null) : null;
-  const newShortest = !!(done.clean && before && (!before.shortest || !before.sameShip || done.runS < before.shortest.runS));
+  // How the crossing went against what the overlay asked for: kept on the run, and said at the pad.
+  const crossed = done.cruise && done.cruise.entryHudRangeM != null && done.cruise.entryCountdownS != null ? { rangeM: done.cruise.entryHudRangeM, countdownS: done.cruise.entryCountdownS } : null;
+  const aim = before && before.entryTarget && before.entryTarget.rangeM != null ? before.entryTarget : null;
+  const hot = crossed ? crossed.countdownS <= HOT_CD : liveState.entryHot === true;
+  done.entry = { verdict: hot ? 'ENTRY HOT' : liveState.entryVerdict || null, targetRangeM: aim ? aim.rangeM : null, targetCountdownS: aim ? aim.countdownS : null, targetFrom: aim ? aim.from : null };
   runs.push(done);
+  forgetSummaries();
+  if (target) reclassify(target); // this glide end is one of the site's now: the usual height is read again, for this run and the ones before it
+  const newShortest = !!(done.clean && before && (!before.shortest || !before.sameShip || done.runS < before.shortest.runS));
   append({ k: 'run', ...done });
   stopTimer();
   run = null; lastFigures = null;
@@ -570,6 +661,11 @@ function finishRun(kind, ev) {
           const c = sectorColour(v, refS ? refS[k] : null, bestS ? bestS[k] : null, done.clean);
           deps.sendOverlay({ id: `edcolony_approach_${k}`, text: `${k.toUpperCase()} ${name} ${v} s${refS && refS[k] != null ? ` · shortest ${refS[k]}` : ''}`, color: c, x: 20, y: 322 + i * 20, ttl: 20 });
         });
+        // The crossing against the target as it stood: green on track, yellow hot, sharp or early.
+        if (crossed) {
+          const off = !!done.entry.verdict && done.entry.verdict !== 'ON TRACK';
+          deps.sendOverlay({ id: 'edcolony_approach_entry', text: `Crossed ${fmtMm(crossed.rangeM)} · ${fmtT(crossed.countdownS)}${aim ? ` · target ${fmtMm(aim.rangeM)} · ${fmtT(aim.countdownS)}` : ''}${off ? ` · ${done.entry.verdict}` : ''}`, color: off ? SECTOR_COLOURS.yellow : done.entry.verdict ? SECTOR_COLOURS.green : SECTOR_COLOURS.plain, x: 20, y: 322 + SECTOR_NAMES.length * 20, ttl: 20 });
+        }
       }
     } catch { /* optional */ }
   }
@@ -686,7 +782,88 @@ export function valueAtDistance(samples, dist, key) {
 }
 const median = (arr) => { const a = arr.filter((v) => v != null).sort((x, y) => x - y); return a.length ? a[Math.floor((a.length - 1) / 2)] : null; };
 
+// ---------- broken glides ----------
+/**
+ * Where glides usually end at a target: the median of the glide ends on file there, leaving out any that sit more than
+ * GLIDE_BROKEN_OVER_M above the lowest (so a break or two cannot drag it up). Nominal until the site has enough of its own.
+ */
+export function usualGlideEnd(key) {
+  const ends = key ? runs.filter((r) => r.target && r.target.key === key && r.glide && r.glide.endT != null && r.glide.endAltM != null).map((r) => r.glide.endAltM).sort((a, b) => a - b) : [];
+  if (ends.length < GLIDE_END_MIN_RUNS) return { usualAltM: GLIDE_END_NOMINAL_M, brokenAboveM: GLIDE_END_NOMINAL_M + GLIDE_BROKEN_OVER_M, fromRuns: ends.length, nominal: true };
+  const usual = Math.round(median(ends.filter((a) => a <= ends[0] + GLIDE_BROKEN_OVER_M)));
+  return { usualAltM: usual, brokenAboveM: usual + GLIDE_BROKEN_OVER_M, fromRuns: ends.length, nominal: false };
+}
+/**
+ * Broken or clean, read again for the runs on file at one target (or at every target) against that site's own glide ends.
+ * Only what is in memory changes; the file is never rewritten. Returns how many runs changed.
+ */
+function reclassify(key = null) {
+  const keys = key ? [key] : [...new Set(runs.map((r) => (r.target ? r.target.key : null)).filter(Boolean))];
+  let changed = 0;
+  for (const k of keys) {
+    const limit = usualGlideEnd(k).brokenAboveM;
+    for (const r of runs) {
+      if (!r.target || r.target.key !== k || !r.glide || r.glide.endT == null || r.glide.endAltM == null) continue;
+      const broken = r.glide.endAltM > limit;
+      if (broken === !!r.glide.broken) continue;
+      r.glide.broken = broken;
+      const ge = (r.marks || []).find((m) => m.kind === 'glide_end');
+      if (ge) ge.broken = broken;
+      r.clean = !broken && r.endKind !== 'dropped';
+      changed += 1;
+    }
+  }
+  if (changed) forgetSummaries();
+  return changed;
+}
+
+/**
+ * The reference for a target, kept until the runs or targets on file change. The live path asks for it on every fix, and
+ * building it afresh each time had come to take a second at the busiest sites (1,080 ms at Core Boson Complex with 87 runs
+ * on file, 2026-11-10) — longer than the gap between fixes.
+ */
+let summaryMemo = new Map();
+function forgetSummaries() { summaryMemo = new Map(); }
 export function summarizeTarget(key, excludeRunId = null, shipType = null) {
+  // The run being flown is not on file yet, so leaving it out changes nothing: it shares the plain lookup's entry.
+  const ex = excludeRunId != null && runs.some((r) => r.id === excludeRunId) ? excludeRunId : null;
+  const mk = `${key}|${ex ?? ''}|${shipType ?? ''}`;
+  let hit = summaryMemo.get(mk);
+  if (!hit) { hit = buildSummary(key, ex, shipType); summaryMemo.set(mk, hit); }
+  return hit;
+}
+/** Lowest and highest altitude by distance across clean runs: each run's profile walked once, read as valueAtDistance reads it. */
+function envelopeOf(clean) {
+  if (clean.length < 2) return [];
+  let maxD = 0;
+  for (const r of clean) for (const p of r.samples) if (p.dist != null && p.dist > maxD) maxD = p.dist;
+  const n = Math.floor(maxD / ENVELOPE_STEP_M) + 1;
+  const lo = new Float64Array(n).fill(Infinity), hi = new Float64Array(n).fill(-Infinity), cnt = new Uint32Array(n), seen = new Uint8Array(n);
+  for (const r of clean) {
+    if (!Array.isArray(r.samples) || r.samples.length < 2) continue;
+    const pts = r.samples.filter((p) => p.dist != null && p.alt != null);
+    seen.fill(0);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      if (!(a.dist >= b.dist)) continue;
+      const from = Math.max(0, Math.ceil(b.dist / ENVELOPE_STEP_M) - 1), to = Math.min(n - 1, Math.floor(a.dist / ENVELOPE_STEP_M) + 1);
+      for (let k = from; k <= to; k++) {
+        const d = k * ENVELOPE_STEP_M;
+        if (seen[k] || d > a.dist || d < b.dist) continue; // the first leg that covers a distance is the one that counts
+        seen[k] = 1;
+        const u = a.dist === b.dist ? 0 : (a.dist - d) / (a.dist - b.dist);
+        const alt = a.alt + (b.alt - a.alt) * u;
+        if (alt < lo[k]) lo[k] = alt;
+        if (alt > hi[k]) hi[k] = alt;
+        cnt[k] += 1;
+      }
+    }
+  }
+  const out = [];
+  for (let k = 0; k < n; k++) if (cnt[k] >= 2) out.push({ dist: k * ENVELOPE_STEP_M, min: Math.round(lo[k]), max: Math.round(hi[k]) });
+  return out;
+}
+function buildSummary(key, excludeRunId = null, shipType = null) {
   const target = targets.get(key) || null;
   const list = runs.filter((r) => r.target && r.target.key === key && r.id !== excludeRunId);
   const clean = list.filter((r) => r.clean);
@@ -697,14 +874,7 @@ export function summarizeTarget(key, excludeRunId = null, shipType = null) {
   const sameShip = !shipType || sameHull.length > 0 || clean.length === 0;
   const shortest = pool.length ? pool.reduce((b, r) => (r.runS < b.runS ? r : b), pool[0]) : null;
   // envelope: min/max altitude by distance across clean runs
-  const envelope = [];
-  if (clean.length >= 2) {
-    const maxD = Math.max(...clean.map((r) => Math.max(...r.samples.filter((s) => s.dist != null).map((s) => s.dist), 0)));
-    for (let d = 0; d <= maxD; d += ENVELOPE_STEP_M) {
-      const alts = clean.map((r) => valueAtDistance(r.samples, d, 'alt')).filter((v) => v != null);
-      if (alts.length >= 2) envelope.push({ dist: d, min: Math.round(Math.min(...alts)), max: Math.round(Math.max(...alts)) });
-    }
-  }
+  const envelope = envelopeOf(clean);
   const bestOf = (list2, k) => { const v = list2.map((r) => r.sectors && r.sectors[k]).filter((x) => x != null); return v.length ? Math.min(...v) : null; };
   const sectorBest = { s1: bestOf(clean, 's1'), s2: bestOf(clean, 's2'), s3: bestOf(pool, 's3'), s4: bestOf(pool, 's4') }; // alignment and the computer are the hull's
   const slopes = clean.map((r) => r.glide && r.glide.slopeDeg).filter((v) => v != null);
@@ -741,7 +911,83 @@ export function summarizeTarget(key, excludeRunId = null, shipType = null) {
     sectorBest,
     sameShip, shipType: shipType || null,
     envelope, corridor, recommendation,
+    glideEnd: usualGlideEnd(key),
+    entryTarget: entryTarget(key, list, shipType),
   };
+}
+
+// ---------- the entry to aim for ----------
+const middle = (arr) => { const a = arr.slice().sort((x, y) => x - y); const m = Math.floor(a.length / 2); return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
+/** The glide point a site's crossings are judged against: its shortest clean run's, in the hull flown when that hull has one there — the reference buildSummary picks. */
+function referenceGlidePoint(list, shipType) {
+  const clean = list.filter((r) => r.clean);
+  const sameHull = shipType ? clean.filter((r) => r.ship && r.ship.type === shipType) : [];
+  const pool = sameHull.length ? sameHull : clean;
+  const sh = pool.length ? pool.reduce((b, r) => (r.runS < b.runS ? r : b), pool[0]) : null;
+  return sh && sh.glide && sh.glide.startDistM != null && sh.glide.startAltM != null ? { dist: sh.glide.startDistM, alt: sh.glide.startAltM } : null;
+}
+/**
+ * The crossings in one site's runs that count toward a target: on track by the angle (the pitch from the crossing to that
+ * site's reference glide point, EARLY_DEG up to SHARP_DEG — the live verdict's own measure) and over HOT_CD at the line.
+ */
+function crossingsLike(list, gp) {
+  if (!gp) return [];
+  return list.filter((r) => {
+    const c = r.cruise;
+    if (!c || c.entryHudRangeM == null || c.entryCountdownS == null || c.entryDistM == null || c.entryAltM == null || c.entryCountdownS <= HOT_CD) return false;
+    const fix = (r.samples || []).find((p) => p.radius);
+    const need = fix ? pitchTo({ dist: c.entryDistM, alt: c.entryAltM, radius: fix.radius }, gp.dist, gp.alt) : null;
+    return need != null && need >= EARLY_DEG && need < SHARP_DEG;
+  });
+}
+/**
+ * A target's entry in the HUD's two numbers. The range is the middle of the crossings like that which landed clean, said to
+ * the nearest ENTRY_TARGET_STEP_M; every hull's crossings count, the line being the game's. A site with
+ * ENTRY_TARGET_MIN_RUNS of its own uses its own (from 'site'). A site with fewer borrows every such crossing on the same
+ * body, each judged at its own site (from 'body'): the line sits at one height for a body — 678 to 730 km up at the five
+ * sites on AX-J d9-52 2 b — and the three sites there with targets of their own read 1.10, 1.10 and 1.00 Mm against the
+ * body's 1.10. With fewer than ENTRY_TARGET_MIN_RUNS on the whole body there is no target (rangeM and from null).
+ * crossings / landed / thrownOut count this site's own; bodyLanded is what the body had when it was asked.
+ */
+function entryTarget(key, list, shipType) {
+  const like = crossingsLike(list, referenceGlidePoint(list, shipType));
+  const landed = like.filter((r) => r.clean);
+  const out = { rangeM: null, countdownS: TARGET_CD, from: null, crossings: like.length, landed: landed.length, thrownOut: like.filter((r) => r.endKind === 'dropped').length, bodyLanded: null };
+  const ranges = landed.map((r) => r.cruise.entryHudRangeM);
+  if (ranges.length >= ENTRY_TARGET_MIN_RUNS) out.from = 'site';
+  else {
+    const body = (targets.get(key) || {}).body || (list[0] && list[0].body) || null;
+    ranges.push(...bodyCrossings(body, key, shipType));
+    out.bodyLanded = ranges.length;
+    if (ranges.length >= ENTRY_TARGET_MIN_RUNS) out.from = 'body';
+  }
+  if (out.from) out.rangeM = Math.round(middle(ranges) / ENTRY_TARGET_STEP_M) * ENTRY_TARGET_STEP_M;
+  return out;
+}
+/** The ranges of every landed crossing on a body that counts toward a target, each judged at its own site; one site can be left out. */
+function bodyCrossings(body, exceptKey, shipType) {
+  const out = [];
+  if (!body) return out;
+  for (const t of targets.values()) {
+    if (t.key === exceptKey || t.body !== body) continue;
+    const theirs = runs.filter((r) => r.target && r.target.key === t.key);
+    for (const r of crossingsLike(theirs, referenceGlidePoint(theirs, shipType))) if (r.clean) out.push(r.cruise.entryHudRangeM);
+  }
+  return out;
+}
+/**
+ * A body's own entry target, for a place on it that is not on file: the middle of every such crossing there, and where
+ * the line sits (the middle of the altitudes it was crossed at). Null with fewer than ENTRY_TARGET_MIN_RUNS. Kept with the
+ * summaries, so it is built once until a run lands.
+ */
+export function bodyEntryTarget(body, shipType = null) {
+  const mk = `body|${body}|${shipType ?? ''}`;
+  if (summaryMemo.has(mk)) return summaryMemo.get(mk);
+  const ranges = bodyCrossings(body, null, shipType);
+  const lines = runs.filter((r) => r.body === body && r.cruise && r.cruise.entryAltM != null && (r.marks || []).some((m) => m.kind === 'approach_body')).map((r) => r.cruise.entryAltM);
+  const out = ranges.length >= ENTRY_TARGET_MIN_RUNS && lines.length ? { rangeM: Math.round(middle(ranges) / ENTRY_TARGET_STEP_M) * ENTRY_TARGET_STEP_M, countdownS: TARGET_CD, bodyLanded: ranges.length, lineAltM: middle(lines) } : null;
+  summaryMemo.set(mk, out);
+  return out;
 }
 
 // ---------- reads for the API ----------
@@ -791,6 +1037,10 @@ export function noteApproachEvent(ev, ctx = {}) {
   }
 }
 export function ingestApproachEvents(parsed, ctx = {}, d = null) {
+  // A journal replayed at start-up (the catch-up for lines written while the exe was closed) is not a flight being flown:
+  // there are no fixes to go with it. Three approaches came out of one as runs with no samples (Russo Expedition, 12 Nov
+  // 2026). Its quiet senders are not taken either, or the overlay would stay mute until the next live batch.
+  if (parsed && parsed.catchUp) return;
   if (d) deps = { ...deps, ...d };
   const evs = (parsed && parsed.allEvents) || [];
   for (const ev of evs) noteApproachEvent(ev, ctx);

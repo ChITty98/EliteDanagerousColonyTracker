@@ -20,8 +20,10 @@
  *   - `deps` = { readState, broadcastEvent, sendOverlay, applyStatePatch }
  */
 
-import { isFleetCarrier, isEphemeralStation } from './util.js';
+import { isFleetCarrier, isEphemeralStation, isColonisationShip, isConstructionStationName, isFleetCarrierCallsign, describeLastVisit } from './util.js';
 import { fetchSystemDump, resolveSystemName } from './spansh.js';
+import { estimateFacilityPopulations, describeFacilityEstimate, effectiveSystemPopulation, describePopulationTrend, applyPopulationFloors } from './populationEstimate.js';
+import { describeStationFactionLine } from './factions.js';
 import { scanCompleteness, countScanRecords } from './scanCompleteness.js';
 import { readNavRouteJson } from './extractor.js';
 import {
@@ -428,6 +430,8 @@ export function handleFSDJumpOverlay(ev, existing, deps) {
       }
     }
     if (nearestDist < Infinity) parts.push(`${nearestName}: ${nearestDist.toFixed(1)} ly`);
+    // When you were last here and which visit this is (1.60.30) — from the record as it stood before this jump.
+    parts.push(describeLastVisit((existing.knownSystems || {})[sysLower]));
 
     deps.sendOverlay({
       id: 'edcolony_distance',
@@ -560,6 +564,188 @@ export function handleDockedOverlay(ev, existing, deps) {
       });
     }
   }
+}
+
+// ===== Dock banner: estimated population of the station (1.60.20, slot 9 of the dock stack since 1.60.22) =====
+
+const POP_LINE_ID = 'edcolony_dock_pop';
+
+/** Lower-case facility name without the construction-site / colonisation-ship prefixes. */
+function facilityKey(name) {
+  return String(name || '')
+    .replace(/^(Planetary|Orbital|Surface|Space) Construction Site: /i, '')
+    .replace(/^\$EXT_PANEL_ColonisationShip; /i, '')
+    .trim()
+    .toLowerCase();
+}
+
+const FSS_FACILITY_SIGNAL = /^(Station|Outpost$|Installation$)/;
+
+/**
+ * Every facility the app knows in the docked system, from four sources in trust order: knownStations
+ * (docked at — carries the resolved type), completed projects, FSS station signals, and Spansh's
+ * station list (orbital under the system, surface nested under its bodies; 57 of Sol's facilities,
+ * 4 of the home system's 13 — which is why the app's own records come first). The docked station
+ * is always present so the line can name it. Dedupe by name and shed names; carriers,
+ * construction sites and colonisation ships never count.
+ */
+export function collectSystemFacilities(ev, existing, dump) {
+  const sysLower = String(ev.StarSystem || '').toLowerCase();
+  const seen = new Set();
+  const out = [];
+  const add = (name, type, openedAt) => {
+    if (/carrier|squadron/i.test(String(type || '')) || isFleetCarrierCallsign(name)) return;
+    if (isColonisationShip(name, type) || isConstructionStationName(name)) return;
+    const key = facilityKey(name);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push({ key, stationType: type || '', openedAt: openedAt || null });
+  };
+  // When each facility opened — the project's completion date — so a new one ramps in (1.60.29).
+  const completedByMarket = new Map();
+  const completedByKey = new Map();
+  for (const p of (Array.isArray(existing.projects) ? existing.projects : [])) {
+    if (!p || p.status !== 'completed' || !p.completedAt || String(p.systemName || '').toLowerCase() !== sysLower) continue;
+    if (p.marketId) completedByMarket.set(p.marketId, p.completedAt);
+    const nm = p.completedStationName || p.stationName || (p.name ? String(p.name).replace(/^.*? - /, '') : '');
+    const k = facilityKey(nm);
+    if (k) completedByKey.set(k, p.completedAt);
+  }
+  const openedFor = (marketId, key) => (marketId && completedByMarket.get(marketId)) || completedByKey.get(key) || null;
+  for (const st of Object.values(existing.knownStations || {})) {
+    if (!st || String(st.systemName || '').toLowerCase() !== sysLower) continue;
+    // The journal writes every orbital outpost as "Outpost"; the dossier's economy tells a military outpost by its economy.
+    const eco = [st.primaryEconomy, ...(Array.isArray(st.economies) ? st.economies.map((e) => e && (e.name || e.nameLocalised)) : [])].filter(Boolean).join(' ');
+    const type = st.stationType === 'Outpost' && /military/i.test(eco) ? 'military_outpost' : st.stationType;
+    add(st.stationName, type, openedFor(st.marketId, facilityKey(st.stationName)));
+    for (const h of st.nameHistory || []) if (h && h.name) seen.add(facilityKey(h.name));
+  }
+  // The docked station after knownStations: the app's resolved subtype (civilian_surface_outpost, two
+  // units) must beat the journal's generic CraterOutpost; at a first dock the journal type stands.
+  add(ev.StationName, ev.StationType, openedFor(ev.MarketID, facilityKey(ev.StationName)));
+  for (const p of (Array.isArray(existing.projects) ? existing.projects : [])) {
+    if (!p || p.status !== 'completed' || String(p.systemName || '').toLowerCase() !== sysLower) continue;
+    let name = p.completedStationName || p.stationName || '';
+    if (!name && p.name) name = String(p.name).replace(/^.*? - /, '');
+    add(facilityKey(name), p.completedStationType || p.stationType, p.completedAt || null);
+  }
+  for (const sig of (Array.isArray(existing.fssSignals) ? existing.fssSignals : [])) {
+    if (!sig || sig.systemAddress !== ev.SystemAddress) continue;
+    if (!sig.isStation && !FSS_FACILITY_SIGNAL.test(sig.signalType || '')) continue;
+    add(sig.signalName, sig.signalType, openedFor(null, facilityKey(sig.signalName)));
+  }
+  const sys = dump && (dump.system || dump);
+  if (sys) {
+    for (const st of sys.stations || []) if (st && st.name) add(st.name, st.type, openedFor(null, facilityKey(st.name)));
+    for (const b of sys.bodies || []) for (const st of (b && b.stations) || []) if (st && st.name) add(st.name, st.type, openedFor(null, facilityKey(st.name)));
+  }
+  return out;
+}
+
+/**
+ * The dock banner's population line — slot 9 of the stack, under "You established this…". Fires at
+ * DockingGranted (the event carries no system, so processors.js passes the dossier's) and again at
+ * Docked with the live event; Spansh refines the inventory and the line is re-sent only when the text
+ * changes. Blank (ttl 1) when nothing applies, like the economy/services/established lines, so a
+ * previous station's figure never lingers. Returns the final text, or null.
+ * @param opts { systemName?, systemAddress?, y, ttl?, id?, now? }
+ */
+export async function renderDockPopulationLine(ev, existing, deps, opts = {}) {
+  if (!deps || !deps.sendOverlay) return null;
+  const settings = (existing && existing.settings) || {};
+  if (settings.overlayEnabled === false) return null;
+  const y = typeof opts.y === 'number' ? opts.y : Y_SCAN;
+  const ttl = typeof opts.ttl === 'number' ? opts.ttl : 12;
+  const id = opts.id || POP_LINE_ID;
+  const blank = () => { deps.sendOverlay({ id, text: '', color: '#ffffff', x: X_LEFT, y, ttl: 1 }); return null; };
+  if (!ev || !ev.StationName) return blank();
+  if (isFleetCarrier(ev.StationType, ev.MarketID) || isEphemeralStation(ev.StationName, ev.StationType, ev.MarketID)) return blank();
+  const systemName = opts.systemName || ev.StarSystem;
+  const systemAddress = opts.systemAddress || ev.SystemAddress;
+  if (!systemName) return blank();
+  const sysLower = String(systemName).toLowerCase();
+  const population = effectiveSystemPopulation((existing.knownSystems || {})[sysLower], (existing.populationOverrides || {})[sysLower]);
+  if (!(population > 0)) {
+    console.log(`[Overlay] Population: no reading for ${systemName} — nothing to split at ${ev.StationName}`);
+    return blank();
+  }
+  const scope = { StationName: ev.StationName, StationType: ev.StationType, MarketID: ev.MarketID, StarSystem: systemName, SystemAddress: systemAddress };
+  // "A facility's population never goes down" (1.60.26): the remembered floor carries the figure when
+  // the split falls below it; floors the split climbs past are written back (server-only writer).
+  const raisedAll = {};
+  const compose = (dump) => {
+    const facilities = collectSystemFacilities(scope, existing, dump);
+    const result = estimateFacilityPopulations(population, facilities, opts.now);
+    // Spansh can only add facilities, which lowers every share — the floors the local pass just raised hold the line.
+    const { raised } = applyPopulationFloors(result, systemName, { ...(existing.facilityPopulationFloor || {}), ...raisedAll });
+    Object.assign(raisedAll, raised);
+    return describeFacilityEstimate(result.byKey[facilityKey(ev.StationName)], opts.now);
+  };
+  let text = compose(null);
+  if (!text) return blank(); // a megaship or an unknown dockable class — nothing to refine either
+  deps.sendOverlay({ id, text, color: '#e2e8f0', x: X_LEFT, y, ttl });
+  if (systemAddress) {
+    let dump = null;
+    try { dump = await (deps.fetchSystemDump || fetchSystemDump)(systemAddress); } catch { dump = null; }
+    if (dump) {
+      const refined = compose(dump);
+      if (refined && refined !== text) {
+        text = refined;
+        deps.sendOverlay({ id, text, color: '#e2e8f0', x: X_LEFT, y, ttl });
+      }
+    }
+  }
+  if (Object.keys(raisedAll).length && typeof deps.applyStatePatch === 'function') {
+    try { deps.applyStatePatch({ facilityPopulationFloor: { __upsert: raisedAll } }); } catch (e) { console.error('[Overlay] population floor write failed:', e && e.message); }
+  }
+  return text;
+}
+
+/**
+ * The dock banner's trend line (slot 10, 1.60.23): the system's population movement since the
+ * commander last docked at this station. Reads the dossier's lastVisitPopulation — written at Docked
+ * by processors.js AFTER this render, so each visit compares with the one before. Blank (ttl 1) when
+ * nothing applies. Synchronous; returns the text, or null.
+ * @param opts { y, ttl?, id?, now? }
+ */
+export function renderDockPopulationTrendLine(station, existing, deps, opts = {}) {
+  if (!deps || !deps.sendOverlay) return null;
+  const settings = (existing && existing.settings) || {};
+  if (settings.overlayEnabled === false) return null;
+  const y = typeof opts.y === 'number' ? opts.y : Y_SCAN;
+  const ttl = typeof opts.ttl === 'number' ? opts.ttl : 12;
+  const id = opts.id || 'edcolony_dock_pop_trend';
+  const blank = () => { deps.sendOverlay({ id, text: '', color: '#ffffff', x: X_LEFT, y, ttl: 1 }); return null; };
+  if (!station || !station.systemName) return blank();
+  const sysLower = String(station.systemName).toLowerCase();
+  const current = effectiveSystemPopulation((existing.knownSystems || {})[sysLower], (existing.populationOverrides || {})[sysLower]);
+  const text = describePopulationTrend(station.lastVisitPopulation, current, opts.now);
+  if (!text) return blank();
+  deps.sendOverlay({ id, text, color: '#94a3b8', x: X_LEFT, y, ttl });
+  return text;
+}
+
+/**
+ * The dock banner's faction line (slot 11, 1.60.24): who runs this place, their influence with its
+ * trend, your standing and their state — from the system's freshest faction reading, so it never
+ * asserts a state the journal has stopped writing. The name comes from the dossier at DockingGranted
+ * and from the live event at Docked. Blank (ttl 1) when there is no name. Synchronous.
+ * @param opts { y, ttl?, id? }
+ */
+export function renderDockFactionLine(factionName, systemName, existing, deps, opts = {}) {
+  if (!deps || !deps.sendOverlay) return null;
+  const settings = (existing && existing.settings) || {};
+  if (settings.overlayEnabled === false) return null;
+  const y = typeof opts.y === 'number' ? opts.y : Y_SCAN;
+  const ttl = typeof opts.ttl === 'number' ? opts.ttl : 12;
+  const id = opts.id || 'edcolony_dock_faction';
+  const blank = () => { deps.sendOverlay({ id, text: '', color: '#ffffff', x: X_LEFT, y, ttl: 1 }); return null; };
+  if (!factionName) return blank();
+  const entry = systemName ? (existing.systemFactions || {})[String(systemName).toLowerCase()] : null;
+  const text = describeStationFactionLine(entry || null, factionName);
+  if (!text) return blank();
+  deps.sendOverlay({ id, text, color: '#c4b5fd', x: X_LEFT, y, ttl });
+  return text;
 }
 
 // ===== Scan =====

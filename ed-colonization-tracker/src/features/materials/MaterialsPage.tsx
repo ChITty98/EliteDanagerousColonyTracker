@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/store';
 import {
   MATERIALS,
@@ -9,12 +9,99 @@ import {
   type MaterialCategory,
 } from '@/data/engineeringMaterials';
 import { BLUEPRINTS, computeGradeCapacity } from '@/data/blueprints';
+import { materialOverview, bodiesCarrying, shortBody, shortSite, type ColonyBodiesPayload } from '@/lib/colonyBodies';
 
-type Tab = 'inventory' | 'trade' | 'engineering';
+// ===== Where to trade (1.61.2) =====
+// The trader follows the material's category — always known, offline. The station comes from the server:
+// Spansh's nearest stations with that trader, or the nearest you have docked at when Spansh is unreachable.
+const TRADER: Record<MaterialCategory, { label: string; economies: string }> = {
+  raw: { label: 'Raw material trader', economies: 'Extraction or Refinery stations' },
+  manufactured: { label: 'Manufactured material trader', economies: 'Industrial stations' },
+  encoded: { label: 'Encoded material trader', economies: 'High Tech or Military stations' },
+};
+const TRADER_SHORT: Record<MaterialCategory, string> = { raw: 'raw trader', manufactured: 'manufactured trader', encoded: 'encoded trader' };
+
+interface TraderStation { station: string | null; system: string | null; ly: number | null; ls: number; largePads?: number; economy?: string | null }
+interface TradersPayload {
+  reference: string | null;
+  traders: Record<MaterialCategory, TraderStation[]> | null;
+  known: Record<MaterialCategory, TraderStation | null>;
+  error: string | null;
+}
+
+const withToken = (p: string) => {
+  try { const t = sessionStorage.getItem('colony-token'); return t ? `${p}${p.includes('?') ? '&' : '?'}token=${t}` : p; }
+  catch { return p; }
+};
+
+function useTraders(): TradersPayload | null {
+  const [d, setD] = useState<TradersPayload | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch(withToken('/api/material-traders'))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (alive && j) setD(j as TradersPayload); })
+      .catch(() => { /* offline: the trader type still shows */ });
+    return () => { alive = false; };
+  }, []);
+  return d;
+}
+
+const stationText = (t: TraderStation) =>
+  `${t.station} · ${t.system}${t.ly != null ? ` · ${t.ly.toLocaleString()} ly` : ''} · ${t.ls.toLocaleString()} ls from the star`;
+
+const nearestOf = (traders: TradersPayload | null, c: MaterialCategory): TraderStation | null =>
+  (traders?.traders?.[c]?.[0]) || traders?.known?.[c] || null;
+
+/** One line: which trader deals this category, and the nearest station that has one. */
+function TraderNote({ category, line, traders }: { category: MaterialCategory; line?: string; traders: TradersPayload | null }) {
+  if (line === 'special') return <div className="text-xs text-muted-foreground">Not sold at material traders.</div>;
+  const near = nearestOf(traders, category);
+  return (
+    <div className="text-xs text-muted-foreground">
+      Trade at a <span className="text-foreground">{TRADER[category].label}</span> — found at {TRADER[category].economies}.
+      {near && <> Nearest: <span className="text-foreground">{stationText(near)}</span>.</>}
+    </div>
+  );
+}
+
+/** The three kinds of trader and the nearest of each, from where you are. */
+function TradersCard({ traders }: { traders: TradersPayload | null }) {
+  if (!traders) return null;
+  const fromSpansh = !!traders.traders;
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 mb-2">
+        <h2 className="text-sm font-bold text-foreground">Material traders near {traders.reference || 'you'}</h2>
+        <span className="text-[11px] text-muted-foreground">
+          {fromSpansh ? 'Spansh station search' : 'stations you have docked at'}
+          {!fromSpansh && traders.error ? ` · Spansh unavailable (${traders.error})` : ''}
+        </span>
+      </div>
+      <div className="space-y-1.5 text-sm">
+        {(['raw', 'manufactured', 'encoded'] as MaterialCategory[]).map((c) => {
+          const list = fromSpansh ? (traders.traders![c] || []) : [];
+          const near = nearestOf(traders, c);
+          return (
+            <div key={c} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <span className="w-32 shrink-0 font-medium text-foreground">{TRADER[c].label.replace(' material trader', '')}</span>
+              <span className="w-52 shrink-0 text-xs text-muted-foreground">{TRADER[c].economies}</span>
+              {near ? <span>{stationText(near)}</span> : <span className="text-muted-foreground">none found</span>}
+              {list.length > 1 && <span className="text-xs text-muted-foreground">· also {list.slice(1).map((t) => `${t.station} (${t.ly} ly)`).join(', ')}</span>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+type Tab = 'inventory' | 'trade' | 'engineering' | 'colony';
 
 export function MaterialsPage() {
   const inv = useAppStore((s) => s.materialInventory);
   const [tab, setTab] = useState<Tab>('inventory');
+  const traders = useTraders();
 
   if (!inv) {
     return (
@@ -38,9 +125,11 @@ export function MaterialsPage() {
         </p>
       </div>
 
+      <TradersCard traders={traders} />
+
       {/* Tabs */}
       <div className="flex gap-2 border-b border-border">
-        {(['inventory', 'trade', 'engineering'] as Tab[]).map((t) => (
+        {(['inventory', 'trade', 'engineering', 'colony'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -53,20 +142,22 @@ export function MaterialsPage() {
             {t === 'inventory' && 'Inventory'}
             {t === 'trade' && 'Trade Planner'}
             {t === 'engineering' && 'Engineering Capacity'}
+            {t === 'colony' && 'Colony Bodies'}
           </button>
         ))}
       </div>
 
-      {tab === 'inventory' && <InventoryTab />}
-      {tab === 'trade' && <TradeTab />}
+      {tab === 'inventory' && <InventoryTab traders={traders} />}
+      {tab === 'trade' && <TradeTab traders={traders} />}
       {tab === 'engineering' && <EngineeringTab />}
+      {tab === 'colony' && <ColonyBodiesTab />}
     </div>
   );
 }
 
 // ===== Inventory tab =====
 
-function InventoryTab() {
+function InventoryTab({ traders }: { traders: TradersPayload | null }) {
   const inv = useAppStore((s) => s.materialInventory)!;
   const sections: { category: MaterialCategory; label: string; data: Record<string, number> }[] = [
     { category: 'raw', label: 'Raw', data: inv.raw },
@@ -76,13 +167,13 @@ function InventoryTab() {
   return (
     <div className="space-y-6">
       {sections.map((s) => (
-        <CategorySection key={s.category} category={s.category} label={s.label} data={s.data} />
+        <CategorySection key={s.category} category={s.category} label={s.label} data={s.data} traders={traders} />
       ))}
     </div>
   );
 }
 
-function CategorySection({ category, label, data }: { category: MaterialCategory; label: string; data: Record<string, number> }) {
+function CategorySection({ category, label, data, traders }: { category: MaterialCategory; label: string; data: Record<string, number>; traders: TradersPayload | null }) {
   // Group by line, then by grade.
   const byLine = useMemo(() => {
     const groups: Record<string, MaterialDefinition[]> = {};
@@ -102,12 +193,13 @@ function CategorySection({ category, label, data }: { category: MaterialCategory
 
   return (
     <div className="rounded-xl border border-border bg-card p-4">
-      <div className="flex items-baseline justify-between mb-3">
+      <div className="flex items-baseline justify-between mb-1">
         <h2 className="text-lg font-bold text-foreground">{label}</h2>
         <div className="text-xs text-muted-foreground">
           {typeCount} types &middot; {total.toLocaleString()} total
         </div>
       </div>
+      <div className="mb-3"><TraderNote category={category} traders={traders} /></div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {Object.entries(byLine).map(([line, mats]) => (
           <LineGroup key={line} line={line} mats={mats} data={data} />
@@ -120,7 +212,10 @@ function CategorySection({ category, label, data }: { category: MaterialCategory
 function LineGroup({ line, mats, data }: { line: string; mats: MaterialDefinition[]; data: Record<string, number> }) {
   return (
     <div className="rounded-lg border border-border/50 bg-muted/10 p-3">
-      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">{line}</div>
+      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
+        {line}
+        {line === 'special' && <span className="normal-case tracking-normal"> · not sold at material traders</span>}
+      </div>
       <div className="space-y-1">
         {mats.map((m) => {
           const count = data[m.id] || 0;
@@ -152,7 +247,7 @@ function LineGroup({ line, mats, data }: { line: string; mats: MaterialDefinitio
 
 // ===== Trade Planner tab =====
 
-function TradeTab() {
+function TradeTab({ traders }: { traders: TradersPayload | null }) {
   const inv = useAppStore((s) => s.materialInventory)!;
   const [targetId, setTargetId] = useState('mechanicalcomponents');
   const target = MATERIAL_BY_ID.get(targetId);
@@ -229,6 +324,7 @@ function TradeTab() {
             Currently {inv[target.category][target.id] || 0} / {target.cap} in stock.
           </div>
         )}
+        {target && <div className="mt-1"><TraderNote category={target.category} line={target.line} traders={traders} /></div>}
       </div>
 
       <div className="rounded-lg border border-border bg-card overflow-hidden">
@@ -295,6 +391,178 @@ function TradeTab() {
 // Stable Fragment with key for the trade table
 function Fragment2(props: { children: React.ReactNode }) {
   return <>{props.children}</>;
+}
+
+// ===== Colony Bodies tab (1.63.0) =====
+// Which bodies in your colony systems carry a raw material, and how much of the surface mix it is. The figures are your
+// own scans (the surface ledger keeps every landable body's Materials); Spansh's figure stands in only where you have no
+// scan, and says so. Nothing picked: one row per raw material. A material picked: every colony body that carries it.
+
+const RAW_MATERIALS = MATERIALS.filter((m) => m.category === 'raw');
+const recall = (k: string): string | null => { try { return localStorage.getItem(k); } catch { return null; } };
+const remember = (k: string, v: string | null) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* private window */ } };
+
+function useColonyBodies(): { data: ColonyBodiesPayload | null; error: string | null } {
+  const [data, setData] = useState<ColonyBodiesPayload | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch(withToken('/api/materials/colony-bodies'))
+      .then((r) => { if (!r.ok) throw new Error(`the server answered ${r.status}`); return r.json(); })
+      .then((j) => { if (alive) setData(j as ColonyBodiesPayload); })
+      .catch((e) => { if (alive) setError((e && e.message) || 'no answer from the server'); });
+    return () => { alive = false; };
+  }, []);
+  return { data, error };
+}
+
+function ColonyBodiesTab() {
+  const inv = useAppStore((s) => s.materialInventory)!;
+  const { data, error } = useColonyBodies();
+  const [pick, setPickState] = useState<string | null>(() => { const v = recall('materials.colonyPick'); return v && RAW_MATERIALS.some((m) => m.id === v) ? v : null; });
+  const [hideIcy, setHideIcyState] = useState(() => recall('materials.colonyHideIcy') === '1');
+  const setPick = (id: string | null) => { setPickState(id); remember('materials.colonyPick', id); };
+  const setHideIcy = (v: boolean) => { setHideIcyState(v); remember('materials.colonyHideIcy', v ? '1' : null); };
+
+  const shown = useMemo(() => (data ? data.bodies.filter((b) => !(hideIcy && b.icy)) : []), [data, hideIcy]);
+  const overview = useMemo(() => materialOverview(shown, RAW_MATERIALS, inv.raw), [shown, inv]);
+  const rows = useMemo(() => (pick ? bodiesCarrying(shown, pick) : []), [shown, pick]);
+
+  if (error) return <div className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">Your colony bodies could not be read: {error}.</div>;
+  if (!data) return <div className="text-sm text-muted-foreground">Reading your colony bodies…</div>;
+
+  const def = pick ? MATERIAL_BY_ID.get(pick) : undefined;
+  const held = def ? inv.raw[def.id] || 0 : 0;
+  const icyCount = data.bodies.filter((b) => b.icy).length;
+  const spanshCount = data.bodies.filter((b) => b.source === 'spansh').length;
+  const withData = data.systems.filter((s) => s.bodies > 0).length;
+  const unscanned = data.unscanned.reduce((n, u) => n + u.bodies.length, 0);
+  const noLandable = data.systems.filter((s) => s.bodies === 0 && s.unscanned === 0).map((s) => s.name);
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-2">
+        <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
+          <div className="min-w-[16rem] flex-1">
+            <label className="block text-sm font-medium mb-2" htmlFor="colony-material">Raw material</label>
+            <select
+              id="colony-material"
+              value={pick ?? ''}
+              onChange={(e) => setPick(e.target.value || null)}
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm"
+            >
+              <option value="">All raw materials</option>
+              {RAW_MATERIALS.map((m) => (
+                <option key={m.id} value={m.id}>G{m.grade} &mdash; {m.displayName}</option>
+              ))}
+            </select>
+          </div>
+          <label className="flex items-center gap-2 pb-2 text-sm text-muted-foreground" htmlFor="colony-hide-icy">
+            <input id="colony-hide-icy" type="checkbox" checked={hideIcy} onChange={(e) => setHideIcy(e.target.checked)} />
+            Hide icy bodies ({icyCount})
+          </label>
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {data.bodies.length.toLocaleString()} bodies with a surface mix on file, in {withData} of your {data.systems.length} colony systems.
+          {spanshCount > 0 && <> {spanshCount} of them are Spansh figures, where you have no scan of your own.</>}
+        </div>
+        {def && (
+          <div className="text-xs text-muted-foreground">
+            <span className="text-foreground">{def.displayName}</span> is grade {def.grade}: {held} / {def.cap} held, room for {Math.max(0, def.cap - held)}.
+          </div>
+        )}
+      </div>
+
+      {!def && (
+        <div className="rounded-lg border border-border bg-card overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/30">
+              <tr>
+                <th className="text-left px-3 py-2">Material</th>
+                <th className="text-right px-3 py-2">Held</th>
+                <th className="text-right px-3 py-2">Room</th>
+                <th className="text-right px-3 py-2">Colony bodies</th>
+                <th className="text-right px-3 py-2">Best share</th>
+                <th className="text-left px-3 py-2">Richest body</th>
+              </tr>
+            </thead>
+            <tbody>
+              {overview.map((o) => (
+                <tr key={o.material.id} onClick={() => setPick(o.material.id)} className={`border-t border-border/30 cursor-pointer hover:bg-muted/20 ${o.bodies === 0 ? 'opacity-40' : ''}`}>
+                  <td className="px-3 py-2">
+                    <button type="button" onClick={(e) => { e.stopPropagation(); setPick(o.material.id); }} className="text-left text-foreground hover:underline">
+                      <span className="mr-1 text-xs text-muted-foreground">G{o.material.grade}</span>{o.material.displayName}
+                    </button>
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">{o.held}<span className="text-xs text-muted-foreground/50"> / {o.material.cap}</span></td>
+                  <td className="px-3 py-2 text-right tabular-nums">{o.room <= 0 ? <span className="text-muted-foreground">full</span> : o.room}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{o.bodies || '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-bold text-foreground">{o.bestPct == null ? '—' : `${o.bestPct}%`}</td>
+                  <td className="px-3 py-2">
+                    {o.best
+                      ? <>{shortBody(o.best.body, o.best.system)} <span className="text-xs text-muted-foreground">{o.best.system}{o.best.icy ? ' · icy' : ''}</span></>
+                      : <span className="text-muted-foreground">on none of your colony bodies</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {def && (
+        <div className="rounded-lg border border-border bg-card overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/30">
+              <tr>
+                <th className="text-left px-3 py-2">Body</th>
+                <th className="text-left px-3 py-2">System</th>
+                <th className="text-right px-3 py-2">{def.displayName}</th>
+                <th className="text-right px-3 py-2">Gravity</th>
+                <th className="text-left px-3 py-2">World</th>
+                <th className="text-right px-3 py-2">From the star</th>
+                <th className="text-left px-3 py-2">Your sites there</th>
+                <th className="text-left px-3 py-2">Figure from</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="py-8 text-center text-muted-foreground">No colony body on file carries {def.displayName}.</td>
+                </tr>
+              )}
+              {rows.map((b) => (
+                <tr key={b.body} className={`border-t border-border/30 ${b.icy ? 'opacity-50' : ''}`}>
+                  <td className="px-3 py-2 whitespace-nowrap text-foreground">{shortBody(b.body, b.system)}</td>
+                  <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{b.system}</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-bold text-foreground">{b.materials[def.id]}%</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{b.gravity == null ? '—' : `${b.gravity.toFixed(2)} g`}</td>
+                  <td className="px-3 py-2 text-xs">
+                    {b.planetClass || '—'}
+                    <span className="text-muted-foreground"> · {b.atmosphere === 'none' ? 'no atmosphere' : b.atmosphere || 'atmosphere not on file'}</span>
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-muted-foreground whitespace-nowrap">{b.distanceLs == null ? '—' : `${b.distanceLs.toLocaleString()} ls`}</td>
+                  <td className="px-3 py-2 text-xs">{b.sites.length ? b.sites.map(shortSite).join(', ') : <span className="text-muted-foreground">—</span>}</td>
+                  <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">{b.source === 'spansh' ? 'Spansh' : `your scan${b.at ? ` · ${new Date(b.at).toLocaleDateString()}` : ''}`}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="space-y-1 text-xs text-muted-foreground max-w-4xl">
+        {unscanned > 0 && (
+          <p>
+            {unscanned} landable {unscanned === 1 ? 'body' : 'bodies'} in your colonies {unscanned === 1 ? 'has' : 'have'} no surface mix on file and {unscanned === 1 ? 'is' : 'are'} not listed:{' '}
+            {data.unscanned.map((u) => `${u.system} (${u.bodies.length})`).join(', ')}. A scan of the body fills it in.
+          </p>
+        )}
+        {noLandable.length > 0 && <p>No landable body on file in: {noLandable.join(', ')}.</p>}
+        <p>The share is the material&rsquo;s part of the body&rsquo;s surface mix, from the scan. It is not a drop rate. Your colony systems are the ones with a project or marked as colonised.</p>
+      </div>
+    </div>
+  );
 }
 
 // ===== Engineering Capacity tab =====
@@ -411,7 +679,14 @@ function EngineeringTab() {
                 {g.ingredients.map((i) => (
                   <div key={i.materialId} className={`flex gap-2 ${i.bottleneck ? 'text-amber-400' : 'text-muted-foreground'}`}>
                     <span className="w-4">{i.bottleneck ? '★' : ' '}</span>
-                    <span className="flex-1">{i.material?.displayName || i.materialId}</span>
+                    <span className="flex-1">
+                      {i.material?.displayName || i.materialId}
+                      {i.material && (
+                        <span className="ml-1.5 text-[10px] uppercase tracking-wide text-muted-foreground/70">
+                          {i.material.line === 'special' ? 'not traded' : TRADER_SHORT[i.material.category]}
+                        </span>
+                      )}
+                    </span>
                     <span className="tabular-nums">
                       need {i.required}, have {i.available} &rarr; {i.maxRolls} rolls
                     </span>

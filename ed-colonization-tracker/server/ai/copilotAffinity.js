@@ -15,8 +15,10 @@
 import { isSingleSeatShip, isCrampedShip, shipRole } from '../journal/extractor.js';
 import { isSrvType, noteMotherShip } from './copilotAway.js';
 import { getMemory, saveMemory } from './copilotMemory.js';
-import { liveCarrierFreeSpace } from './copilotContext.js';
+import { liveCarrierFreeSpace, flownCargoCapacity } from './copilotContext.js';
 import { detectStationTypeBeat } from './copilotStations.js';
+import { RARE_ECONOMIES } from './copilotTastes.js';
+import { recentlyOpined } from './copilotOpinionMarks.js';
 
 // Economy (StationEconomy) → per-persona stance text folded into the intent.
 const ECONOMY = {
@@ -73,7 +75,7 @@ const ROLE_STANCE = {
     k2: 'a passenger liner — soft, luxurious, defenceless; everything he is not',
   },
   multi: {
-    wash: 'a jack-of-all-trades — she can do anything, master of none, but that flexibility is freedom',
+    wash: 'a jack-of-all-trades — it can do anything, master of none, but that flexibility is freedom',
     tars: 'a multi-role hull — adaptable; he respects the engineering compromise but prefers specialisation',
     k2: 'a multi-role ship — it can fight if it needs to, which is the only thing that matters',
   },
@@ -148,6 +150,32 @@ function serviceHit(services, persona) {
   return null;
 }
 
+// The commander's spec keys tastes to the station's economy MIX, not its label: a Colony station with a
+// strong Agriculture side still gets Wren's reaction. The journal's Proportion is a WEIGHT, not a share
+// (one economy can read 1.4), so it is compared to the main economy's weight and never quoted: under a
+// quarter of the main one is too faint to react to. A station whose MAIN economy is one of the rare five
+// (Damaged, Rescue, Repair, Prison, Terraforming) gets no economy remark — the commander, 2026-10-28:
+// "forget those economies".
+function economyHit(ev, persona) {
+  const mix = (Array.isArray(ev.StationEconomies) ? ev.StationEconomies : [])
+    .map((e) => ({ econ: e ? econKey(e.Name_Localised, e.Name) : null, weight: Number(e && e.Proportion) || 0 }))
+    .filter((e) => e.econ && e.weight > 0)
+    .sort((a, b) => b.weight - a.weight);
+  if (!mix.length) {
+    const econ = econKey(ev.StationEconomy_Localised, ev.StationEconomy);
+    if (econ) mix.push({ econ, weight: 1 });
+  }
+  if (!mix.length || RARE_ECONOMIES.has(mix[0].econ)) return null;
+  const top = mix[0].weight;
+  for (const e of mix) {
+    const rel = e.weight / top;
+    if (rel < 0.25) break;
+    const stance = ECONOMY[e.econ] && ECONOMY[e.econ][persona];
+    if (stance) return { econ: e.econ, rel, main: mix[0].econ, stance };
+  }
+  return null;
+}
+
 function bodyStance(ev, persona) {
   const pc = String(ev.PlanetClass || '').toLowerCase();
   const volc = String(ev.Volcanism || '').toLowerCase();
@@ -218,6 +246,22 @@ function maybeShipBeat(persona, state) {
   };
 }
 
+/**
+ * The carrier's free space as NEWS (1.62.0), counted in loads of the ship being flown and banded, so
+ * the routine haul loop — one load in per arrival — doesn't make it worth a paid line every time: tens
+ * of loads while there is room (43 → "40+"), five to nine as one band, then every load. Under 2,000 t is
+ * marked nearly full. The docking request and the docked line share it, so it is said once per change.
+ */
+export function carrierSpaceFp(callsign, free, cap) {
+  const who = String(callsign || 'carrier').toLowerCase();
+  const left = cap > 0 ? Math.floor(free / cap) : null;
+  const band = left == null ? `${Math.floor(free / 2000) * 2}k`
+    : left >= 10 ? `${Math.floor(left / 10) * 10}+`
+    : left >= 5 ? '5-9'
+    : String(left);
+  return `carrier-space|${who}|${band}${free < 2000 ? '|nearly-full' : ''}`;
+}
+
 function beat(key, intent, ev, priority) {
   return {
     key, priority: priority || 52, interrupt: false, live: true, model: 'haiku', mood: 'calm', character: true, intent,
@@ -275,15 +319,19 @@ export function detectAffinityBeat(ev, persona, hauling, state) {
       if (free == null) return null;
       const cn = (u && u.name) || '';
       const nearlyFull = free < 2000;
-      // Frame the free space against the SHIP's cargo capacity — without it the model guesses
-      // ("1,305t — not a full load" when 1,305 IS exactly one full Panther load).
-      const cap = Number((state && state.settings && state.settings.cargoCapacity) || 0);
+      // Frame the free space against the cargo capacity of the ship being FLOWN — without it the model
+      // guesses ("1,305t — not a full load" when 1,305 IS exactly one full Panther load). The journal's
+      // figure for this hull, not the Settings planning number: the Panther's 1,304 t read in the
+      // Type-8 (384 t) told the commander "twelve Type-8 loads" when it was 43 (1.62.0).
+      const cap = flownCargoCapacity(state);
       const loads = cap > 0 ? Math.round((free / cap) * 10) / 10 : 0;
       const loadsBit = loads > 0 ? ` That is about ${loads} full ship-load${loads === 1 ? '' : 's'} of space (the ship carries ~${cap.toLocaleString()}t).` : '';
       const angle = nearlyFull
-        ? 'She is nearly FULL — the useful nudge is to send the carrier to the build / drop-off and unload soon, rather than keep packing more in here.'
+        ? 'The carrier is nearly FULL — the useful nudge is to send the carrier to the build / drop-off and unload soon, rather than keep packing more in here.'
         : 'A brief, useful heads-up on the remaining capacity as we come in to dock.';
-      return beat('fc-dock-request', `Docking requested at the commander's OWN carrier${cn ? ` (the ${cn})` : ''} — ${free.toLocaleString()}t of free cargo space left in the hold.${loadsBit} ${angle} Refer to it by NAME, never the callsign.`, ev, 51);
+      const fcBeat = beat('fc-dock-request', `Docking requested at the commander's OWN carrier${cn ? ` (the ${cn})` : ''} — ${free.toLocaleString()}t of free cargo space left in the hold.${loadsBit} ${angle} Refer to it by NAME, never the callsign.`, ev, 51);
+      fcBeat.fp = carrierSpaceFp(callsign, free, cap);
+      return fcBeat;
     }
     case 'Docked': {
       // The commander's OWN fleet carrier — home base / the mothership.
@@ -294,7 +342,10 @@ export function detectAffinityBeat(ev, persona, hauling, state) {
         // about ownership ("nothing else out here is YOURS like that is yours") that the commander
         // hated. Useful first; one dry aside at most.
         const freeHome = liveCarrierFreeSpace(state, fc.myFleetCarrier);
-        return beat('carrier-home', `Just docked at the commander's OWN fleet carrier${cn ? ` — the ${cn}` : ''}. Refer to it by its NAME${cn ? ` (${cn})` : ''}, NEVER its callsign. This is a WORK stop — be USEFUL first${freeHome != null ? `: about ${freeHome.toLocaleString()}t of cargo space free in her hold` : ''}. One dry aside is fine. Do NOT wax about it being home, being theirs, or what it means — no lyricism about ownership, no sentiment about the ship. Short.`, ev, 47);
+        const homeBeat = beat('carrier-home', `Just docked at the commander's OWN fleet carrier${cn ? ` — the ${cn}` : ''}. Refer to it by its NAME${cn ? ` (${cn})` : ''}, NEVER its callsign. This is a WORK stop — be USEFUL first${freeHome != null ? `: about ${freeHome.toLocaleString()}t of cargo space free in its hold` : ''}. One dry aside is fine. Do NOT wax about it being home, being theirs, or what it means — no lyricism about ownership, no sentiment about the ship. Short.`, ev, 47);
+        // The same news as the docking request a minute earlier — one fingerprint, so it is said once (1.62.0).
+        if (freeHome != null) homeBeat.fp = carrierSpaceFp(fc.myFleetCarrier, freeHome, flownCargoCapacity(state));
+        return homeBeat;
       }
       // This station's market trades in PEOPLE — fire ONLY when slaves are actually in the stored
       // snapshot (anti-invention). Catches raw Slaves at lawless anarchy holes AND Imperial Slaves at
@@ -303,7 +354,7 @@ export function detectAffinityBeat(ev, persona, hauling, state) {
       const slaveCom = snap && Array.isArray(snap.commodities)
         ? snap.commodities.find((c) => /slav/i.test(c.commodityId || '') || /slav/i.test(c.name || '') || /slavery/i.test(c.category || ''))
         : null;
-      if (slaveCom) {
+      if (slaveCom && !recentlyOpined(ev.MarketID)) {
         const mkKey = String(ev.MarketID);
         const lastSl = slaverySaid.get(mkKey);
         if (!(lastSl && Date.now() - lastSl < SLAVERY_MS)) {
@@ -321,16 +372,20 @@ export function detectAffinityBeat(ev, persona, hauling, state) {
         }
       }
       const fst = ev.StationFaction && ev.StationFaction.FactionState;
-      if (fst && /War|CivilWar|Boom|Famine|Outbreak|Lockdown/i.test(fst)) {
+      if (fst && /War|CivilWar|Boom|Famine|Outbreak|Lockdown/i.test(fst) && !recentlyOpined(ev.MarketID)) {
         const a = persona === 'k2' ? 'You read it tactically — security will be erratic, conditions you find familiar; stay alert'
           : persona === 'wash' ? 'You are wary — the place has an edge now; do our business and not make friends'
           : 'You note the security and market implications, factually';
         return beat('faction-state', `The controlling faction here is in ${fst}. ${a}.`, ev, 49);
       }
-      if (!hauling) {
-        const econ = econKey(ev.StationEconomy_Localised, ev.StationEconomy);
-        const stance = econ && ECONOMY[econ] && ECONOMY[econ][persona];
-        if (stance) return beat('affinity-economy', `Just docked at a ${econ} economy station. Your persona ${stance}. Lead with character; the economy is the hook, not a list.`, ev);
+      if (!hauling && !recentlyOpined(ev.MarketID)) {
+        const hit = economyHit(ev, persona);
+        if (hit) {
+          const what = hit.main === hit.econ
+            ? `a ${hit.econ} economy station`
+            : `a ${hit.main} station with ${hit.rel >= 0.5 ? 'a strong' : 'some'} ${hit.econ} side to its economy`;
+          return beat('affinity-economy', `Just docked at ${what}. Your persona ${hit.stance}. Lead with character; the economy is the hook, not a list.`, ev);
+        }
         const svc = serviceHit(ev.StationServices, persona);
         if (svc) return beat('affinity-service', `This station has ${svc}. A brief, characterful nod — don't list services.`, ev, 46);
       }
@@ -436,7 +491,7 @@ export function detectAffinityBeat(ev, persona, hauling, state) {
         const roleStance = role && ROLE_STANCE[role] && ROLE_STANCE[role][persona];
         const tenure = shipTenure(state, shipType);
         const tenureText = tenureFlavour(tenure);
-        const nameCallback = _wasKnown && ev.ShipName === _wasKnown ? `You KNOW this ship — "${_wasKnown}" — you've flown her before.` : '';
+        const nameCallback = _wasKnown && ev.ShipName === _wasKnown ? `You KNOW this ship — "${_wasKnown}" — you've flown it before.` : '';
         const parts = [
           `Just switched into a ${ev.ShipName || shipType} (${shipType}). ${shipTaste(persona)}.`,
           kin ? `Also: ${kin}.` : '',

@@ -25,6 +25,7 @@ import { isColonisableAtmosphere, ICY_SUBTYPES } from '../journal/scorer.js';
 import { pushRadarBeat } from '../ai/copilotRadar.js';
 import { noteColonisationEvent } from '../chains/chainWatch.js';
 import { notePopulatedSystem } from './populatedStore.js';
+import { noteNearbyEvent } from './nearbyNow.js';
 
 const EDDN_HOST = 'eddn.edcd.io';
 const EDDN_PORT = 9500;
@@ -116,6 +117,16 @@ function onRaw(body) {
   const pos = Array.isArray(m.StarPos) ? m.StarPos : null;
   const inRad = !!(pos && inRadius(pos));
   noteEddn(inRad);
+
+  // Nearby-now (1.61.0): other pilots docking at a station, kept 30 minutes in memory and only ever asked
+  // about the station the commander is docking at. Before the radius gate on purpose — dockinggranted /
+  // dockingdenied carry a MarketID but no position. Counts only; uploaders are never stored.
+  try {
+    if (schema.includes('/dockinggranted/')) noteNearbyEvent('granted', m.MarketID, m.timestamp);
+    else if (schema.includes('/dockingdenied/')) noteNearbyEvent('denied', m.MarketID, m.timestamp, { reason: m.Reason });
+    else if (schema.includes('/commodity/')) noteNearbyEvent('market', m.marketId, m.timestamp);
+    else if (isJournal && m.event === 'Docked') noteNearbyEvent('docked', m.MarketID, m.timestamp);
+  } catch { /* never break the feed */ }
 
   // Populated-systems upkeep — every arrival any reporting pilot makes (own included: the layer
   // is a map, not a rival count) carries StarPos + Population. The store gates to its bubble.

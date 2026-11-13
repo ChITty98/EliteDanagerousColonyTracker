@@ -68,8 +68,12 @@ app-icon.ico
 # Co-pilot runtime state — personal data (commander/crew names, Q&A answers about the user,
 # colony coords, every generated line + its inputs). Written to APP_DIR (repo root in dev).
 copilot-memory.json
+copilot-memory.before-opinions.json
 copilot-captures.jsonl
 copilot-characters/
+# Anthropic API option (1.61.0): the commander's key and the monthly spend ledger — never commit either.
+anthropic-key.txt
+copilot-spend.json
 
 # Project handoff
 PROJECT-HANDOFF.md
@@ -87,3 +91,6 @@ populated-systems.json
 
 # approach recorder runs — commander data, never committed
 approach-runs.jsonl
+
+# journal watcher position — holds the local journal folder path, never committed
+journal-position.json

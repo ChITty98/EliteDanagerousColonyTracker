@@ -14,13 +14,16 @@ import { useAppStore } from '@/store';
 
 interface LogEvent {
   at: string; weight: 'routine' | 'notable' | 'major' | 'huge'; kind: string; line: string;
+  /** the full breakdown behind a folded line (a sitting's missions by system), shown on hover */
+  detail?: string;
   system?: string | null; body?: string | null; photos?: number; stationType?: string | null;
   photoItems?: { id: string; url: string; caption: string | null; addedAt: string | null }[];
 }
 interface Sitting {
   startedAt: string; endedAt: string | null; endReason: string | null; hours: number;
   ship: string | null; jumps: number; ly: number; systems: number; landings: number;
-  bodiesScanned: number; firstDiscoveries: number; tonnesMined: number; bounties: number;
+  bodiesScanned: number; firstDiscoveries: number; tonnesMined: number; bounties: number; bonds?: number;
+  bought?: number; sold?: number; profit?: number; delivered?: number; toCarrier?: number;
   firstSystem: string | null; lastSystem: string | null; lyFromHome: number | null;
   wing: string[]; events: LogEvent[];
 }
@@ -94,6 +97,7 @@ const hm = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: 
 const dayKey = (iso: string) => iso.slice(0, 10);
 const dur = (h: number) => (h >= 1 ? `${h.toFixed(1)} h` : `${Math.round(h * 60)} min`);
 const num = (n: number) => Math.round(n).toLocaleString();
+const crShort = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(Math.round(n)));
 
 /** The week a date falls in, Monday-anchored, as a sortable key plus both readings of the date. */
 function weekOf(iso: string) {
@@ -121,13 +125,13 @@ const WEIGHT_STYLE: Record<Weight, string> = {
 const KIND_ICON: Record<string, string> = {
   claim: '🏛️', built: '🏗️', carrier_bought: '⚓', death: '💀', ship_new: '🚀', promotion: '🎖️',
   discovery: '🔭', touchdown: '🛬', codex_first: '📔', engineer: '🔧',
-  long_haul: '🌌', bounty_night: '🎯', carrier_move: '⚓', scouted: '⭐',
+  long_haul: '🌌', bounty_night: '🎯', war_night: '⚔️', carrier_move: '⚓', scouted: '⭐',
   surface_mining: '🚜', ring_mining: '⛏️', missions: '📋', vehicle_first: '🛻', exobiology: '🧬', bio_sale: '🧫', community_goal: '🎪',
 };
 const KIND_LABEL: Record<string, string> = {
   claim: 'claims', built: 'builds', carrier_bought: 'carrier', death: 'deaths', ship_new: 'ships',
   promotion: 'ranks', discovery: 'discoveries', touchdown: 'landings', codex_first: 'codex',
-  engineer: 'engineers', long_haul: 'hauls', bounty_night: 'bounties', carrier_move: 'carrier moves',
+  engineer: 'engineers', long_haul: 'hauls', bounty_night: 'bounties', war_night: 'wars', carrier_move: 'carrier moves',
   scouted: 'scouted', surface_mining: 'surface mining', ring_mining: 'ring mining', missions: 'missions', vehicle_first: 'vehicles', exobiology: 'exobiology', bio_sale: 'bio sales', community_goal: 'community goals',
 };
 
@@ -139,7 +143,7 @@ function EventRow({ e }: { e: LogEvent }) {
       <div className="flex items-baseline gap-2">
         <span className="shrink-0 tabular-nums text-[11px] text-muted-foreground">{hm(e.at)}</span>
         <span className="shrink-0" aria-hidden="true">{KIND_ICON[e.kind] ?? '·'}</span>
-        <span className="leading-snug">{e.line}</span>
+        <span className="leading-snug" title={e.detail}>{e.line}</span>
         {e.system && (
           <Link to={`/systems/${encodeURIComponent(e.system)}`} className="ml-auto shrink-0 text-[11px] text-muted-foreground underline decoration-dotted hover:text-foreground" title="Open the system">
             {e.system}
@@ -243,6 +247,11 @@ export function CommanderLogPage() {
     if (s.bodiesScanned) bits.push(`${num(s.bodiesScanned)} scanned${s.firstDiscoveries ? ` (${num(s.firstDiscoveries)} first)` : ''}`);
     if (s.tonnesMined) bits.push(`${num(s.tonnesMined)} t mined`);
     if (s.bounties) bits.push(`${num(s.bounties)} bounties`);
+    if (s.bonds) bits.push(`${num(s.bonds)} conflict-zone kill${s.bonds === 1 ? '' : 's'}`);
+    if (s.delivered) bits.push(`${num(s.delivered)} t delivered to builds`);
+    if (s.toCarrier) bits.push(`${num(s.toCarrier)} t to the carrier`);
+    if (s.bought) bits.push(`${num(s.bought)} t bought`);
+    if (s.sold) bits.push(`${num(s.sold)} t sold${s.profit ? `, ${s.profit > 0 ? '+' : '−'}${crShort(Math.abs(s.profit))} cr` : ''}`);
     return bits.join(' · ') || 'quiet';
   };
 
@@ -442,7 +451,7 @@ export function CommanderLogPage() {
                   <span className="w-28 shrink-0 text-[11px] text-muted-foreground">{eliteShort(e.at).game}</span>
                   <span className="w-24 shrink-0 text-[11px] text-muted-foreground/60">{eliteShort(e.at).real}</span>
                   <span aria-hidden="true">{KIND_ICON[e.kind] ?? '·'}</span>
-                  <span className={e.weight === 'huge' ? 'text-amber-200' : 'text-foreground/85'}>{e.line}</span>
+                  <span className={e.weight === 'huge' ? 'text-amber-200' : 'text-foreground/85'} title={e.detail}>{e.line}</span>
                 </div>
               ))}
             </div>
@@ -525,7 +534,7 @@ export function CommanderLogPage() {
                 <span className="w-28 shrink-0 text-[11px] text-muted-foreground">{eliteShort(e.at).game}</span>
                 <span className="w-24 shrink-0 text-[11px] text-muted-foreground/60">{eliteShort(e.at).real}</span>
                 <span aria-hidden="true">{KIND_ICON[e.kind] ?? '·'}</span>
-                <span className={e.weight === 'huge' ? 'text-amber-200' : 'text-foreground/85'}>{e.line}</span>
+                <span className={e.weight === 'huge' ? 'text-amber-200' : 'text-foreground/85'} title={e.detail}>{e.line}</span>
               </div>
             ))}
           </div>

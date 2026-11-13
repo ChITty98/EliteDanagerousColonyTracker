@@ -34,8 +34,8 @@ describe('surface co-pilot bridge', () => {
     expect(detectSurfaceBeat().key).toBe('surface-hold-far');
   });
 
-  it('far lines never say where she is or that she will move — they prompt a recall or a drive back', () => {
-    const promise = /i'll bring|i'll come|i can come|i'll fly|bring her (over|across|down|in)|close the (gap|distance)|i can be alongside|taxi her|i'll land her|i'll set her down|i could come down|i could drive her|call me down|i'll land|set down|land beside/;
+  it('far lines never say where the ship is or that it will move — they prompt a recall or a drive back', () => {
+    const promise = /i'll bring|i'll come|i can come|i'll fly|bring her (over|across|down|in)|close the (gap|distance)|i can be alongside|taxi (her|it|the ship)|i'll land (her|it|the ship)|i'll set (her|it|the ship) down|i could come down|i could drive (her|it|the ship)|call me down|i'll land|set down|land beside/;
     const position = /where you left me|i'm parked|i'm landed|i'm overhead|i'm exactly|station-keeping where|on the ground a/;
     for (const persona of ['wash', 'tars', 'k2']) {
       for (const line of LINES[persona]['surface-hold-far']) {
